@@ -270,7 +270,7 @@ class ComdirectClient:
             data = response.json()
             return data.get("values", [])
 
-    async def get_transactions(self, account_id: str, limit: int = 100) -> list[dict]:
+    async def get_transactions(self, account_id: str, limit: int = 100, offset: int = 0) -> list[dict]:
         """Fetch transactions for a single account."""
         if not (self._secondary_token or self.access_token):
             raise RuntimeError("Not authenticated")
@@ -279,8 +279,100 @@ class ComdirectClient:
             response = await client.get(
                 f"{BASE_URL}/api/banking/v1/accounts/{account_id}/transactions",
                 headers=self._auth_headers(),
-                params={"paging-count": limit},
+                params={"paging-count": limit, "paging-first-index": offset},
             )
             response.raise_for_status()
             data = response.json()
             return data.get("values", [])
+
+    async def get_depots(self) -> list[dict]:
+        """Fetch all depots (brokerage accounts)."""
+        if not (self._secondary_token or self.access_token):
+            raise RuntimeError("Not authenticated")
+
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                f"{BASE_URL}/api/brokerage/clients/user/v3/depots",
+                headers=self._auth_headers(),
+            )
+            response.raise_for_status()
+            data = response.json()
+            logger.info(f"get_depots: {len(data.get('values', []))} depots found")
+            return data.get("values", [])
+
+    async def get_depot_positions(self, depot_id: str) -> list[dict]:
+        """Fetch current holdings for a depot (ISIN, WKN, quantity, market value)."""
+        if not (self._secondary_token or self.access_token):
+            raise RuntimeError("Not authenticated")
+
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                f"{BASE_URL}/api/brokerage/v3/depots/{depot_id}/positions",
+                headers=self._auth_headers(),
+                params={"without-attr": "depot,benchmarkComparison"},
+            )
+            response.raise_for_status()
+            data = response.json()
+            logger.info(f"get_depot_positions({depot_id}): {len(data.get('values', []))} positions")
+            return data.get("values", [])
+
+    async def get_depot_transactions(self, depot_id: str, limit: int = 100) -> list[dict]:
+        """Fetch securities transactions for a depot (buys, sells, dividends)."""
+        if not (self._secondary_token or self.access_token):
+            raise RuntimeError("Not authenticated")
+
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                f"{BASE_URL}/api/brokerage/v3/depots/{depot_id}/transactions",
+                headers=self._auth_headers(),
+                params={"paging-count": limit},
+            )
+            response.raise_for_status()
+            data = response.json()
+            logger.info(f"get_depot_transactions({depot_id}): {len(data.get('values', []))} transactions")
+            return data.get("values", [])
+
+    async def get_all_data(self) -> dict:
+        """
+        Fetch all accounts, transactions, depots, positions, and depot transactions.
+
+        Returns:
+        {
+            "accounts": [...],
+            "transactions": { "{accountId}": [...] },
+            "depots": [...],
+            "depot_positions": { "{depotId}": [...] },
+            "depot_transactions": { "{depotId}": [...] },
+        }
+        """
+        if not (self._secondary_token or self.access_token):
+            raise RuntimeError("Not authenticated")
+
+        logger.info("get_all_data: fetching accounts and depots…")
+        accounts = await self.get_accounts()
+        depots = await self.get_depots()
+
+        transactions: dict[str, list[dict]] = {}
+        for account in accounts:
+            account_id = account.get("account", {}).get("accountId") or account.get("accountId")
+            if account_id:
+                logger.info(f"get_all_data: fetching transactions for account {account_id}")
+                transactions[account_id] = await self.get_transactions(account_id)
+
+        depot_positions: dict[str, list[dict]] = {}
+        depot_transactions: dict[str, list[dict]] = {}
+        for depot in depots:
+            depot_id = depot.get("depotId")
+            if depot_id:
+                logger.info(f"get_all_data: fetching positions/transactions for depot {depot_id}")
+                depot_positions[depot_id] = await self.get_depot_positions(depot_id)
+                depot_transactions[depot_id] = await self.get_depot_transactions(depot_id)
+
+        logger.info("get_all_data: complete")
+        return {
+            "accounts": accounts,
+            "transactions": transactions,
+            "depots": depots,
+            "depot_positions": depot_positions,
+            "depot_transactions": depot_transactions,
+        }
