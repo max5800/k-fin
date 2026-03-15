@@ -71,6 +71,7 @@ class ComdirectClient:
             "Authorization": f"Bearer {token}",
             "x-http-request-info": self._request_info_header(),
             "Accept": "application/json",
+            "User-Agent": "comdirect-firefly-sync/1.0",
         }
 
     # ------------------------------------------------------------------
@@ -93,7 +94,11 @@ class ComdirectClient:
                     "password": self.pin,
                     "grant_type": "password",
                 },
-                headers={"Content-Type": "application/x-www-form-urlencoded"},
+                headers={
+                    "Content-Type": "application/x-www-form-urlencoded",
+                    "Accept": "application/json",
+                    "User-Agent": "comdirect-firefly-sync/1.0",
+                },
             )
             if response.status_code == 200:
                 data = response.json()
@@ -134,12 +139,14 @@ class ComdirectClient:
                     "password": self.pin,
                     "grant_type": "password",
                 },
-                headers={"Content-Type": "application/x-www-form-urlencoded"},
+                headers={
+                    "Content-Type": "application/x-www-form-urlencoded",
+                    "Accept": "application/json",
+                    "User-Agent": "comdirect-firefly-sync/1.0",
+                },
             )
             if resp.status_code != 200:
-                logger.error(
-                    f"Step 1 failed: {resp.status_code} {resp.text[:300]}"
-                )
+                logger.error(f"Step 1 failed: {resp.status_code} {resp.text[:300]}")
                 return False
 
             token_data = resp.json()
@@ -148,20 +155,18 @@ class ComdirectClient:
             kdnr = token_data.get("kdnr", self.username)
             logger.info(f"Step 1 OK — kdnr={kdnr}")
 
-            # ---- Step 2: Create session ---------------------------------
-            logger.info("Step 2: Creating session…")
-            resp = await http.post(
+            # ---- Step 2: Get session ---------------------------------
+            logger.info("Step 2: Getting session…")
+            resp = await http.get(
                 f"{BASE_URL}/api/session/clients/user/v1/sessions",
                 headers={
                     **self._auth_headers(),
-                    "Content-Type": "application/json",
+                    "Accept": "application/json",
+                    "User-Agent": "comdirect-firefly-sync/1.0",
                 },
-                json={"identifier": self._primary_token},
             )
             if resp.status_code not in (200, 201):
-                logger.error(
-                    f"Step 2 failed: {resp.status_code} {resp.text[:300]}"
-                )
+                logger.error(f"Step 2 failed: {resp.status_code} {resp.text[:300]}")
                 return False
 
             session_data = resp.json()
@@ -169,22 +174,30 @@ class ComdirectClient:
             if isinstance(session_data, list):
                 session_data = session_data[0] if session_data else {}
             session_identifier = session_data.get("identifier", self.session_id)
+            self.session_id = session_identifier  # Update to backend session ID
             logger.info(f"Step 2 OK — session identifier={session_identifier}")
 
             # ---- Step 3: Validate session (triggers TAN) ---------------
             logger.info("Step 3: Validating session — TAN will be sent to device…")
+
+            # Per docs (Ch. 2.3): body must contain identifier,
+            # sessionTanActive=true AND activated2FA=true.
+            validate_body = {
+                "identifier": session_identifier,
+                "sessionTanActive": True,
+                "activated2FA": True,
+            }
+
             resp = await http.post(
                 f"{BASE_URL}/api/session/clients/user/v1/sessions/{session_identifier}/validate",
                 headers={
                     **self._auth_headers(),
                     "Content-Type": "application/json",
                 },
-                json={"identifier": self._primary_token},
+                json=validate_body,
             )
             if resp.status_code not in (200, 201, 202):
-                logger.error(
-                    f"Step 3 failed: {resp.status_code} {resp.text[:300]}"
-                )
+                logger.error(f"Step 3 failed: {resp.status_code} {resp.text}")
                 return False
 
             # Extract the challenge info returned by the server.
@@ -210,27 +223,38 @@ class ComdirectClient:
 
             # ---- Step 5: Activate session with TAN ---------------------
             logger.info("Step 5: Activating session…")
+
+            # Per docs (Ch. 2.4): body must contain ONLY identifier,
+            # sessionTanActive=true, activated2FA=true — no extra fields.
+            activation_body = {
+                "identifier": session_identifier,
+                "sessionTanActive": True,
+                "activated2FA": True,
+            }
+
+            headers_step_5 = {
+                **self._auth_headers(),
+                "Content-Type": "application/json",
+                "x-once-authentication-info": json.dumps({"id": challenge_id}),
+            }
+
             resp = await http.patch(
-                f"{BASE_URL}/api/session/clients/user/v1/sessions/{session_identifier}/tan",
-                headers={
-                    **self._auth_headers(),
-                    "Content-Type": "application/json",
-                    # Echo back the challenge id; TAN value empty for pushTAN
-                    # (the user confirmed in-app rather than typing a code).
-                    "x-once-authentication-info": json.dumps({"id": challenge_id}),
-                    "x-once-authentication": "",
-                },
-                json={"identifier": self._primary_token},
+                f"{BASE_URL}/api/session/clients/user/v1/sessions/{session_identifier}",
+                headers=headers_step_5,
+                json=activation_body,
             )
             if resp.status_code not in (200, 201):
-                logger.error(
-                    f"Step 5 failed: {resp.status_code} {resp.text[:300]}"
-                )
+                logger.error(f"Step 5 failed: {resp.status_code} {resp.text[:300]}")
                 return False
-            logger.info("Step 5 OK — session activated")
+            logger.info(f"Step 5 OK — session activated: {resp.text}")
+
+            # Wait briefly for the backend session state to propagate
+            await asyncio.sleep(2.0)
 
             # ---- Step 6: Secondary token (cd_secondary grant) ----------
             logger.info("Step 6: Obtaining secondary access token…")
+
+            # The API expects "token" as form data to refer to the primary token that authenticated the session.
             resp = await http.post(
                 OAUTH_URL,
                 data={
@@ -239,12 +263,15 @@ class ComdirectClient:
                     "grant_type": "cd_secondary",
                     "token": self._primary_token,
                 },
-                headers={"Content-Type": "application/x-www-form-urlencoded"},
+                headers={
+                    "Content-Type": "application/x-www-form-urlencoded",
+                    "Accept": "application/json",
+                    "Authorization": f"Bearer {self._primary_token}",
+                    "User-Agent": "comdirect-firefly-sync/1.0",
+                },
             )
             if resp.status_code != 200:
-                logger.error(
-                    f"Step 6 failed: {resp.status_code} {resp.text[:300]}"
-                )
+                logger.error(f"Step 6 failed: {resp.status_code} {resp.text[:300]}")
                 return False
 
             self._secondary_token = resp.json()["access_token"]
@@ -270,7 +297,9 @@ class ComdirectClient:
             data = response.json()
             return data.get("values", [])
 
-    async def get_transactions(self, account_id: str, limit: int = 100, offset: int = 0) -> list[dict]:
+    async def get_transactions(
+        self, account_id: str, limit: int = 100, offset: int = 0
+    ) -> list[dict]:
         """Fetch transactions for a single account."""
         if not (self._secondary_token or self.access_token):
             raise RuntimeError("Not authenticated")
@@ -313,10 +342,14 @@ class ComdirectClient:
             )
             response.raise_for_status()
             data = response.json()
-            logger.info(f"get_depot_positions({depot_id}): {len(data.get('values', []))} positions")
+            logger.info(
+                f"get_depot_positions({depot_id}): {len(data.get('values', []))} positions"
+            )
             return data.get("values", [])
 
-    async def get_depot_transactions(self, depot_id: str, limit: int = 100) -> list[dict]:
+    async def get_depot_transactions(
+        self, depot_id: str, limit: int = 100
+    ) -> list[dict]:
         """Fetch securities transactions for a depot (buys, sells, dividends)."""
         if not (self._secondary_token or self.access_token):
             raise RuntimeError("Not authenticated")
@@ -329,7 +362,9 @@ class ComdirectClient:
             )
             response.raise_for_status()
             data = response.json()
-            logger.info(f"get_depot_transactions({depot_id}): {len(data.get('values', []))} transactions")
+            logger.info(
+                f"get_depot_transactions({depot_id}): {len(data.get('values', []))} transactions"
+            )
             return data.get("values", [])
 
     async def get_all_data(self) -> dict:
@@ -354,9 +389,13 @@ class ComdirectClient:
 
         transactions: dict[str, list[dict]] = {}
         for account in accounts:
-            account_id = account.get("account", {}).get("accountId") or account.get("accountId")
+            account_id = account.get("account", {}).get("accountId") or account.get(
+                "accountId"
+            )
             if account_id:
-                logger.info(f"get_all_data: fetching transactions for account {account_id}")
+                logger.info(
+                    f"get_all_data: fetching transactions for account {account_id}"
+                )
                 transactions[account_id] = await self.get_transactions(account_id)
 
         depot_positions: dict[str, list[dict]] = {}
@@ -364,9 +403,13 @@ class ComdirectClient:
         for depot in depots:
             depot_id = depot.get("depotId")
             if depot_id:
-                logger.info(f"get_all_data: fetching positions/transactions for depot {depot_id}")
+                logger.info(
+                    f"get_all_data: fetching positions/transactions for depot {depot_id}"
+                )
                 depot_positions[depot_id] = await self.get_depot_positions(depot_id)
-                depot_transactions[depot_id] = await self.get_depot_transactions(depot_id)
+                depot_transactions[depot_id] = await self.get_depot_transactions(
+                    depot_id
+                )
 
         logger.info("get_all_data: complete")
         return {
