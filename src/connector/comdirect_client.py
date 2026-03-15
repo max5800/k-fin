@@ -298,9 +298,13 @@ class ComdirectClient:
             return data.get("values", [])
 
     async def get_transactions(
-        self, account_id: str, limit: int = 100, offset: int = 0
+        self, account_id: str, paging_count: int = 500
     ) -> list[dict]:
-        """Fetch transactions for a single account."""
+        """Fetch transactions for a single account.
+
+        The API does not support paging-first > 0, so we fetch everything
+        in a single request using paging-count.
+        """
         if not (self._secondary_token or self.access_token):
             raise RuntimeError("Not authenticated")
 
@@ -308,7 +312,7 @@ class ComdirectClient:
             response = await client.get(
                 f"{BASE_URL}/api/banking/v1/accounts/{account_id}/transactions",
                 headers=self._auth_headers(),
-                params={"paging-count": limit, "paging-first-index": offset},
+                params={"paging-count": paging_count},
             )
             response.raise_for_status()
             data = response.json()
@@ -338,7 +342,7 @@ class ComdirectClient:
             response = await client.get(
                 f"{BASE_URL}/api/brokerage/v3/depots/{depot_id}/positions",
                 headers=self._auth_headers(),
-                params={"without-attr": "depot,benchmarkComparison"},
+                params={"with-attr": "instrument"},
             )
             response.raise_for_status()
             data = response.json()
@@ -348,17 +352,29 @@ class ComdirectClient:
             return data.get("values", [])
 
     async def get_depot_transactions(
-        self, depot_id: str, limit: int = 100
+        self,
+        depot_id: str,
+        limit: int = 100,
+        min_booking_date: str | None = None,
     ) -> list[dict]:
-        """Fetch securities transactions for a depot (buys, sells, dividends)."""
+        """Fetch securities transactions for a depot (buys, sells, dividends).
+
+        Args:
+            min_booking_date: Earliest booking date (YYYY-MM-DD or -Xd offset).
+                              Defaults to API default (-180d) if not set.
+        """
         if not (self._secondary_token or self.access_token):
             raise RuntimeError("Not authenticated")
+
+        params: dict[str, str | int] = {"paging-count": limit}
+        if min_booking_date:
+            params["min-bookingDate"] = min_booking_date
 
         async with httpx.AsyncClient() as client:
             response = await client.get(
                 f"{BASE_URL}/api/brokerage/v3/depots/{depot_id}/transactions",
                 headers=self._auth_headers(),
-                params={"paging-count": limit},
+                params=params,
             )
             response.raise_for_status()
             data = response.json()
@@ -396,7 +412,8 @@ class ComdirectClient:
                 logger.info(
                     f"get_all_data: fetching transactions for account {account_id}"
                 )
-                transactions[account_id] = await self.get_transactions(account_id)
+                txs = await self.get_transactions(account_id)
+                transactions[account_id] = txs
 
         depot_positions: dict[str, list[dict]] = {}
         depot_transactions: dict[str, list[dict]] = {}

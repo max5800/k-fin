@@ -1,9 +1,9 @@
 """Main sync job — orchestrates Comdirect → Firefly pipeline."""
 
 from src.connector.comdirect_client import ComdirectClient
+from src.core.logging import get_logger
 from src.importer.firefly_client import FireflyClient
 from src.importer.transaction_mapper import map_transaction
-from src.core.logging import get_logger
 
 logger = get_logger("sync_job")
 
@@ -40,7 +40,9 @@ async def run_sync():
         # Find matching Firefly account
         firefly_account = await firefly.find_account_by_iban(iban)
         if not firefly_account:
-            logger.warning(f"No Firefly account found for IBAN {iban[:8]}*** — skipping")
+            logger.warning(
+                f"No Firefly account found for IBAN {iban[:8]}*** — skipping"
+            )
             continue
 
         firefly_account_id = firefly_account["id"]

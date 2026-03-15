@@ -17,9 +17,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+from src.connector.comdirect_client import ComdirectClient  # noqa: E402
 from src.core.config import settings  # noqa: E402
 from src.core.logging import setup_logging  # noqa: E402
-from src.connector.comdirect_client import ComdirectClient  # noqa: E402
 
 TRANSACTIONS_LIMIT = 10  # Nur die letzten N Buchungen pro Konto ausgeben
 
@@ -27,7 +27,7 @@ TRANSACTIONS_LIMIT = 10  # Nur die letzten N Buchungen pro Konto ausgeben
 def print_section(title: str) -> None:
     print(f"\n{'=' * 60}")
     print(f"  {title}")
-    print('=' * 60)
+    print("=" * 60)
 
 
 async def main() -> None:
@@ -67,12 +67,20 @@ async def main() -> None:
     print(f"  {len(accounts)} Konto(en) gefunden:\n")
     account_ids = []
     for acc in accounts:
-        account_id = acc.get("account", {}).get("accountId") or acc.get("accountId", "?")
+        account_id = acc.get("account", {}).get("accountId") or acc.get(
+            "accountId", "?"
+        )
         iban = acc.get("account", {}).get("iban") or acc.get("iban", "—")
         account_type = acc.get("account", {}).get("accountType", {})
-        type_text = account_type.get("text", "") if isinstance(account_type, dict) else str(account_type)
+        type_text = (
+            account_type.get("text", "")
+            if isinstance(account_type, dict)
+            else str(account_type)
+        )
         balance = acc.get("balance", {})
-        balance_val = balance.get("value", "?") if isinstance(balance, dict) else balance
+        balance_val = (
+            balance.get("value", "?") if isinstance(balance, dict) else balance
+        )
         currency = balance.get("unit", "EUR") if isinstance(balance, dict) else "EUR"
 
         # Mask IBAN for display (show first 8 + last 4)
@@ -86,12 +94,12 @@ async def main() -> None:
             account_ids.append((account_id, iban_display))
 
     # ── Umsätze ─────────────────────────────────────────────────────────
-    print_section(f"Schritt 3: Letzte {TRANSACTIONS_LIMIT} Umsätze pro Konto")
+    print_section("Schritt 3: Umsätze pro Konto")
 
     for account_id, iban_display in account_ids:
         print(f"\n  Konto {iban_display} ({account_id}):")
         try:
-            transactions = await client.get_transactions(account_id, limit=TRANSACTIONS_LIMIT)
+            transactions = await client.get_transactions(account_id)
         except Exception as exc:
             print(f"    [FEHLER] {exc}")
             continue
@@ -103,14 +111,24 @@ async def main() -> None:
         for tx in transactions:
             booking_date = tx.get("bookingDate", "?")
             tx_type = tx.get("transactionType", {})
-            tx_type_text = tx_type.get("text", "?") if isinstance(tx_type, dict) else str(tx_type)
+            tx_type_text = (
+                tx_type.get("text", "?") if isinstance(tx_type, dict) else str(tx_type)
+            )
             amount = tx.get("amount", {})
-            amount_val = amount.get("value", "?") if isinstance(amount, dict) else amount
+            amount_val = (
+                amount.get("value", "?") if isinstance(amount, dict) else amount
+            )
             currency = amount.get("unit", "EUR") if isinstance(amount, dict) else "EUR"
             remittance = tx.get("remittanceInfo", "")[:60]
 
-            sign = "+" if str(amount_val).startswith("-") is False and amount_val != "?" else ""
-            print(f"    {booking_date}  {sign}{amount_val} {currency}  [{tx_type_text}]")
+            sign = (
+                "+"
+                if str(amount_val).startswith("-") is False and amount_val != "?"
+                else ""
+            )
+            print(
+                f"    {booking_date}  {sign}{amount_val} {currency}  [{tx_type_text}]"
+            )
             if remittance:
                 print(f"              {remittance}")
 
