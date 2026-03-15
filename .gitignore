@@ -6,3 +6,4 @@ __pycache__/
 *.log
 .python-version
 uv.lock
+comdirect_REST_API_Dokumentation.pdf
