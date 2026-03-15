@@ -9,3 +9,4 @@ uv.lock
 comdirect_REST_API_Dokumentation.pdf
 secrets/
 exports/
+node_modules/
