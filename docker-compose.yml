@@ -1,0 +1,37 @@
+services:
+  # ── Export Job ─────────────────────────────────────────────
+  # Holt Daten von der Comdirect API und schreibt CSVs.
+  # Hat Zugang zu .env (Credentials). Läuft nur on-demand.
+  export:
+    build: .
+    container_name: comdirect-export
+    env_file: .env
+    stdin_open: true
+    tty: true
+    volumes:
+      - export-data:/data/exports
+    # Beispiele:
+    #   Alle Daten:        docker compose run --rm export
+    #   Letzte 30 Tage:    docker compose run --rm export --output-dir /data/exports --since 30d
+    #   Ab Datum:           docker compose run --rm export --output-dir /data/exports --since 2025-01-01
+
+  # ── Read-Only API ─────────────────────────────────────────
+  # Stellt exportierte CSVs über REST bereit.
+  # KEIN Zugang zu .env oder Comdirect-Credentials.
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    container_name: comdirect-api
+    ports:
+      - "8420:8000"
+    environment:
+      - EXPORTS_DIR=/data/exports
+      # Optional: API-Token setzen für Zugriffskontrolle
+      # - API_TOKEN=dein-geheimer-token
+    volumes:
+      - export-data:/data/exports:ro
+    restart: unless-stopped
+
+volumes:
+  export-data:
