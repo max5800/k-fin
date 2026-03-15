@@ -1,3 +1,41 @@
+# Copilot Instructions — comdirect-firefly-sync
+
+## Project
+
+Read-only Finanzdaten-Export aus der Comdirect REST API — als CSV, REST API oder (geplant) Firefly III Import.
+
+## Architecture
+
+- `src/connector/` — Comdirect API client (OAuth2 + pushTAN auth, accounts, transactions, depot)
+- `src/api/` — Read-only FastAPI to serve exported CSVs (runs in isolated container)
+- `src/importer/` — Firefly III client + transaction mapper (planned)
+- `src/exporter/` — Finance agent mapper
+- `src/scheduler/` — Sync job orchestration
+- `src/core/` — Config (pydantic-settings), logging
+- `scripts/export_csv.py` — CLI for full financial CSV export (accounts, depot, overview)
+- `main.py` — FastAPI app + APScheduler
+
+## Key Patterns
+
+- All config via pydantic-settings / `.env`
+- Async httpx for all HTTP calls
+- `uv` as package manager — use `uv run` to execute scripts
+- APScheduler for periodic sync (planned)
+- Dedup via external_id in Firefly III (planned)
+- Conventional Commits required
+- Docker: two-container architecture (export job + API), shared named volume
+
+## Important Notes
+
+- Comdirect auth requires TAN confirmation (pushTAN) — interactive step
+- Comdirect transactions API does NOT support `paging-first > 0` — use single request with `paging-count=500`
+- Depot transactions support `min-bookingDate` parameter (YYYY-MM-DD or -Xd offset)
+- CSV format: semicolon-delimited, UTF-8-sig encoding, German number/date formats
+- Run locally: `uv run uvicorn main:app --reload`
+- Run export: `uv run python scripts/export_csv.py --output-dir exports`
+
+---
+
 # 🛡️ STRICT SECURITY AND DATA PRIVACY INSTRUCTIONS
 
 **CRITICAL:** This project (`comdirect-firefly-sync`) handles highly sensitive personal financial data, banking credentials, and API keys. Security is the absolute highest priority. Any code changes, architectural decisions, and agent actions MUST strictly adhere to the following rules:

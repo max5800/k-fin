@@ -7,3 +7,5 @@ __pycache__/
 .python-version
 uv.lock
 comdirect_REST_API_Dokumentation.pdf
+secrets/
+exports/
