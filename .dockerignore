@@ -1,0 +1,27 @@
+# Secrets — NEVER include in image
+.env
+.env.*
+!.env.example
+secrets/
+
+# Dev/IDE/Git
+.git/
+.gitignore
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.python-version
+uv.lock
+
+# Docs & tests (not needed in production image)
+docs/
+tests/
+*.md
+*.json
+*.pdf
+
+# IDE
+.vscode/
+.idea/
+*.code-workspace
