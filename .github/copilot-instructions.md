@@ -36,36 +36,6 @@ Read-only Finanzdaten-Export aus der Comdirect REST API — als CSV, REST API od
 
 ---
 
-## 🤖 AI Agent Skill — REQUIRED
-
-This project exposes a **read-only Finance API** (`src/api/serve_exports.py`) that AI agents (e.g. Klaus/OpenClaw) use to query financial data.
-
-**The OpenClaw skill for this API lives at:** `~/.openclaw/skills/comdirect-finance-api/`
-
-### Rules for Copilot/AI when working on this project:
-
-1. **After ANY change to `src/api/serve_exports.py`** — update the skill:
-   - New endpoint → add to `SKILL.md` endpoints table
-   - Changed auth → update connection section
-   - New CSV format → update `references/api.md`
-
-2. **After adding new export types** (new filename prefix) — add to the export categories table in `SKILL.md`
-
-3. **After changing CSV format** (columns, delimiter, encoding) — update `references/api.md`
-
-4. **The skill must always reflect the actual API** — a stale skill means Klaus calls wrong endpoints or misparses data
-
-### Skill Location
-
-```
-~/.openclaw/skills/comdirect-finance-api/
-├── SKILL.md          # Main skill: endpoints, auth, workflow
-└── references/
-    └── api.md        # Response format examples, CSV parsing
-```
-
----
-
 # 🛡️ STRICT SECURITY AND DATA PRIVACY INSTRUCTIONS
 
 **CRITICAL:** This project (`comdirect-firefly-sync`) handles highly sensitive personal financial data, banking credentials, and API keys. Security is the absolute highest priority. Any code changes, architectural decisions, and agent actions MUST strictly adhere to the following rules:
