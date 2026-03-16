@@ -1,107 +1,104 @@
 # 🏦 comdirect-firefly-sync
 
-**Read-Only Finanzdaten-Export aus der Comdirect REST API — als CSV, REST API oder (geplant) Firefly III Import.**
+**Read-only financial data export from the Comdirect REST API — as CSV, REST API, or (planned) Firefly III import.**
 
-> Automatisierter Zugriff auf Konten, Umsätze und Depots — sicher und ohne Schreibzugriff.
+> I built this for myself. It works for me. If it is useful to you, great — but this comes with no guarantees and no support.
 
-## Features
+## What it does
 
-- **Comdirect API Connector** — OAuth2 + pushTAN Authentifizierung, read-only
-- **CSV-Export** — Vollständiger Finanzreport (Konten, Umsätze, Depot-Positionen, Depot-Umsätze, Finanzübersicht)
-- **Read-Only REST API** — Stellt exportierte CSVs über HTTP bereit (für KI-Agenten o.ä.)
-- **Docker** — Zwei-Container-Architektur: Export-Job + API-Server mit geteiltem Volume
-- **Firefly III Import** — (geplant) Periodischer Import in Firefly III mit Deduplizierung
+Connects to the Comdirect REST API (read-only), exports your financial data as CSV files, and serves them via a lightweight HTTP API. Planned: periodic import into Firefly III with deduplication.
 
-## Architektur
+- **Comdirect connector** — OAuth2 + pushTAN authentication, strictly read-only
+- **CSV export** — Accounts, transactions, depot positions, depot transactions, financial overview
+- **REST API** — Serves exported CSVs over HTTP (e.g. for AI agents or dashboards)
+- **Docker** — Two-container setup: export job + API server with shared volume
+- **Firefly III import** — Planned: periodic sync with deduplication
 
-```
-┌─────────────────┐     ┌──────────────┐     ┌────────────────┐
-│  Comdirect API  │────▶│  Export Job   │────▶│  CSV Volume    │
-│  (read-only)    │     │  (Container) │     │  /data/exports │
-└─────────────────┘     └──────────────┘     └───────┬────────┘
-                                                     │ ro
-                                              ┌──────▼────────┐
-                                              │  REST API     │
-                                              │  (Container)  │
-                                              │  :8420        │
-                                              └───────────────┘
-```
+## Architecture
 
-| Modul | Beschreibung |
-|-------|-------------|
-| `src/connector/` | Comdirect API Client (Auth, Konten, Umsätze, Depot) |
-| `src/api/` | Read-only FastAPI zum Bereitstellen der CSV-Exporte |
-| `src/importer/` | Firefly III Client + Transaction Mapper (geplant) |
-| `src/exporter/` | Finance Agent Mapper |
-| `src/scheduler/` | Sync-Job Orchestrierung |
-| `src/core/` | Config (pydantic-settings), Logging |
-| `scripts/` | Export-Skript, Auth-Test, Debug-Skripte |
+| Module | Description |
+|--------|-------------|
+| `src/connector/` | Comdirect API client (auth, accounts, transactions, depot) |
+| `src/api/` | Read-only FastAPI serving CSV exports |
+| `src/importer/` | Firefly III client + transaction mapper *(planned)* |
+| `src/scheduler/` | Sync job orchestration |
+| `src/core/` | Config (pydantic-settings), logging |
+| `scripts/` | Export script, auth test, debug tools |
 
 ## Tech Stack
 
-| Komponente | Technologie |
-|-----------|-------------|
-| Sprache | Python 3.13 |
-| Paketmanager | uv |
-| HTTP Client | httpx (async) |
+| Component | Technology |
+|-----------|------------|
+| Language | Python 3.13 |
+| Package manager | uv |
+| HTTP client | httpx (async) |
 | API | FastAPI + uvicorn |
-| Config | pydantic-settings, `.env` |
-| Container | Docker, docker-compose |
-| Scheduler | APScheduler |
+| Config | pydantic-settings, .env |
+| Containers | Docker, docker-compose |
+| Releases | semantic-release |
 
-## Quickstart
+## Prerequisites
 
-### Voraussetzungen
+- Python 3.13+ and uv
+- Comdirect API credentials (Client ID, Client Secret, account number, PIN)
+- A pushTAN-capable device for authentication
+- Docker (optional, for container setup)
 
-- Python 3.13+ und [uv](https://docs.astral.sh/uv/)
-- Comdirect API-Zugangsdaten (Client ID, Client Secret, Zugangsnummer, PIN)
-- Docker (optional, für Container-Betrieb)
-
-### Lokaler Export
+## Setup
 
 ```bash
+git clone https://github.com/max5800/comdirect-firefly-sync.git
+cd comdirect-firefly-sync
 cp .env.example .env
-# .env mit Zugangsdaten füllen
-
-# Vollständiger Export aller Finanzdaten
-uv run python scripts/export_csv.py --output-dir exports
-
-# Export mit Zeitfilter (nur Umsätze seit Datum)
-uv run python scripts/export_csv.py --output-dir exports --since 2025-01-01
-uv run python scripts/export_csv.py --output-dir exports --since 90d
+# Fill in your credentials in .env
+uv sync
 ```
+
+## Usage
+
+### Export to CSV
+
+```bash
+uv run python scripts/export_csv.py --output-dir exports
+```
+
+This triggers the Comdirect OAuth flow (including pushTAN confirmation) and writes CSV files to `exports/`.
+
+### Start the REST API
+
+```bash
+uv run uvicorn main:app --reload
+```
+
+The API serves the exported CSVs at `http://localhost:8001`.
 
 ### Docker
 
 ```bash
-# Export-Job ausführen (interaktiv wegen TAN-Bestätigung)
-docker compose run export
-
-# API-Server starten (stellt CSVs bereit auf :8420)
-docker compose up api -d
+docker-compose up
 ```
 
-### API-Endpoints
+## API
 
-| Endpoint | Beschreibung |
+| Endpoint | Description |
 |----------|-------------|
-| `GET /exports` | Liste aller CSV-Dateien |
-| `GET /exports/latest` | Neueste Datei pro Typ |
-| `GET /exports/{filename}` | CSV-Download |
+| `GET /exports?token=...` | List all available CSV files |
+| `GET /exports/latest?token=...` | Latest file per export category |
+| `GET /exports/{filename}?token=...` | Download a specific CSV |
 
-## Sicherheit
+Set `API_TOKEN` in your `.env` to require authentication.
 
-- **Kein Schreibzugriff** auf Comdirect — ausschließlich Read-Only
-- **Credentials** nur in `.env` — niemals im Code oder Git
-- **API-Container** hat keinen Zugriff auf Credentials — nur auf das CSV-Volume (read-only)
-- **Optionaler API-Token** zur Absicherung der REST API
+## Important
 
-## Datenquelle
+- **This is personal software.** I built it for my own use. No warranties, no support.
+- **Your credentials never leave your machine.** All data flows between Comdirect and your local setup only.
+- Never commit your `.env` file. It contains banking credentials.
+- Comdirect auth requires manual pushTAN confirmation each time.
 
-Comdirect REST API — offizielle API der Comdirect (Commerzbank AG).
+## Built with AI
 
-**Hinweis:** Die Authentifizierung erfordert eine TAN-Bestätigung (pushTAN). Für vollautomatisierten Betrieb ist daher eine Lösung für die TAN-Freigabe nötig.
+This project was built with AI-assisted development (primarily Claude via OpenClaw). Architecture, security rules, and code were collaboratively developed — but every merge went through a human review. AI writes code; humans decide what ships.
 
----
+## License
 
-*Projekt von [max5800](https://github.com/max5800) — gebaut mit KI-Agenten und viel Pragmatismus. 🐠*
+MIT
