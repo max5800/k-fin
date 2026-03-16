@@ -1,3 +1,16 @@
+# [1.1.0](https://github.com/max5800/comdirect-firefly-sync/compare/v1.0.0...v1.1.0) (2026-03-16)
+
+
+### Features
+
+* add API reference for comdirect-finance-api skill ([c678bca](https://github.com/max5800/comdirect-firefly-sync/commit/c678bcaa8e9039d65cb381695c0332b9bb166a58))
+* add comdirect-finance-api OpenClaw skill ([575457b](https://github.com/max5800/comdirect-firefly-sync/commit/575457b29ee7989383dd5c66f1fd6a34db6098d1))
+
+
+### Reverts
+
+* remove AI skill section from main (should be on feature branch) ([3581e96](https://github.com/max5800/comdirect-firefly-sync/commit/3581e966caea020404d010ca4ea4e29e5d833e99))
+
 # 1.0.0 (2026-03-15)
 
 
