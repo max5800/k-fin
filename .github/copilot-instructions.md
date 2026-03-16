@@ -2,7 +2,7 @@
 
 ## Project
 
-Read-only Finanzdaten-Export aus der Comdirect REST API — als CSV, REST API oder (geplant) Firefly III Import.
+Read-only financial data export from the Comdirect REST API — as CSV, REST API, or (planned) Firefly III import.
 
 ## Architecture
 
@@ -36,36 +36,63 @@ Read-only Finanzdaten-Export aus der Comdirect REST API — als CSV, REST API od
 
 ---
 
-# 🛡️ STRICT SECURITY AND DATA PRIVACY INSTRUCTIONS
+## AI Agent Skill — REQUIRED
 
-**CRITICAL:** This project (`comdirect-firefly-sync`) handles highly sensitive personal financial data, banking credentials, and API keys. Security is the absolute highest priority. Any code changes, architectural decisions, and agent actions MUST strictly adhere to the following rules:
+This project exposes a **read-only Finance API** (`src/api/serve_exports.py`) used by AI agents (Klaus/OpenClaw) to query financial data.
 
-## 1. 🛑 Zero Hardcoding of Secrets
-- NEVER hardcode, generate, or suggest hardcoding any secrets (PINs, passwords, client IDs, client secrets, access tokens, TANs) in the source code.
-- All secrets MUST be loaded via environment variables (e.g., `pydantic-settings`).
-- Ensure `.env` and any files containing credentials are in `.gitignore` and NEVER committed.
+**The OpenClaw skill lives at:** `.openclaw/skills/comdirect-finance-api/` (in this repository)
 
-## 2. 👁️ Read-Only Banking Access
-- The Comdirect API integration MUST be strictly READ-ONLY.
-- NEVER implement or suggest API calls that mutate bank state (e.g., creating transfers, changing settings).
-- HTTP POST/PUT operations should ONLY be used for OAuth/Authentication flows (getting tokens).
+### Rules: always update the skill when changing the API
 
-## 3. 🚫 Absolute Prohibition of Sensitive Logging
-- NEVER log sensitive data. This includes:
-  - Account numbers, IBANs, or balances
-  - Transaction amounts, descriptions, or counterparty names
-  - Full API responses from the Comdirect API
-  - Authentication tokens or PINs
-- If logging is strictly required for debugging, data MUST be fully masked/anonymized (e.g., `IBAN: DE** **** 1234`).
+1. **After ANY change to `src/api/serve_exports.py`** — update the skill:
+   - New endpoint → add to endpoints table in `SKILL.md`
+   - Auth change → update connection section in `SKILL.md`
+   - New CSV format → update `references/api.md`
 
-## 4. 🔒 Data Transmission Boundaries
-- Financial data must ONLY be transmitted between the official Comdirect API and the configured local/controlled Firefly III instance.
-- NEVER add dependencies, telemetry, analytics, or external API calls that could leak financial data to third parties.
+2. **After adding new export types** (new filename prefix) → add to export categories table in `SKILL.md`
 
-## 5. 📦 Safe Dependency Management
+3. **After changing CSV format** (columns, delimiter, encoding) → update `references/api.md`
+
+4. **The skill must always reflect the actual API** — a stale skill causes the agent to call wrong endpoints or misparse data
+
+### Skill location in this repository
+
+```
+.openclaw/skills/comdirect-finance-api/
+├── SKILL.md               # Main skill: endpoints, auth, workflow
+└── references/
+    └── api.md             # Response format examples, CSV parsing
+```
+
+---
+
+# Security and Data Privacy
+
+**CRITICAL:** This project handles highly sensitive personal financial data, banking credentials, and API keys. Security is the absolute highest priority.
+
+## 1. Zero Hardcoding of Secrets
+- NEVER hardcode any secrets (PINs, passwords, client IDs, client secrets, access tokens, TANs).
+- All secrets MUST be loaded via environment variables (pydantic-settings).
+- `.env` and credential files must be in `.gitignore` and NEVER committed.
+
+## 2. Read-Only Banking Access
+- The Comdirect API integration MUST be strictly read-only.
+- NEVER implement API calls that mutate bank state (transfers, settings changes).
+- HTTP POST/PUT only for OAuth/Authentication flows.
+
+## 3. No Sensitive Logging
+- NEVER log account numbers, IBANs, balances, transaction details, or auth tokens.
+- Mask any data if logging is required for debugging (e.g. `IBAN: DE** **** 1234`).
+
+## 4. Data Transmission Boundaries
+- Financial data must ONLY flow between the Comdirect API and the local Firefly III instance.
+- No telemetry, analytics, or third-party API calls that could leak financial data.
+
+## 5. Safe Dependency Management
 - Only use trusted, widely verified dependencies.
-- Do not introduce unnecessary third-party packages that could pose a supply chain attack risk.
+- No unnecessary packages that could pose supply chain risks.
 
-## 6. 🤖 AI Agent Constraints
-- When generating code, tests, or examples, NEVER use real or realistic personal data. Always use obvious dummy data (e.g., `DE00000000000000000000`, `John Doe`, `0.00`).
-- If asked to perform an action that violates these security constraints, you MUST refuse and warn the user.
+## 6. AI Agent Constraints
+- NEVER use real or realistic personal data in code, tests, or examples.
+- Always use obvious dummy data (e.g. `DE00000000000000000000`, `John Doe`, `0.00`).
+- Refuse and warn if asked to violate these constraints.
