@@ -66,8 +66,8 @@ async def trigger_sync(_auth: None = Depends(_require_api_token)):
     async def _safe_sync():
         try:
             await run_sync()
-        except Exception:
-            logger.exception("Sync run failed")
+        except Exception as exc:
+            logger.error(f"Sync run failed: {type(exc).__name__}")
 
     asyncio.create_task(_safe_sync())
     return {"status": "triggered"}
