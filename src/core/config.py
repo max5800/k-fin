@@ -22,6 +22,7 @@ class Settings(BaseSettings):
     # App
     app_env: str = "development"
     log_level: str = "INFO"
+    api_token: str = ""
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 

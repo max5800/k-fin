@@ -190,7 +190,7 @@ def export_account_to_csv(
                 [b_date, v_date_formatted, vorgang, buchungstext, umsatz_eur]
             )
 
-    logger.info(f"Konto {iban}: {len(transactions)} Umsätze → {filename.name}")
+    logger.info(f"Konto {iban[:8]}***: {len(transactions)} Umsätze → {filename.name}")
 
 
 def export_depot_positions_csv(depot_id: str, positions: list[dict], output_dir: Path):
@@ -538,7 +538,7 @@ async def _run(output_dir: str, since: date | None = None):
             "account_type": acc_type_text,
         }
 
-        logger.info(f"Hole Umsätze für {acc_type_text} {iban} …")
+        logger.info(f"Hole Umsätze für {acc_type_text} {iban[:8]}*** …")
         all_txs = await _fetch_all_transactions(client, account_id)
         if since:
             all_txs = filter_transactions_by_date(all_txs, since)

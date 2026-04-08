@@ -28,7 +28,7 @@ async def main() -> None:
 
     print("=== Comdirect full auth flow test ===")
     print(f"Client ID : {settings.comdirect_client_id[:4]}…")
-    print(f"Username  : {settings.comdirect_username}")
+    print(f"Username  : {settings.comdirect_username[:3]}***")
     print(f"TAN method: {settings.comdirect_tan_method}")
     print()
 
@@ -59,17 +59,8 @@ async def main() -> None:
         # The exact shape depends on the API; handle gracefully.
         account_id = acc.get("account", {}).get("accountId", acc.get("accountId", "?"))
         iban = acc.get("account", {}).get("iban", acc.get("iban", ""))
-        balance_val = (
-            acc.get("balance", {}).get("value", "?")
-            if isinstance(acc.get("balance"), dict)
-            else acc.get("balance", "?")
-        )
-        currency = (
-            acc.get("balance", {}).get("unit", "")
-            if isinstance(acc.get("balance"), dict)
-            else ""
-        )
-        print(f"  Account {account_id}  IBAN: {iban}  Balance: {balance_val} {currency}")
+        iban_masked = f"{iban[:8]}***{iban[-4:]}" if len(iban) > 12 else "***"
+        print(f"  Account {account_id}  IBAN: {iban_masked}  Balance: ***")
 
 
 if __name__ == "__main__":

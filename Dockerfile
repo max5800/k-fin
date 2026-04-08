@@ -7,10 +7,10 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 WORKDIR /app
 
 # Install uv for fast dependency management
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+COPY --from=ghcr.io/astral-sh/uv:0.6 /uv /usr/local/bin/uv
 
 # Copy dependency files first (layer caching)
-COPY pyproject.toml ./
+COPY pyproject.toml uv.lock ./
 
 # Install dependencies (no dev extras in production)
 RUN uv sync --no-dev --no-install-project
@@ -21,7 +21,11 @@ COPY scripts/ scripts/
 COPY main.py ./
 
 # Export directory — mount a volume here
-RUN mkdir -p /data/exports
+RUN mkdir -p /data/exports && \
+    adduser --disabled-password --gecos "" --no-create-home appuser && \
+    chown -R appuser:appuser /app /data/exports
+
+USER appuser
 
 # Default: run the CSV export
 ENTRYPOINT ["uv", "run", "python", "scripts/export_csv.py"]

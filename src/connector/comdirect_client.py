@@ -107,9 +107,7 @@ class ComdirectClient:
                 logger.info("Step 1 auth OK — access_token received")
                 return True
             else:
-                logger.error(
-                    f"Step 1 auth failed: {response.status_code} {response.text[:300]}"
-                )
+                logger.error(f"Step 1 auth failed: HTTP {response.status_code}")
                 return False
 
     # ------------------------------------------------------------------
@@ -146,14 +144,13 @@ class ComdirectClient:
                 },
             )
             if resp.status_code != 200:
-                logger.error(f"Step 1 failed: {resp.status_code} {resp.text[:300]}")
+                logger.error(f"Step 1 failed: HTTP {resp.status_code}")
                 return False
 
             token_data = resp.json()
             self._primary_token = token_data["access_token"]
             self.access_token = self._primary_token  # legacy alias
-            kdnr = token_data.get("kdnr", self.username)
-            logger.info(f"Step 1 OK — kdnr={kdnr}")
+            logger.info("Step 1 OK — primary token received")
 
             # ---- Step 2: Get session ---------------------------------
             logger.info("Step 2: Getting session…")
@@ -166,7 +163,7 @@ class ComdirectClient:
                 },
             )
             if resp.status_code not in (200, 201):
-                logger.error(f"Step 2 failed: {resp.status_code} {resp.text[:300]}")
+                logger.error(f"Step 2 failed: HTTP {resp.status_code}")
                 return False
 
             session_data = resp.json()
@@ -197,7 +194,7 @@ class ComdirectClient:
                 json=validate_body,
             )
             if resp.status_code not in (200, 201, 202):
-                logger.error(f"Step 3 failed: {resp.status_code} {resp.text}")
+                logger.error(f"Step 3 failed: HTTP {resp.status_code}")
                 return False
 
             # Extract the challenge info returned by the server.
@@ -244,9 +241,9 @@ class ComdirectClient:
                 json=activation_body,
             )
             if resp.status_code not in (200, 201):
-                logger.error(f"Step 5 failed: {resp.status_code} {resp.text[:300]}")
+                logger.error(f"Step 5 failed: HTTP {resp.status_code}")
                 return False
-            logger.info(f"Step 5 OK — session activated: {resp.text}")
+            logger.info("Step 5 OK — session activated")
 
             # Wait briefly for the backend session state to propagate
             await asyncio.sleep(2.0)
@@ -271,7 +268,7 @@ class ComdirectClient:
                 },
             )
             if resp.status_code != 200:
-                logger.error(f"Step 6 failed: {resp.status_code} {resp.text[:300]}")
+                logger.error(f"Step 6 failed: HTTP {resp.status_code}")
                 return False
 
             self._secondary_token = resp.json()["access_token"]

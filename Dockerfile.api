@@ -6,10 +6,14 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 WORKDIR /app
 
 # Only install what the API needs — no comdirect connector, no secrets
-RUN pip install --no-cache-dir fastapi uvicorn[standard]
+RUN pip install --no-cache-dir "fastapi>=0.115.0" "uvicorn[standard]>=0.34.0" && \
+    adduser --disabled-password --gecos "" --no-create-home appuser && \
+    mkdir -p /data/exports && chown appuser:appuser /data/exports
 
 # Copy only the API module
 COPY src/api/ src/api/
+
+USER appuser
 
 EXPOSE 8000
 
