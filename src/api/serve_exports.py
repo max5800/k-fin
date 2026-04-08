@@ -5,13 +5,15 @@ Designed to run in an isolated container with access only to the
 exports volume — no Comdirect credentials, no source code access.
 """
 
+import hmac
 import os
 import re
 from collections import defaultdict
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException
 from fastapi.responses import FileResponse
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 EXPORTS_DIR = Path(os.getenv("EXPORTS_DIR", "/data/exports"))
 API_TOKEN = os.getenv("API_TOKEN", "")
@@ -32,9 +34,15 @@ FILE_TYPES = {
     "finanzuebersicht": "Finanzübersicht",
 }
 
+_bearer_scheme = HTTPBearer(auto_error=False)
 
-def _check_token(token: str) -> None:
-    if API_TOKEN and token != API_TOKEN:
+
+def _check_token(
+    credentials: HTTPAuthorizationCredentials | None = Depends(_bearer_scheme),
+) -> None:
+    if not API_TOKEN:
+        return
+    if not credentials or not hmac.compare_digest(credentials.credentials, API_TOKEN):
         raise HTTPException(status_code=401, detail="Unauthorized")
 
 
@@ -50,10 +58,14 @@ def _safe_filename(filename: str) -> Path:
     return path
 
 
+@app.get("/health")
+def health():
+    return {"status": "ok", "service": "comdirect-export-api"}
+
+
 @app.get("/exports")
-def list_exports(token: str = ""):
+def list_exports(_auth: None = Depends(_check_token)):
     """List all available CSV export files."""
-    _check_token(token)
     if not EXPORTS_DIR.is_dir():
         return {"files": []}
 
@@ -72,9 +84,8 @@ def list_exports(token: str = ""):
 
 
 @app.get("/exports/latest")
-def latest_exports(token: str = ""):
+def latest_exports(_auth: None = Depends(_check_token)):
     """Get the most recent file of each export type."""
-    _check_token(token)
     if not EXPORTS_DIR.is_dir():
         return {"latest": {}}
 
@@ -98,9 +109,8 @@ def latest_exports(token: str = ""):
 
 
 @app.get("/exports/{filename}")
-def download_export(filename: str, token: str = ""):
+def download_export(filename: str, _auth: None = Depends(_check_token)):
     """Download a specific CSV export file."""
-    _check_token(token)
     path = _safe_filename(filename)
     return FileResponse(
         path,

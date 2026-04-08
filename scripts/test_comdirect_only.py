@@ -35,7 +35,7 @@ async def main() -> None:
 
     print_section("Comdirect Standalone Test 🏦")
     print(f"  Client ID  : {settings.comdirect_client_id[:4]}…")
-    print(f"  Username   : {settings.comdirect_username}")
+    print(f"  Username   : {settings.comdirect_username[:3]}***")
     print(f"  TAN method : {settings.comdirect_tan_method}")
 
     client = ComdirectClient()

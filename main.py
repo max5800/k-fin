@@ -1,10 +1,12 @@
 """comdirect-firefly-sync — entry point."""
 
 import asyncio
+import hmac
 from contextlib import asynccontextmanager
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI, HTTPException
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from src.core.config import settings
 from src.core.logging import get_logger, setup_logging
@@ -12,6 +14,18 @@ from src.scheduler.sync_job import run_sync
 
 setup_logging()
 logger = get_logger("main")
+
+_bearer_scheme = HTTPBearer(auto_error=False)
+
+
+def _require_api_token(
+    credentials: HTTPAuthorizationCredentials | None = Depends(_bearer_scheme),
+) -> None:
+    token = settings.api_token
+    if not token:
+        return
+    if not credentials or not hmac.compare_digest(credentials.credentials, token):
+        raise HTTPException(status_code=401, detail="Unauthorized")
 
 
 @asynccontextmanager
@@ -46,7 +60,14 @@ def health():
 
 
 @app.post("/sync/trigger")
-async def trigger_sync():
+async def trigger_sync(_auth: None = Depends(_require_api_token)):
     """Manually trigger a sync run."""
-    asyncio.create_task(run_sync())
+
+    async def _safe_sync():
+        try:
+            await run_sync()
+        except Exception:
+            logger.exception("Sync run failed")
+
+    asyncio.create_task(_safe_sync())
     return {"status": "triggered"}

@@ -1,0 +1,14 @@
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "agent",
+            "prompt": "Before finishing, do a quick security scan of all files that were modified in this session. Check for: hardcoded secrets, credentials in logs, sensitive data exposure, path traversal risks. Only report actual issues — if everything is clean, say so in one line. Use the security-reviewer agent perspective."
+          }
+        ]
+      }
+    ]
+  }
+}

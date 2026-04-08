@@ -5,8 +5,9 @@ __pycache__/
 .env
 *.log
 .python-version
-uv.lock
+
 comdirect_REST_API_Dokumentation.pdf
 secrets/
 exports/
+data/
 node_modules/
