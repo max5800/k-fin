@@ -172,7 +172,7 @@ class ComdirectClient:
                 session_data = session_data[0] if session_data else {}
             session_identifier = session_data.get("identifier", self.session_id)
             self.session_id = session_identifier  # Update to backend session ID
-            logger.info(f"Step 2 OK — session identifier={session_identifier}")
+            logger.info("Step 2 OK — session acquired")
 
             # ---- Step 3: Validate session (triggers TAN) ---------------
             logger.info("Step 3: Validating session — TAN will be sent to device…")
@@ -206,9 +206,7 @@ class ComdirectClient:
 
             challenge_id = tan_info.get("id", "")
             tan_typ = tan_info.get("typ", settings.comdirect_tan_method)
-            logger.info(
-                f"Step 3 OK — TAN challenge id={challenge_id!r}, typ={tan_typ!r}"
-            )
+            logger.info(f"Step 3 OK — TAN challenge sent, typ={tan_typ!r}")
 
             # ---- Step 4: Wait for user to confirm TAN ------------------
             print(f"\nTAN method: {tan_typ}")

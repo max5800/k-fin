@@ -77,17 +77,11 @@ async def main() -> None:
             if isinstance(account_type, dict)
             else str(account_type)
         )
-        balance = acc.get("balance", {})
-        balance_val = (
-            balance.get("value", "?") if isinstance(balance, dict) else balance
-        )
-        currency = balance.get("unit", "EUR") if isinstance(balance, dict) else "EUR"
-
         # Mask IBAN for display (show first 8 + last 4)
         iban_display = f"{iban[:8]}…{iban[-4:]}" if len(iban) > 12 else iban
 
         print(f"  • [{type_text}] IBAN: {iban_display}")
-        print(f"    Account-ID: {account_id}  |  Saldo: {balance_val} {currency}")
+        print(f"    Account-ID: {account_id}  |  Saldo: ***")
         print()
 
         if account_id != "?":
