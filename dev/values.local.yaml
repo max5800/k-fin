@@ -1,0 +1,24 @@
+image:
+  pullPolicy: Always
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+
+env:
+  APP_ENV: "development"
+  LOG_LEVEL: "DEBUG"
+  SYNC_INTERVAL_MINUTES: "5"
+  FIREFLY_BASE_URL: "http://firefly-iii:8080"
+
+ingress:
+  enabled: true
+  className: traefik
+  host: comdirect-sync.local
+
+externalSecret:
+  enabled: false
