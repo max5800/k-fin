@@ -1,6 +1,6 @@
 """Maps Comdirect transactions to Firefly III format."""
 
-from datetime import datetime
+from datetime import datetime, timezone
 
 
 def map_transaction(comdirect_tx: dict, firefly_account_id: str) -> dict:
@@ -18,7 +18,7 @@ def map_transaction(comdirect_tx: dict, firefly_account_id: str) -> dict:
     amount = abs(float(comdirect_tx.get("transactionValue", {}).get("value", 0)))
     is_debit = float(comdirect_tx.get("transactionValue", {}).get("value", 0)) < 0
     currency = comdirect_tx.get("transactionValue", {}).get("unit", "EUR")
-    booking_date = comdirect_tx.get("bookingDate", datetime.utcnow().strftime("%Y-%m-%d"))
+    booking_date = comdirect_tx.get("bookingDate", datetime.now(timezone.utc).strftime("%Y-%m-%d"))
     description = (
         comdirect_tx.get("remittanceInfo", "")
         or comdirect_tx.get("typeText", "Umsatz")

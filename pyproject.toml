@@ -11,9 +11,6 @@ dependencies = [
     "pydantic>=2.10.0",
     "pydantic-settings>=2.7.0",
     "python-dotenv>=1.0.0",
-    "sqlmodel>=0.0.22",
-    "psycopg2-binary>=2.9.0",
-    "pypdf>=6.8.0",
 ]
 
 [project.optional-dependencies]
