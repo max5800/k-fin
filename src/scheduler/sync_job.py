@@ -1,4 +1,15 @@
-"""Main sync job — orchestrates Comdirect → Firefly pipeline."""
+"""Main sync job — orchestrates Comdirect → Firefly pipeline.
+
+NOTE: The Comdirect API requires interactive TAN confirmation (pushTAN)
+for every session. This means the scheduler CANNOT run fully unattended.
+The sync job will skip execution unless the client already holds a valid
+secondary token (e.g., from a manual authenticate_full() call).
+
+Future options to solve this:
+- Token persistence: store secondary token + refresh token after manual auth
+- Webhook-triggered flow: user confirms TAN via mobile, webhook resumes sync
+- Headless TAN: if Comdirect ever supports non-interactive auth
+"""
 
 from src.connector.comdirect_client import ComdirectClient
 from src.core.logging import get_logger
@@ -9,13 +20,18 @@ logger = get_logger("sync_job")
 
 
 async def run_sync():
-    """Full sync: pull from Comdirect, push to Firefly III."""
+    """Full sync: pull from Comdirect, push to Firefly III.
+
+    Requires the client to be authenticated with a secondary token
+    (full 6-step TAN flow). Will skip if auth is not possible.
+    """
     logger.info("Starting sync...")
     comdirect = ComdirectClient()
     firefly = FireflyClient()
 
-    # Step 1: Auth (partial — TAN flow not automated in MVP)
-    auth_ok = await comdirect.authenticate()
+    # Auth: requires full 6-step flow with TAN confirmation.
+    # authenticate_full() blocks for user input — only works interactively.
+    auth_ok = await comdirect.authenticate_full()
     if not auth_ok:
         logger.error("Comdirect auth failed — skipping sync")
         return

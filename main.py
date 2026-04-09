@@ -15,6 +15,8 @@ from src.scheduler.sync_job import run_sync
 setup_logging()
 logger = get_logger("main")
 
+_background_tasks: set[asyncio.Task] = set()
+
 _bearer_scheme = HTTPBearer(auto_error=False)
 
 
@@ -66,8 +68,10 @@ async def trigger_sync(_auth: None = Depends(_require_api_token)):
     async def _safe_sync():
         try:
             await run_sync()
-        except Exception as exc:
-            logger.error(f"Sync run failed: {type(exc).__name__}")
+        except Exception:
+            logger.exception("Sync run failed")
 
-    asyncio.create_task(_safe_sync())
+    task = asyncio.create_task(_safe_sync())
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
     return {"status": "triggered"}
