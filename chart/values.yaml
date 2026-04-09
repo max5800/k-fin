@@ -1,0 +1,60 @@
+image:
+  repository: ghcr.io/max5800/comdirect-firefly-sync
+  tag: latest
+  pullPolicy: IfNotPresent
+
+replicaCount: 1
+
+service:
+  type: ClusterIP
+  port: 8000
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    cpu: 200m
+    memory: 256Mi
+
+env:
+  APP_ENV: "production"
+  LOG_LEVEL: "INFO"
+  SYNC_INTERVAL_MINUTES: "60"
+  SYNC_INITIAL_DAYS: "90"
+  SYNC_DEDUP_ENABLED: "true"
+  FIREFLY_BASE_URL: "http://firefly-iii:8080"
+
+ingress:
+  enabled: true
+  className: traefik
+  host: comdirect-sync.local
+  annotations: {}
+
+persistence:
+  enabled: true
+  storageClass: ""
+  accessMode: ReadWriteOnce
+  size: 1Gi
+
+externalSecret:
+  enabled: false
+  refreshInterval: 1h
+  secretStore:
+    name: vault-backend
+    kind: ClusterSecretStore
+  vaultPath: secret/data/comdirect-firefly-sync
+  # Keys mapped from Vault into the K8s Secret
+  keys:
+    - vaultKey: comdirect-client-id
+      envVar: COMDIRECT_CLIENT_ID
+    - vaultKey: comdirect-client-secret
+      envVar: COMDIRECT_CLIENT_SECRET
+    - vaultKey: comdirect-username
+      envVar: COMDIRECT_USERNAME
+    - vaultKey: comdirect-pin
+      envVar: COMDIRECT_PIN
+    - vaultKey: firefly-access-token
+      envVar: FIREFLY_ACCESS_TOKEN
+    - vaultKey: api-token
+      envVar: API_TOKEN

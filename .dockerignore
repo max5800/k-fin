@@ -21,6 +21,12 @@ tests/
 *.json
 *.pdf
 
+# Helm / Tilt / Dev
+chart/
+dev/
+Tiltfile
+docker-compose.yml
+
 # IDE
 .vscode/
 .idea/
