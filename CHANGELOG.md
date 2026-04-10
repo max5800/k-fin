@@ -1,3 +1,10 @@
+# [1.9.0](https://github.com/max5800/comdirect-firefly-sync/compare/v1.8.5...v1.9.0) (2026-04-10)
+
+
+### Features
+
+* add imagePullSecrets support to API and worker deployments ([567366c](https://github.com/max5800/comdirect-firefly-sync/commit/567366cd088f6a33b936902fe65a1c88d16df6a1))
+
 ## [1.8.5](https://github.com/max5800/comdirect-firefly-sync/compare/v1.8.4...v1.8.5) (2026-04-10)
 
 
