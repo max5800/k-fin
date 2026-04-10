@@ -1,3 +1,10 @@
+# [1.8.0](https://github.com/max5800/comdirect-firefly-sync/compare/v1.7.0...v1.8.0) (2026-04-10)
+
+
+### Features
+
+* replace polling auth with deterministic two-step flow ([5155d81](https://github.com/max5800/comdirect-firefly-sync/commit/5155d816e5adba7c2e6cc08c3ec39111b74207ee))
+
 # [1.7.0](https://github.com/max5800/comdirect-firefly-sync/compare/v1.6.2...v1.7.0) (2026-04-10)
 
 
