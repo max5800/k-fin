@@ -1,3 +1,10 @@
+# [1.3.0](https://github.com/max5800/comdirect-firefly-sync/compare/v1.2.0...v1.3.0) (2026-04-10)
+
+
+### Features
+
+* add markdown financial report generator ([f25d985](https://github.com/max5800/comdirect-firefly-sync/commit/f25d98585cf55be7e3d2f424543cf139e2fe18c5))
+
 # [1.2.0](https://github.com/max5800/comdirect-firefly-sync/compare/v1.1.1...v1.2.0) (2026-04-10)
 
 
