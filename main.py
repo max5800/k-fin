@@ -9,6 +9,7 @@ import uuid
 from fastapi import FastAPI, HTTPException
 
 from src.connector.comdirect_client import ComdirectClient
+from src.core.config import settings
 from src.core.logging import get_logger, setup_logging
 
 setup_logging()
@@ -84,7 +85,12 @@ async def internal_sync_confirm(session_id: str):
         output_dir = Path("/data/exports")
         output_dir.mkdir(parents=True, exist_ok=True)
 
-        data = await client.get_all_data()
+        data = await client.get_all_data(
+            account_transaction_limit=settings.account_transaction_limit,
+            account_transaction_min_booking_date=settings.account_transaction_min_booking_date,
+            depot_transaction_limit=settings.depot_transaction_limit,
+            depot_transaction_min_booking_date=settings.depot_transaction_min_booking_date,
+        )
 
         # CSV exports
         for acc in data["accounts"]:
