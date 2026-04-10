@@ -32,14 +32,26 @@ else:
     )
 
 # Registry
-REGISTRY = "ghcr.io/max5800/comdirect-firefly-sync"
+REGISTRY_API = "ghcr.io/max5800/comdirect-firefly-sync-api"
+REGISTRY_WORKER = "ghcr.io/max5800/comdirect-firefly-sync"
 
-# Build image with live_update for fast dev cycles
+# Build API image (lean, no bank secrets)
 docker_build(
-    REGISTRY,
+    REGISTRY_API,
+    context=".",
+    dockerfile="./Dockerfile.api",
+    entrypoint=["uvicorn", "src.api.serve_exports:app", "--host", "0.0.0.0", "--port", "8000", "--reload"],
+    live_update=[
+        sync("./src/api", "/app/src/api"),
+    ],
+)
+
+# Build Worker image (full, has bank credentials access)
+docker_build(
+    REGISTRY_WORKER,
     context=".",
     dockerfile="./Dockerfile",
-    entrypoint=["uv", "run", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"],
+    entrypoint=["uv", "run", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8001", "--reload"],
     live_update=[
         sync("./src", "/app/src"),
         sync("./main.py", "/app/main.py"),
@@ -53,12 +65,13 @@ k8s_yaml(helm(
     name=RELEASE_NAME,
     values=[values_file],
     set=[
-        "image.repository=" + REGISTRY,
+        "api.image.repository=" + REGISTRY_API,
+        "worker.image.repository=" + REGISTRY_WORKER,
         "ingress.host=" + ingress_host,
     ],
 ))
 
-# Configure Tilt resource
+# API resource: public-facing, port-forwarded for local dev
 k8s_resource(
     RELEASE_NAME + "-comdirect-firefly-sync-api",
     port_forwards=["8000:8000"],
@@ -67,5 +80,12 @@ k8s_resource(
         link("http://localhost:8000/health", "Health Check"),
         link("http://localhost:8000/docs", "API Docs"),
     ],
+    resource_deps=["create-secrets"] if profile == "local" else [],
+)
+
+# Worker resource: internal only, no port forwarding
+k8s_resource(
+    RELEASE_NAME + "-comdirect-firefly-sync-worker",
+    labels=["sync"],
     resource_deps=["create-secrets"] if profile == "local" else [],
 )

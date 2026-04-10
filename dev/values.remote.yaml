@@ -1,7 +1,6 @@
-image:
-  pullPolicy: Always
-
 api:
+  image:
+    pullPolicy: Always
   resources:
     requests:
       cpu: 50m
@@ -9,10 +8,23 @@ api:
     limits:
       cpu: 500m
       memory: 512Mi
-
   env:
     APP_ENV: "production"
     LOG_LEVEL: "INFO"
+    EXPORTS_DIR: "/data/exports"
+
+worker:
+  image:
+    pullPolicy: Always
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+  env:
+    EXPORTS_DIR: "/data/exports"
     SYNC_INTERVAL_MINUTES: "60"
     FIREFLY_BASE_URL: "http://firefly-iii:8080"
 
