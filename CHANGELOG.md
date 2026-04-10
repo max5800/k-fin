@@ -1,3 +1,10 @@
+# [1.11.0](https://github.com/max5800/comdirect-firefly-sync/compare/v1.10.0...v1.11.0) (2026-04-10)
+
+
+### Features
+
+* make worker fetch window configurable ([b65f967](https://github.com/max5800/comdirect-firefly-sync/commit/b65f9676554a34a603cc04343e1e63dd9c146df0))
+
 # [1.10.0](https://github.com/max5800/comdirect-firefly-sync/compare/v1.9.2...v1.10.0) (2026-04-10)
 
 
