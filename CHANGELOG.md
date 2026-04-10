@@ -1,3 +1,10 @@
+# [1.10.0](https://github.com/max5800/comdirect-firefly-sync/compare/v1.9.2...v1.10.0) (2026-04-10)
+
+
+### Features
+
+* add optional ingress tls support ([968c4dd](https://github.com/max5800/comdirect-firefly-sync/commit/968c4ddf39f829447f40b25c61b29bd9b201a9b4))
+
 ## [1.9.2](https://github.com/max5800/comdirect-firefly-sync/compare/v1.9.1...v1.9.2) (2026-04-10)
 
 
