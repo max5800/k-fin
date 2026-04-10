@@ -1,3 +1,10 @@
+## [1.6.1](https://github.com/max5800/comdirect-firefly-sync/compare/v1.6.0...v1.6.1) (2026-04-10)
+
+
+### Bug Fixes
+
+* update Tiltfile and Helm charts for two-microservice architecture ([c2066f3](https://github.com/max5800/comdirect-firefly-sync/commit/c2066f3e573078f1c210c83840ae05ef5f921c10))
+
 # [1.6.0](https://github.com/max5800/comdirect-firefly-sync/compare/v1.5.0...v1.6.0) (2026-04-10)
 
 
