@@ -274,21 +274,32 @@ class ComdirectClient:
             return data.get("values", [])
 
     async def get_transactions(
-        self, account_id: str, paging_count: int = 500
+        self,
+        account_id: str,
+        paging_count: int = 500,
+        min_booking_date: str | None = None,
     ) -> list[dict]:
         """Fetch transactions for a single account.
 
         The API does not support paging-first > 0, so we fetch everything
         in a single request using paging-count.
+
+        Args:
+            min_booking_date: Earliest booking date (YYYY-MM-DD or relative offset
+                like ``-90d``) when supported by the API.
         """
         if not (self._secondary_token or self.access_token):
             raise RuntimeError("Not authenticated")
+
+        params: dict[str, str | int] = {"paging-count": paging_count}
+        if min_booking_date:
+            params["min-bookingDate"] = min_booking_date
 
         async with httpx.AsyncClient() as client:
             response = await client.get(
                 f"{BASE_URL}/api/banking/v1/accounts/{account_id}/transactions",
                 headers=self._auth_headers(),
-                params={"paging-count": paging_count},
+                params=params,
             )
             response.raise_for_status()
             data = response.json()
@@ -359,9 +370,19 @@ class ComdirectClient:
             )
             return data.get("values", [])
 
-    async def get_all_data(self) -> dict:
+    async def get_all_data(
+        self,
+        account_transaction_limit: int = 500,
+        account_transaction_min_booking_date: str | None = None,
+        depot_transaction_limit: int = 100,
+        depot_transaction_min_booking_date: str | None = None,
+    ) -> dict:
         """
         Fetch all accounts, transactions, depots, positions, and depot transactions.
+
+        Defaults preserve the previous behavior:
+        - account transactions: up to 500 items per account, no explicit date filter
+        - depot transactions: up to 100 items per depot, API default date window
 
         Returns:
         {
@@ -386,9 +407,17 @@ class ComdirectClient:
             )
             if account_id:
                 logger.info(
-                    f"get_all_data: fetching transactions for account {account_id}"
+                    "get_all_data: fetching transactions for account %s "
+                    "(limit=%s, min_booking_date=%s)",
+                    account_id,
+                    account_transaction_limit,
+                    account_transaction_min_booking_date,
                 )
-                txs = await self.get_transactions(account_id)
+                txs = await self.get_transactions(
+                    account_id,
+                    paging_count=account_transaction_limit,
+                    min_booking_date=account_transaction_min_booking_date,
+                )
                 transactions[account_id] = txs
 
         depot_positions: dict[str, list[dict]] = {}
@@ -397,11 +426,17 @@ class ComdirectClient:
             depot_id = depot.get("depotId")
             if depot_id:
                 logger.info(
-                    f"get_all_data: fetching positions/transactions for depot {depot_id}"
+                    "get_all_data: fetching positions/transactions for depot %s "
+                    "(limit=%s, min_booking_date=%s)",
+                    depot_id,
+                    depot_transaction_limit,
+                    depot_transaction_min_booking_date,
                 )
                 depot_positions[depot_id] = await self.get_depot_positions(depot_id)
                 depot_transactions[depot_id] = await self.get_depot_transactions(
-                    depot_id
+                    depot_id,
+                    limit=depot_transaction_limit,
+                    min_booking_date=depot_transaction_min_booking_date,
                 )
 
         logger.info("get_all_data: complete")
