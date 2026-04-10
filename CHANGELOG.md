@@ -1,3 +1,10 @@
+# [1.7.0](https://github.com/max5800/comdirect-firefly-sync/compare/v1.6.2...v1.7.0) (2026-04-10)
+
+
+### Features
+
+* replace blocking input() TAN wait with async polling ([46a051f](https://github.com/max5800/comdirect-firefly-sync/commit/46a051fd058356e085c80945712aa8fd56e2f107))
+
 ## [1.6.2](https://github.com/max5800/comdirect-firefly-sync/compare/v1.6.1...v1.6.2) (2026-04-10)
 
 
