@@ -17,6 +17,10 @@ spec:
         {{- include "comdirect-firefly-sync.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: api
     spec:
+      {{- if .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml .Values.imagePullSecrets | nindent 8 }}
+      {{- end }}
       containers:
         - name: api
           image: "{{ .Values.api.image.repository }}:{{ .Values.api.image.tag }}"
