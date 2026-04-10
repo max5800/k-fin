@@ -39,4 +39,4 @@ externalSecret:
   secretStore:
     name: vault-backend
     kind: ClusterSecretStore
-  vaultPath: secret/data/comdirect-firefly-sync
+  vaultPath: secret/data/k8s/finance-api
