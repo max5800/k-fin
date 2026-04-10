@@ -1,8 +1,7 @@
-image:
-  pullPolicy: Always
-
 api:
-  command: ["uv", "run", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+  image:
+    pullPolicy: Always
+  command: ["uvicorn", "src.api.serve_exports:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
   resources:
     requests:
       cpu: 50m
@@ -10,10 +9,24 @@ api:
     limits:
       cpu: 500m
       memory: 512Mi
-
   env:
     APP_ENV: "development"
     LOG_LEVEL: "DEBUG"
+    EXPORTS_DIR: "/data/exports"
+
+worker:
+  image:
+    pullPolicy: Always
+  command: ["uv", "run", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8001", "--reload"]
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+  env:
+    EXPORTS_DIR: "/data/exports"
     SYNC_INTERVAL_MINUTES: "5"
     FIREFLY_BASE_URL: "http://firefly-iii:8080"
 
