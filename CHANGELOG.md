@@ -1,3 +1,18 @@
+# [1.2.0](https://github.com/max5800/comdirect-firefly-sync/compare/v1.1.1...v1.2.0) (2026-04-10)
+
+
+### Bug Fixes
+
+* **security:** remove session/TAN IDs from logs, mask balances in test output ([07b7e59](https://github.com/max5800/comdirect-firefly-sync/commit/07b7e597b293b29bf346be56f968b8f033f4cf99))
+* update workspace configuration to include additional folders ([bafc7e6](https://github.com/max5800/comdirect-firefly-sync/commit/bafc7e681d47421efbc626ad8792829f1e32eb06))
+
+
+### Features
+
+* add domain models, CI pipeline, tests, and fix remaining issues ([5fdc2bd](https://github.com/max5800/comdirect-firefly-sync/commit/5fdc2bd38f653323fec1d0e6838cf221449dca7e))
+* add Helm chart and Tiltfile for K8s deployment ([2f61ace](https://github.com/max5800/comdirect-firefly-sync/commit/2f61ace7b70792d18d864269655fe2426bfa04f9))
+* harden security and add agent review team ([d0705b4](https://github.com/max5800/comdirect-firefly-sync/commit/d0705b4ee278363d68fd254b6972f168e9b61ae0))
+
 ## [1.1.1](https://github.com/max5800/comdirect-firefly-sync/compare/v1.1.0...v1.1.1) (2026-04-10)
 
 
