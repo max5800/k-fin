@@ -1,3 +1,10 @@
+## [1.8.1](https://github.com/max5800/comdirect-firefly-sync/compare/v1.8.0...v1.8.1) (2026-04-10)
+
+
+### Bug Fixes
+
+* serve json files alongside csv in api ([b4bc022](https://github.com/max5800/comdirect-firefly-sync/commit/b4bc022677ecf772b8e411365eb97ecce7969057))
+
 # [1.8.0](https://github.com/max5800/comdirect-firefly-sync/compare/v1.7.0...v1.8.0) (2026-04-10)
 
 
