@@ -78,6 +78,15 @@ The API serves the exported CSVs at `http://localhost:8001`.
 docker-compose up
 ```
 
+## Kubernetes
+
+A Kubernetes deployment path is prepared under `k8s/`, but it intentionally separates concerns:
+
+- **Read-only API** as an always-on deployment
+- **Manual export job** as a security-sensitive workload using Comdirect credentials
+
+See `docs/kubernetes-deployment.md` for the recommended Vault + ESO model.
+
 ## API
 
 | Endpoint | Description |
