@@ -128,6 +128,37 @@ class TestSyncStart:
             assert resp.status_code == 200
             assert resp.json()["status"] == "pending_tan"
             assert "session_id" in resp.json()
+            mock_client.post.assert_awaited_once_with(
+                "http://comdirect-worker:8001/internal/sync/start",
+                json=None,
+            )
+
+    def test_start_forwards_request_overrides_to_worker(self, client):
+        mock_response = httpx.Response(
+            200,
+            json={"status": "pending_tan", "session_id": "abc-123"},
+        )
+        with patch("src.api.serve_exports.httpx.AsyncClient") as mock_cls:
+            mock_client = AsyncMock()
+            mock_client.post.return_value = mock_response
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=False)
+            mock_cls.return_value = mock_client
+
+            payload = {
+                "account_transaction_limit": 1200,
+                "depot_transaction_min_booking_date": "-365d",
+            }
+            resp = client.post(
+                "/sync/start",
+                headers={"Authorization": "Bearer test-secret"},
+                json=payload,
+            )
+            assert resp.status_code == 200
+            mock_client.post.assert_awaited_once_with(
+                "http://comdirect-worker:8001/internal/sync/start",
+                json=payload,
+            )
 
     def test_start_worker_unreachable_returns_503(self, client):
         with patch("src.api.serve_exports.httpx.AsyncClient") as mock_cls:
