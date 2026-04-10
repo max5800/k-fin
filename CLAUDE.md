@@ -15,11 +15,17 @@ Read-only financial data export from the Comdirect REST API — as CSV, REST API
 
 ## Architecture
 
+Two-microservice split with strict secret separation:
+- **comdirect-api** (port 8000) — public-facing, read-only API, no bank secrets
+- **comdirect-worker** (port 8001) — internal only, holds bank secrets, NetworkPolicy restricts access to api only
+
+### Source Modules
+
 - `src/connector/` — Comdirect API client (OAuth2 + pushTAN, strictly read-only)
-- `src/api/` — Read-only FastAPI serving exported CSVs
+- `src/api/` — Read-only FastAPI serving exported CSVs (comdirect-api)
 - `src/importer/` — Firefly III client + transaction mapper (planned)
 - `src/exporter/` — Finance agent mapper + model-based JSON export
-- `src/scheduler/` — Sync job orchestration
+- `src/scheduler/` — Sync job orchestration (comdirect-worker)
 - `src/core/` — Config (pydantic-settings), logging
 
 ## Key Rules
