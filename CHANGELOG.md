@@ -1,3 +1,10 @@
+## [1.12.1](https://github.com/max5800/comdirect-firefly-sync/compare/v1.12.0...v1.12.1) (2026-04-10)
+
+
+### Bug Fixes
+
+* default chart images to versioned tags ([5040830](https://github.com/max5800/comdirect-firefly-sync/commit/504083010449ff2d148d9b59a27ebf42315f1add))
+
 # [1.12.0](https://github.com/max5800/comdirect-firefly-sync/compare/v1.11.0...v1.12.0) (2026-04-10)
 
 
