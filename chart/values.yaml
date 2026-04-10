@@ -57,7 +57,7 @@ externalSecret:
   secretStore:
     name: vault-backend
     kind: ClusterSecretStore
-  vaultPath: secret/data/finance/comdirect
+  vaultPath: secret/data/k8s/finance-api
   # Keys mapped from Vault into the K8s Secret
   keys:
     - vaultKey: comdirect-client-id

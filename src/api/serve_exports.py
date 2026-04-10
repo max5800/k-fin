@@ -13,6 +13,7 @@ from pathlib import Path
 
 import httpx
 from fastapi import Depends, FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
@@ -24,8 +25,21 @@ WORKER_URL = os.getenv("WORKER_URL", "http://comdirect-worker:8001")
 
 app = FastAPI(
     title="Comdirect Finance Export API",
-    description="Read-only API for exported financial CSV data.",
+    description="Read-only API for exported financial CSV and JSON data.",
     version="1.0.0",
+)
+
+_cors_origins = [
+    o.strip()
+    for o in os.getenv("CORS_ORIGINS", "http://localhost:3000,http://localhost:8080").split(",")
+    if o.strip()
+]
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_cors_origins,
+    allow_credentials=True,
+    allow_methods=["GET", "POST"],
+    allow_headers=["Authorization", "Content-Type"],
 )
 
 FILE_PATTERN = re.compile(r"^[\w\-]+\.(csv|json)$")
