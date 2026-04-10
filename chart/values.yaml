@@ -26,6 +26,9 @@ ingress:
   className: traefik
   host: comdirect-sync.local
   annotations: {}
+  tls:
+    enabled: false
+    secretName: ""
 
 # --- Internal worker (security-sensitive, has bank credentials) ---
 worker:
