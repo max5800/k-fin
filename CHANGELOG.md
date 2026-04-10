@@ -1,3 +1,10 @@
+# [1.5.0](https://github.com/max5800/comdirect-firefly-sync/compare/v1.4.0...v1.5.0) (2026-04-10)
+
+
+### Features
+
+* enhance data mapping and validation in models and finance agent exporter ([1128218](https://github.com/max5800/comdirect-firefly-sync/commit/1128218aa12c92d97d28dc75fc35af7a16f8b6f5))
+
 # [1.4.0](https://github.com/max5800/comdirect-firefly-sync/compare/v1.3.0...v1.4.0) (2026-04-10)
 
 
