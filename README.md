@@ -88,12 +88,11 @@ docker-compose up
 
 Set `API_TOKEN` in your `.env` to require authentication.
 
-## Important
+## Important Security & Architecture Note
 
-- **This is personal software.** I built it for my own use. No warranties, no support.
+- **Manual pushTAN is a feature, not a bug:** Because Comdirect does not offer scoped read-only API tokens, requiring a manual pushTAN confirmation for every sync is a deliberate security boundary. It ensures no automated system can quietly access your bank data or initiate sessions without your physical device approval.
 - **Your credentials never leave your machine.** All data flows between Comdirect and your local setup only.
 - Never commit your `.env` file. It contains banking credentials.
-- Comdirect auth requires manual pushTAN confirmation each time.
 
 ## Built with AI
 
