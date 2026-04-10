@@ -7,6 +7,7 @@ Receives sync requests from the public comdirect-api service.
 import uuid
 
 from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
 
 from src.connector.comdirect_client import ComdirectClient
 from src.core.config import settings
@@ -28,13 +29,20 @@ app = FastAPI(
 _pending_sessions: dict[str, dict] = {}
 
 
+class SyncStartRequest(BaseModel):
+    account_transaction_limit: int | None = None
+    account_transaction_min_booking_date: str | None = None
+    depot_transaction_limit: int | None = None
+    depot_transaction_min_booking_date: str | None = None
+
+
 @app.get("/health")
 def health():
     return {"status": "ok", "service": "comdirect-worker"}
 
 
 @app.post("/internal/sync/start")
-async def internal_sync_start():
+async def internal_sync_start(payload: SyncStartRequest | None = None):
     """Step 1: Begin auth flow and trigger TAN challenge."""
     client = ComdirectClient()
 
@@ -49,6 +57,7 @@ async def internal_sync_start():
         "client": client,
         "session_identifier": auth_state["session_identifier"],
         "challenge_id": auth_state["challenge_id"],
+        "config": (payload.model_dump(exclude_none=True) if payload else {}),
     }
 
     logger.info(f"TAN challenge sent, session_id={session_id}")
@@ -63,6 +72,7 @@ async def internal_sync_confirm(session_id: str):
 
     pending = _pending_sessions.pop(session_id)
     client: ComdirectClient = pending["client"]
+    config = pending.get("config", {})
 
     ok = await client.complete_auth(
         pending["session_identifier"],
@@ -86,10 +96,20 @@ async def internal_sync_confirm(session_id: str):
         output_dir.mkdir(parents=True, exist_ok=True)
 
         data = await client.get_all_data(
-            account_transaction_limit=settings.account_transaction_limit,
-            account_transaction_min_booking_date=settings.account_transaction_min_booking_date,
-            depot_transaction_limit=settings.depot_transaction_limit,
-            depot_transaction_min_booking_date=settings.depot_transaction_min_booking_date,
+            account_transaction_limit=config.get(
+                "account_transaction_limit", settings.account_transaction_limit
+            ),
+            account_transaction_min_booking_date=config.get(
+                "account_transaction_min_booking_date",
+                settings.account_transaction_min_booking_date,
+            ),
+            depot_transaction_limit=config.get(
+                "depot_transaction_limit", settings.depot_transaction_limit
+            ),
+            depot_transaction_min_booking_date=config.get(
+                "depot_transaction_min_booking_date",
+                settings.depot_transaction_min_booking_date,
+            ),
         )
 
         # CSV exports

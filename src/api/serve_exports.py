@@ -12,7 +12,8 @@ from collections import defaultdict
 from pathlib import Path
 
 import httpx
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Body, Depends, FastAPI, HTTPException
+from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -54,6 +55,13 @@ FILE_TYPES = {
 }
 
 _bearer_scheme = HTTPBearer(auto_error=False)
+
+
+class SyncStartRequest(BaseModel):
+    account_transaction_limit: int | None = None
+    account_transaction_min_booking_date: str | None = None
+    depot_transaction_limit: int | None = None
+    depot_transaction_min_booking_date: str | None = None
 
 
 def _check_token(
@@ -142,11 +150,20 @@ def download_export(filename: str, _auth: None = Depends(_check_token)):
 
 
 @app.post("/sync/start")
-async def sync_start(_auth: None = Depends(_check_token)):
-    """Begin a sync run — triggers TAN challenge via the internal worker."""
+async def sync_start(
+    payload: SyncStartRequest | None = Body(default=None),
+    _auth: None = Depends(_check_token),
+):
+    """Begin a sync run — triggers TAN challenge via the internal worker.
+
+    Optional request fields override the worker defaults for this sync only.
+    """
     try:
         async with httpx.AsyncClient(timeout=30) as client:
-            resp = await client.post(f"{WORKER_URL}/internal/sync/start")
+            resp = await client.post(
+                f"{WORKER_URL}/internal/sync/start",
+                json=(payload.model_dump(exclude_none=True) if payload else None),
+            )
             return resp.json()
     except httpx.ConnectError:
         raise HTTPException(status_code=503, detail="Worker service unreachable")
