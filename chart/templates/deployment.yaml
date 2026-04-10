@@ -21,7 +21,12 @@ spec:
         - name: api
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
+          {{- if .Values.api.command }}
+          command:
+            {{- toYaml .Values.api.command | nindent 12 }}
+          {{- else }}
           command: ["uv", "run", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+          {{- end }}
           ports:
             - containerPort: 8000
               protocol: TCP

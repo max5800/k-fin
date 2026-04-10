@@ -1,19 +1,21 @@
 image:
   pullPolicy: Always
 
-resources:
-  requests:
-    cpu: 50m
-    memory: 64Mi
-  limits:
-    cpu: 500m
-    memory: 512Mi
+api:
+  command: ["uv", "run", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
 
-env:
-  APP_ENV: "development"
-  LOG_LEVEL: "DEBUG"
-  SYNC_INTERVAL_MINUTES: "5"
-  FIREFLY_BASE_URL: "http://firefly-iii:8080"
+  env:
+    APP_ENV: "development"
+    LOG_LEVEL: "DEBUG"
+    SYNC_INTERVAL_MINUTES: "5"
+    FIREFLY_BASE_URL: "http://firefly-iii:8080"
 
 ingress:
   enabled: true
