@@ -7,6 +7,7 @@ Read-only financial data export from the Comdirect REST API — as CSV, REST API
 ## Commands
 
 - `uv run python scripts/export_csv.py --output-dir exports` — Run CSV export
+- `uv run python scripts/export_json.py --output-dir exports --pretty` — Run JSON export
 - `uv run uvicorn main:app --reload` — Start dev server
 - `uv run pytest` — Run tests
 - `uv run ruff check .` — Lint
@@ -17,7 +18,7 @@ Read-only financial data export from the Comdirect REST API — as CSV, REST API
 - `src/connector/` — Comdirect API client (OAuth2 + pushTAN, strictly read-only)
 - `src/api/` — Read-only FastAPI serving exported CSVs
 - `src/importer/` — Firefly III client + transaction mapper (planned)
-- `src/exporter/` — Finance agent mapper (Comdirect -> JSON)
+- `src/exporter/` — Finance agent mapper + model-based JSON export
 - `src/scheduler/` — Sync job orchestration
 - `src/core/` — Config (pydantic-settings), logging
 
