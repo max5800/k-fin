@@ -1,41 +1,43 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "comdirect-firefly-sync.fullname" . }}
+  name: {{ include "comdirect-firefly-sync.fullname" . }}-api
   labels:
     {{- include "comdirect-firefly-sync.labels" . | nindent 4 }}
+    app.kubernetes.io/component: api
 spec:
-  replicas: {{ .Values.replicaCount }}
+  replicas: {{ .Values.api.replicaCount }}
   selector:
     matchLabels:
       {{- include "comdirect-firefly-sync.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: api
   template:
     metadata:
       labels:
         {{- include "comdirect-firefly-sync.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: api
     spec:
       containers:
-        - name: sync
+        - name: api
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["uv", "run", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
           ports:
             - containerPort: 8000
               protocol: TCP
           env:
-            {{- range $key, $value := .Values.env }}
+            {{- range $key, $value := .Values.api.env }}
             - name: {{ $key }}
               value: {{ $value | quote }}
             {{- end }}
-          envFrom:
-            - secretRef:
-                name: {{ include "comdirect-firefly-sync.fullname" . }}-secrets
           volumeMounts:
             {{- if .Values.persistence.enabled }}
             - name: exports
               mountPath: /data/exports
+              readOnly: true
             {{- end }}
           resources:
-            {{- toYaml .Values.resources | nindent 12 }}
+            {{- toYaml .Values.api.resources | nindent 12 }}
           livenessProbe:
             httpGet:
               path: /health
