@@ -1,8 +1,9 @@
 """Tests for the CSV export API endpoints."""
 
 import os
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 
@@ -115,3 +116,38 @@ class TestPathTraversal:
             headers={"Authorization": "Bearer test-secret"},
         )
         assert resp.status_code == 400
+
+
+class TestSyncTrigger:
+    def test_trigger_requires_auth(self, client):
+        resp = client.post("/sync/trigger")
+        assert resp.status_code == 401
+
+    def test_trigger_forwards_to_worker(self, client):
+        mock_response = httpx.Response(200, json={"status": "triggered"})
+        with patch("src.api.serve_exports.httpx.AsyncClient") as mock_cls:
+            mock_client = AsyncMock()
+            mock_client.post.return_value = mock_response
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=False)
+            mock_cls.return_value = mock_client
+
+            resp = client.post(
+                "/sync/trigger", headers={"Authorization": "Bearer test-secret"}
+            )
+            assert resp.status_code == 200
+            assert resp.json() == {"status": "triggered"}
+
+    def test_trigger_worker_unreachable_returns_503(self, client):
+        with patch("src.api.serve_exports.httpx.AsyncClient") as mock_cls:
+            mock_client = AsyncMock()
+            mock_client.post.side_effect = httpx.ConnectError("connection refused")
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=False)
+            mock_cls.return_value = mock_client
+
+            resp = client.post(
+                "/sync/trigger", headers={"Authorization": "Bearer test-secret"}
+            )
+            assert resp.status_code == 503
+            assert "unreachable" in resp.json()["detail"].lower()
