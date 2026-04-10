@@ -46,6 +46,11 @@ worker:
       memory: 256Mi
   env:
     EXPORTS_DIR: "/data/exports"
+    ACCOUNT_TRANSACTION_LIMIT: "500"
+    DEPOT_TRANSACTION_LIMIT: "100"
+    # Optional examples:
+    # ACCOUNT_TRANSACTION_MIN_BOOKING_DATE: "-90d"
+    # DEPOT_TRANSACTION_MIN_BOOKING_DATE: "-180d"
 
 imagePullSecrets: []
 
