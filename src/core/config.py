@@ -14,10 +14,6 @@ class Settings(BaseSettings):
     firefly_base_url: str = "http://localhost:8080"
     firefly_access_token: str = ""
 
-    # TAN polling
-    comdirect_tan_poll_interval_s: int = 3
-    comdirect_tan_timeout_s: int = 300
-
     # Sync
     sync_interval_minutes: int = 60
     sync_initial_days: int = 90
