@@ -1,0 +1,26 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: comdirect-export-manual
+  namespace: comdirect
+spec:
+  backoffLimit: 0
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: export
+          image: ghcr.io/max5800/comdirect-firefly-sync:latest
+          envFrom:
+            - secretRef:
+                name: comdirect-secrets
+          env:
+            - name: EXPORTS_DIR
+              value: /data/exports
+          volumeMounts:
+            - name: export-data
+              mountPath: /data/exports
+      volumes:
+        - name: export-data
+          persistentVolumeClaim:
+            claimName: comdirect-export-data
