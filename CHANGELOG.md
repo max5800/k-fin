@@ -1,3 +1,10 @@
+## [1.8.3](https://github.com/max5800/comdirect-firefly-sync/compare/v1.8.2...v1.8.3) (2026-04-10)
+
+
+### Bug Fixes
+
+* inject API_TOKEN from vault secret into api container ([5009743](https://github.com/max5800/comdirect-firefly-sync/commit/5009743dc5d32b5a5998705cb31f358621497f1e))
+
 ## [1.8.2](https://github.com/max5800/comdirect-firefly-sync/compare/v1.8.1...v1.8.2) (2026-04-10)
 
 
