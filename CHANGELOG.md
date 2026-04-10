@@ -1,3 +1,10 @@
+## [1.9.1](https://github.com/max5800/comdirect-firefly-sync/compare/v1.9.0...v1.9.1) (2026-04-10)
+
+
+### Bug Fixes
+
+* split vault paths for comdirect secrets and api token ([14804d7](https://github.com/max5800/comdirect-firefly-sync/commit/14804d749d28a0b93bbbabdda774151c37b69623))
+
 # [1.9.0](https://github.com/max5800/comdirect-firefly-sync/compare/v1.8.5...v1.9.0) (2026-04-10)
 
 
