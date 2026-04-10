@@ -1,19 +1,18 @@
 services:
-  # ── Export Job ─────────────────────────────────────────────
+  # ── Internal Worker ───────────────────────────────────────
   # Holt Daten von der Comdirect API und schreibt CSVs.
-  # Hat Zugang zu .env (Credentials). Läuft nur on-demand.
-  export:
+  # Hat Zugang zu .env (Credentials). Nur intern erreichbar.
+  worker:
     build: .
-    container_name: comdirect-export
+    container_name: comdirect-worker
     env_file: .env
-    stdin_open: true
-    tty: true
+    environment:
+      - EXPORTS_DIR=/data/exports
+    ports:
+      - "8001:8001"
     volumes:
       - export-data:/data/exports
-    # Beispiele:
-    #   Alle Daten:        docker compose run --rm export
-    #   Letzte 30 Tage:    docker compose run --rm export --output-dir /data/exports --since 30d
-    #   Ab Datum:           docker compose run --rm export --output-dir /data/exports --since 2025-01-01
+    restart: unless-stopped
 
   # ── Read-Only API ─────────────────────────────────────────
   # Stellt exportierte CSVs über REST bereit.
@@ -27,10 +26,13 @@ services:
       - "8420:8000"
     environment:
       - EXPORTS_DIR=/data/exports
+      - WORKER_URL=http://worker:8001
       # Optional: API-Token setzen für Zugriffskontrolle
       # - API_TOKEN=dein-geheimer-token
     volumes:
       - export-data:/data/exports:ro
+    depends_on:
+      - worker
     restart: unless-stopped
 
 volumes:

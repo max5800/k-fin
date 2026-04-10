@@ -28,10 +28,16 @@ ingress:
   host: comdirect-sync.local
   annotations: {}
 
-# --- Export job (manually triggered, security-sensitive) ---
-exportJob:
-  enabled: true
-  backoffLimit: 0
+# --- Internal worker (security-sensitive, has bank credentials) ---
+worker:
+  replicaCount: 1
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 256Mi
   env:
     EXPORTS_DIR: "/data/exports"
 
