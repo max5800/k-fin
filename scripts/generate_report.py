@@ -35,16 +35,60 @@ def _fmt_pct(pct: float) -> str:
     return f"{sign}{pct:.2f} %".replace(".", ",")
 
 
+def _is_account_entry(value: object) -> bool:
+    """Check if a value looks like a Finance Agent account entry."""
+    return isinstance(value, dict) and ("transactions" in value or "summary" in value)
+
+
+def _normalize_input(data: dict) -> dict:
+    """Detect input format and normalise to Finance Agent JSON.
+
+    Accepts:
+      - Finance Agent format (account keys + depot + meta) — returned as-is.
+      - Raw Comdirect get_all_data() format (accounts list + transactions dict)
+        — converted via the mapper if available.
+
+    Raises ValueError for unrecognisable shapes.
+    """
+    # Already Finance Agent format: has at least one account-shaped entry or a meta key
+    has_account_entries = any(
+        _is_account_entry(v) for k, v in data.items() if k not in ("depot", "meta")
+    )
+    if has_account_entries or ("meta" in data and "depot" in data):
+        return data
+
+    # Raw Comdirect format: has "accounts" list
+    if "accounts" in data and isinstance(data["accounts"], list):
+        try:
+            from src.exporter.finance_agent_mapper import map_to_finance_agent
+        except ImportError:
+            raise ValueError(
+                "Input looks like raw Comdirect format but the finance_agent_mapper "
+                "module is not available for conversion."
+            )
+        return map_to_finance_agent(data)
+
+    raise ValueError(
+        "Unrecognised input format. Expected Finance Agent JSON "
+        "(keys like 'girokonto', 'depot', 'meta') or raw Comdirect export "
+        "(key 'accounts' with a list)."
+    )
+
+
 def generate_report(data: dict, report_date: str | None = None) -> str:
     """Generate markdown report from Finance Agent format data.
 
+    Also accepts raw Comdirect get_all_data() dicts — these are auto-converted
+    via the finance_agent_mapper when available.
+
     Args:
-        data: Finance Agent format dict (see finance_agent_mapper.py).
+        data: Finance Agent format dict, or raw Comdirect export dict.
         report_date: Optional override for report date (YYYY-MM-DD).
 
     Returns:
         Markdown string.
     """
+    data = _normalize_input(data)
     report_date = report_date or date.today().isoformat()
     meta = data.get("meta", {})
     lines: list[str] = []
@@ -64,18 +108,32 @@ def generate_report(data: dict, report_date: str | None = None) -> str:
     total_in = 0.0
     total_out = 0.0
     all_transactions: list[dict] = []
-    account_keys = [k for k in data if k not in ("depot", "meta")]
+    account_keys = [
+        k for k in data
+        if k not in ("depot", "meta") and _is_account_entry(data[k])
+    ]
 
     for key in sorted(account_keys):
         entry = data[key]
-        summary = entry.get("summary", {})
+        txs = entry.get("transactions", [])
+        summary = entry.get("summary")
+        # Recompute summary from transactions when missing or incomplete
+        if not summary or not isinstance(summary, dict) or "total_in" not in summary:
+            s_in = sum(t.get("amount", 0) for t in txs if t.get("amount", 0) > 0)
+            s_out = abs(sum(t.get("amount", 0) for t in txs if t.get("amount", 0) < 0))
+            summary = {
+                "total_in": round(s_in, 2),
+                "total_out": round(s_out, 2),
+                "net": round(s_in - s_out, 2),
+                "count": len(txs),
+            }
         t_in = summary.get("total_in", 0.0)
         t_out = summary.get("total_out", 0.0)
         net = summary.get("net", 0.0)
         count = summary.get("count", 0)
         total_in += t_in
         total_out += t_out
-        all_transactions.extend(entry.get("transactions", []))
+        all_transactions.extend(txs)
         label = key.replace("_", " ").title()
         lines.append(
             f"| {label} | {_fmt_eur(t_in)} | {_fmt_eur(t_out)} | {_fmt_eur(net)} | {count} |"
@@ -152,9 +210,22 @@ def generate_report(data: dict, report_date: str | None = None) -> str:
             lines.append("")
 
     # ── 5. Depot overview ──────────────────────────────────────────────
-    depot = data.get("depot", {})
-    positions = depot.get("positions", [])
-    depot_summary = depot.get("summary", {})
+    depot = data.get("depot") or {}
+    positions = depot.get("positions") or []
+    depot_summary = depot.get("summary")
+    # Recompute depot summary from positions when missing
+    if positions and (not depot_summary or "total_value" not in depot_summary):
+        tv = sum(p.get("current_value", 0) for p in positions)
+        tp = sum(p.get("purchase_value", 0) for p in positions)
+        tg = round(tv - tp, 2)
+        depot_summary = {
+            "total_value": round(tv, 2),
+            "total_purchase_value": round(tp, 2),
+            "total_gains": tg,
+            "total_gains_percent": round((tg / tp * 100) if tp else 0, 4),
+            "position_count": len(positions),
+        }
+    depot_summary = depot_summary or {}
 
     if positions:
         lines.append("## Depot")
@@ -331,12 +402,23 @@ def main() -> None:
         if not path.exists():
             print(f"Error: file not found: {path}", file=sys.stderr)
             sys.exit(1)
-        data = json.loads(path.read_text(encoding="utf-8"))
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as exc:
+            print(f"Error: invalid JSON in {path}: {exc}", file=sys.stderr)
+            sys.exit(1)
+        if not isinstance(data, dict):
+            print("Error: JSON root must be an object", file=sys.stderr)
+            sys.exit(1)
     else:
         print("Error: specify --input FILE or --demo", file=sys.stderr)
         sys.exit(1)
 
-    report = generate_report(data, report_date=args.date)
+    try:
+        report = generate_report(data, report_date=args.date)
+    except ValueError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        sys.exit(1)
 
     if args.output:
         out_path = Path(args.output)
