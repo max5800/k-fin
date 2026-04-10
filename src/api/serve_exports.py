@@ -26,7 +26,7 @@ app = FastAPI(
     version="1.0.0",
 )
 
-CSV_PATTERN = re.compile(r"^[\w\-]+\.csv$")
+FILE_PATTERN = re.compile(r"^[\w\-]+\.(csv|json)$")
 
 # File type prefixes for grouping
 FILE_TYPES = {
@@ -34,6 +34,7 @@ FILE_TYPES = {
     "depot_positionen": "Depot-Positionen",
     "depot_umsaetze": "Depot-Transaktionen",
     "finanzuebersicht": "Finanzübersicht",
+    "comdirect_export": "JSON-Gesamtexport",
 }
 
 _bearer_scheme = HTTPBearer(auto_error=False)
@@ -50,7 +51,7 @@ def _check_token(
 
 def _safe_filename(filename: str) -> Path:
     """Validate filename to prevent path traversal."""
-    if not CSV_PATTERN.match(filename):
+    if not FILE_PATTERN.match(filename):
         raise HTTPException(status_code=400, detail="Invalid filename")
     path = (EXPORTS_DIR / filename).resolve()
     if not path.is_relative_to(EXPORTS_DIR.resolve()):
@@ -73,7 +74,9 @@ def list_exports(_auth: None = Depends(_check_token)):
 
     files = []
     for f in sorted(
-        EXPORTS_DIR.glob("*.csv"), key=lambda p: p.stat().st_mtime, reverse=True
+        [p for p in EXPORTS_DIR.glob("*.*") if p.suffix in (".csv", ".json")],
+        key=lambda p: p.stat().st_mtime,
+        reverse=True,
     ):
         files.append(
             {
@@ -92,7 +95,9 @@ def latest_exports(_auth: None = Depends(_check_token)):
         return {"latest": {}}
 
     grouped: dict[str, list[Path]] = defaultdict(list)
-    for f in EXPORTS_DIR.glob("*.csv"):
+    for f in EXPORTS_DIR.glob("*.*"):
+        if f.suffix not in (".csv", ".json"):
+            continue
         for prefix in FILE_TYPES:
             if f.name.startswith(prefix):
                 grouped[prefix].append(f)
@@ -114,9 +119,10 @@ def latest_exports(_auth: None = Depends(_check_token)):
 def download_export(filename: str, _auth: None = Depends(_check_token)):
     """Download a specific CSV export file."""
     path = _safe_filename(filename)
+    media_type = "application/json" if path.suffix == ".json" else "text/csv; charset=utf-8-sig"
     return FileResponse(
         path,
-        media_type="text/csv; charset=utf-8-sig",
+        media_type=media_type,
         filename=filename,
     )
 
