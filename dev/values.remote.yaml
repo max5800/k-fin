@@ -42,16 +42,16 @@ externalSecret:
   vaultPath: k8s/finance-api
   keys:
     - path: finance/comdirect
-      vaultKey: comdirect-client-id
+      vaultKey: COMDIRECT_CLIENT_ID
       envVar: COMDIRECT_CLIENT_ID
     - path: finance/comdirect
-      vaultKey: comdirect-client-secret
+      vaultKey: COMDIRECT_CLIENT_SECRET
       envVar: COMDIRECT_CLIENT_SECRET
     - path: finance/comdirect
-      vaultKey: comdirect-username
+      vaultKey: COMDIRECT_USERNAME
       envVar: COMDIRECT_USERNAME
     - path: finance/comdirect
-      vaultKey: comdirect-pin
+      vaultKey: COMDIRECT_PIN
       envVar: COMDIRECT_PIN
     - path: k8s/finance-api
       vaultKey: API_TOKEN
