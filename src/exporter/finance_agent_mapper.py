@@ -9,10 +9,13 @@ logger = logging.getLogger("sync.exporter")
 _ACCOUNT_TYPE_MAP = {
     "CURRENT_ACCOUNT": "girokonto",
     "GIRO": "girokonto",
+    "CA": "girokonto",  # Comdirect mapped type
     "SAVINGS_ACCOUNT": "tagesgeld",
     "TAGESGELD": "tagesgeld",
+    "SA": "tagesgeld",  # Comdirect mapped type
     "CLEARING_ACCOUNT": "verrechnungskonto",
     "DEPOT_VERRECHNUNGSKONTO": "verrechnungskonto",
+    "DAS": "depot",  # Comdirect mapped type
 }
 
 # Depot transaction type normalisation
@@ -28,12 +31,29 @@ _DEPOT_TYPE_MAP = {
 }
 
 
+def _get_val(obj, fallback=0.0):
+    if obj is None:
+        return fallback
+    if isinstance(obj, dict):
+        return float(obj.get("value") or fallback)
+    return float(obj)
+
+
+def _get_unit(obj, fallback=""):
+    if obj is None:
+        return fallback
+    if isinstance(obj, dict):
+        return obj.get("unit", fallback)
+    return ""
+
+
 def _account_canonical_name(account: dict) -> str:
     """Return canonical name for an account dict or a snake_case fallback."""
     raw_type = (
         account.get("accountType", {}).get("key")
         or account.get("account", {}).get("accountType", {}).get("key")
         or account.get("account", {}).get("accountType")
+        or account.get("account_type")
         or ""
     )
     canonical = _ACCOUNT_TYPE_MAP.get(raw_type.upper() if raw_type else "")
@@ -45,9 +65,9 @@ def _account_canonical_name(account: dict) -> str:
 
 
 def _map_transaction(tx: dict) -> dict:
-    tx_value = tx.get("transactionValue") or {}
-    amount = float(tx_value.get("value") or 0)
-    currency = tx_value.get("unit") or ""
+    tx_value = tx.get("transactionValue") or tx.get("amount") or {}
+    amount = _get_val(tx_value)
+    currency = _get_unit(tx_value) or tx.get("currency") or ""
 
     creditor = tx.get("creditor") or {}
     debtor = tx.get("debtor") or {}
@@ -57,8 +77,8 @@ def _map_transaction(tx: dict) -> dict:
         counterpart = debtor
 
     return {
-        "date": tx.get("bookingDate") or "",
-        "booking_date": tx.get("bookingDate") or "",
+        "date": tx.get("bookingDate") or tx.get("booking_date") or "",
+        "booking_date": tx.get("bookingDate") or tx.get("booking_date") or "",
         "value_date": tx.get("valutaDate") or "",
         "type": tx.get("typeText") or "",
         "text": tx.get("remittanceInfo") or "",
@@ -82,27 +102,33 @@ def _compute_summary(transactions: list[dict]) -> dict:
 
 
 def _map_depot_position(pos: dict) -> dict:
-    current_value = float(pos.get("currentValue", {}).get("value") or pos.get("kurswert", {}).get("value") or 0)
-    purchase_value = float(pos.get("purchaseValue", {}).get("value") or pos.get("einstandswert", {}).get("value") or 0)
+    current_value = _get_val(
+        pos.get("currentValue") or pos.get("kurswert") or pos.get("current_value")
+    )
+    purchase_value = _get_val(
+        pos.get("purchaseValue")
+        or pos.get("einstandswert")
+        or pos.get("purchase_value")
+    )
     gains = round(current_value - purchase_value, 2)
     gains_percent = round((gains / purchase_value * 100) if purchase_value else 0, 4)
 
     instrument = pos.get("instrument") or {}
-    price_value = pos.get("currentPrice", {}).get("value") or pos.get("kurs", {}).get("value") or 0
+    price_value = _get_val(
+        pos.get("currentPrice") or pos.get("kurs") or pos.get("current_price")
+    )
 
     return {
         "isin": instrument.get("isin") or pos.get("isin") or "",
         "wkn": instrument.get("wkn") or pos.get("wkn") or "",
         "name": instrument.get("name") or pos.get("name") or "",
-        "quantity": float(pos.get("quantity", {}).get("value") or pos.get("stueckzahl") or 0),
+        "quantity": _get_val(pos.get("quantity") or pos.get("stueckzahl")),
         "current_price": float(price_value),
         "current_value": current_value,
         "purchase_value": purchase_value,
-        "currency": (
-            pos.get("currentValue", {}).get("unit")
-            or pos.get("kurswert", {}).get("unit")
-            or ""
-        ),
+        "currency": _get_unit(pos.get("currentValue") or pos.get("kurswert"))
+        or pos.get("currency")
+        or "",
         "gains": gains,
         "gains_percent": gains_percent,
     }
@@ -112,27 +138,29 @@ def _map_depot_transaction(tx: dict) -> dict:
     raw_type = (
         tx.get("transactionType")
         or tx.get("transactionDirection")
+        or tx.get("transaction_type")
         or ""
     ).upper()
     mapped_type = _DEPOT_TYPE_MAP.get(raw_type, "OTHER")
 
     instrument = tx.get("instrument") or {}
-    amount_raw = tx.get("transactionValue", {}).get("value") or tx.get("amount", {}).get("value") or 0
+    amount_raw = _get_val(tx.get("transactionValue") or tx.get("amount"))
 
     return {
-        "date": tx.get("bookingDate") or tx.get("transactionDate") or "",
+        "date": tx.get("bookingDate")
+        or tx.get("transactionDate")
+        or tx.get("booking_date")
+        or "",
         "isin": instrument.get("isin") or tx.get("isin") or "",
         "wkn": instrument.get("wkn") or tx.get("wkn") or "",
         "name": instrument.get("name") or tx.get("name") or "",
         "transaction_type": mapped_type,
-        "quantity": float(tx.get("quantity", {}).get("value") or tx.get("stueckzahl") or 0),
-        "price": float(tx.get("price", {}).get("value") or tx.get("kurs", {}).get("value") or 0),
+        "quantity": _get_val(tx.get("quantity") or tx.get("stueckzahl")),
+        "price": _get_val(tx.get("price") or tx.get("kurs") or tx.get("current_price")),
         "amount": float(amount_raw),
-        "currency": (
-            tx.get("transactionValue", {}).get("unit")
-            or tx.get("amount", {}).get("unit")
-            or ""
-        ),
+        "currency": _get_unit(tx.get("transactionValue") or tx.get("amount"))
+        or tx.get("currency")
+        or "",
         "transaction_id": tx.get("transactionId") or "",
     }
 
@@ -141,7 +169,9 @@ def _depot_summary(positions: list[dict]) -> dict:
     total_value = sum(p["current_value"] for p in positions)
     total_purchase = sum(p["purchase_value"] for p in positions)
     total_gains = round(total_value - total_purchase, 2)
-    total_gains_pct = round((total_gains / total_purchase * 100) if total_purchase else 0, 4)
+    total_gains_pct = round(
+        (total_gains / total_purchase * 100) if total_purchase else 0, 4
+    )
     return {
         "total_value": round(total_value, 2),
         "total_purchase_value": round(total_purchase, 2),
@@ -181,7 +211,9 @@ def map_to_finance_agent(raw: dict) -> dict:
         if canonical in result:
             # Merge if same type appears twice (edge case)
             result[canonical]["transactions"].extend(entry["transactions"])
-            result[canonical]["summary"] = _compute_summary(result[canonical]["transactions"])
+            result[canonical]["summary"] = _compute_summary(
+                result[canonical]["transactions"]
+            )
         else:
             result[canonical] = entry
 
@@ -189,8 +221,13 @@ def map_to_finance_agent(raw: dict) -> dict:
     if depots:
         depot = depots[0]
         depot_id = depot.get("depotId") or ""
-        positions = [_map_depot_position(p) for p in (depot_positions.get(depot_id) or [])]
-        dep_txs = [_map_depot_transaction(tx) for tx in (depot_transactions_raw.get(depot_id) or [])]
+        positions = [
+            _map_depot_position(p) for p in (depot_positions.get(depot_id) or [])
+        ]
+        dep_txs = [
+            _map_depot_transaction(tx)
+            for tx in (depot_transactions_raw.get(depot_id) or [])
+        ]
         total_tx_count += len(dep_txs)
 
         result["depot"] = {

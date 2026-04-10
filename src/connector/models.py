@@ -34,8 +34,16 @@ class ComdirectAccount(BaseModel):
             "account_id": inner.get("accountId") or data.get("accountId") or "",
             "iban": inner.get("iban") or data.get("iban") or "",
             "account_type": account_type_raw or "",
-            "balance": float(balance_raw.get("value") or 0) if isinstance(balance_raw, dict) else float(balance_raw or 0),
-            "currency": balance_raw.get("unit", "EUR") if isinstance(balance_raw, dict) else "EUR",
+            "balance": (
+                float(balance_raw.get("value") or 0)
+                if isinstance(balance_raw, dict)
+                else float(balance_raw or 0)
+            ),
+            "currency": (
+                balance_raw.get("unit", "EUR")
+                if isinstance(balance_raw, dict)
+                else "EUR"
+            ),
         }
 
 
@@ -59,21 +67,36 @@ class ComdirectTransaction(BaseModel):
     def _unwrap_nested(cls, data: dict) -> dict:
         if not isinstance(data, dict):
             return data
-        tx_value = data.get("transactionValue") or {}
+        tx_value = data.get("transactionValue") or data.get("amount") or {}
         creditor = data.get("creditor") or {}
         debtor = data.get("debtor") or {}
+
+        # Extractor for either native flat float or dict
+        if isinstance(tx_value, dict):
+            amount = float(tx_value.get("value") or 0)
+            currency = tx_value.get("unit") or "EUR"
+        else:
+            amount = float(tx_value)
+            currency = data.get("currency") or "EUR"
+
         return {
-            "transaction_id": data.get("transactionId") or "",
-            "booking_date": data.get("bookingDate") or "",
-            "value_date": data.get("valutaDate") or "",
-            "amount": float(tx_value.get("value") or 0),
-            "currency": tx_value.get("unit") or "EUR",
-            "type_text": data.get("typeText") or "",
-            "remittance_info": data.get("remittanceInfo") or "",
-            "creditor_name": creditor.get("holderName") or "",
-            "creditor_iban": creditor.get("iban") or "",
-            "debtor_name": debtor.get("holderName") or "",
-            "debtor_iban": debtor.get("iban") or "",
+            "transaction_id": data.get("transactionId")
+            or data.get("transaction_id")
+            or "",
+            "booking_date": data.get("bookingDate") or data.get("booking_date") or "",
+            "value_date": data.get("valutaDate") or data.get("value_date") or "",
+            "amount": amount,
+            "currency": currency,
+            "type_text": data.get("typeText") or data.get("type_text") or "",
+            "remittance_info": data.get("remittanceInfo")
+            or data.get("remittance_info")
+            or "",
+            "creditor_name": creditor.get("holderName")
+            or data.get("creditor_name")
+            or "",
+            "creditor_iban": creditor.get("iban") or data.get("creditor_iban") or "",
+            "debtor_name": debtor.get("holderName") or data.get("debtor_name") or "",
+            "debtor_iban": debtor.get("iban") or data.get("debtor_iban") or "",
         }
 
     @property
@@ -116,9 +139,7 @@ class DepotPosition(BaseModel):
             "wkn": instrument.get("wkn") or data.get("wkn") or "",
             "name": instrument.get("name") or data.get("name") or "",
             "quantity": float(
-                data.get("quantity", {}).get("value")
-                or data.get("stueckzahl")
-                or 0
+                data.get("quantity", {}).get("value") or data.get("stueckzahl") or 0
             ),
             "current_price": float(
                 data.get("currentPrice", {}).get("value")
@@ -148,7 +169,9 @@ class DepotPosition(BaseModel):
 
     @property
     def gains_percent(self) -> float:
-        return round((self.gains / self.purchase_value * 100) if self.purchase_value else 0, 4)
+        return round(
+            (self.gains / self.purchase_value * 100) if self.purchase_value else 0, 4
+        )
 
 
 class DepotTransaction(BaseModel):
@@ -166,9 +189,14 @@ class DepotTransaction(BaseModel):
     currency: str = "EUR"
 
     _DEPOT_TYPE_MAP: dict[str, str] = {
-        "BUY": "BUY", "IN": "BUY", "KAUF": "BUY",
-        "SELL": "SELL", "OUT": "SELL", "VERKAUF": "SELL",
-        "DIVIDEND": "DIVIDEND", "ERTRAG": "DIVIDEND",
+        "BUY": "BUY",
+        "IN": "BUY",
+        "KAUF": "BUY",
+        "SELL": "SELL",
+        "OUT": "SELL",
+        "VERKAUF": "SELL",
+        "DIVIDEND": "DIVIDEND",
+        "ERTRAG": "DIVIDEND",
     }
 
     @model_validator(mode="before")
@@ -181,13 +209,20 @@ class DepotTransaction(BaseModel):
             data.get("transactionType") or data.get("transactionDirection") or ""
         ).upper()
         type_map = {
-            "BUY": "BUY", "IN": "BUY", "KAUF": "BUY",
-            "SELL": "SELL", "OUT": "SELL", "VERKAUF": "SELL",
-            "DIVIDEND": "DIVIDEND", "ERTRAG": "DIVIDEND",
+            "BUY": "BUY",
+            "IN": "BUY",
+            "KAUF": "BUY",
+            "SELL": "SELL",
+            "OUT": "SELL",
+            "VERKAUF": "SELL",
+            "DIVIDEND": "DIVIDEND",
+            "ERTRAG": "DIVIDEND",
         }
         return {
             "transaction_id": data.get("transactionId") or "",
-            "booking_date": data.get("bookingDate") or data.get("transactionDate") or "",
+            "booking_date": data.get("bookingDate")
+            or data.get("transactionDate")
+            or "",
             "isin": instrument.get("isin") or data.get("isin") or "",
             "wkn": instrument.get("wkn") or data.get("wkn") or "",
             "name": instrument.get("name") or data.get("name") or "",
@@ -196,7 +231,9 @@ class DepotTransaction(BaseModel):
                 data.get("quantity", {}).get("value") or data.get("stueckzahl") or 0
             ),
             "price": float(
-                data.get("price", {}).get("value") or data.get("kurs", {}).get("value") or 0
+                data.get("price", {}).get("value")
+                or data.get("kurs", {}).get("value")
+                or 0
             ),
             "amount": float(
                 data.get("transactionValue", {}).get("value")
@@ -226,7 +263,9 @@ class ComdirectData(BaseModel):
         if not isinstance(data, dict):
             return data
         return {
-            "accounts": [ComdirectAccount.model_validate(a) for a in (data.get("accounts") or [])],
+            "accounts": [
+                ComdirectAccount.model_validate(a) for a in (data.get("accounts") or [])
+            ],
             "transactions": {
                 k: [ComdirectTransaction.model_validate(tx) for tx in v]
                 for k, v in (data.get("transactions") or {}).items()
