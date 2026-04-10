@@ -1,3 +1,10 @@
+## [1.8.4](https://github.com/max5800/comdirect-firefly-sync/compare/v1.8.3...v1.8.4) (2026-04-10)
+
+
+### Bug Fixes
+
+* add CORS middleware + correct vault path to k8s/finance-api ([70246f7](https://github.com/max5800/comdirect-firefly-sync/commit/70246f7439ee3a2bee8e14338a73f78aaf50ba41))
+
 ## [1.8.3](https://github.com/max5800/comdirect-firefly-sync/compare/v1.8.2...v1.8.3) (2026-04-10)
 
 
