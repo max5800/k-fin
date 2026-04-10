@@ -2,7 +2,8 @@
 api:
   image:
     repository: ghcr.io/max5800/comdirect-firefly-sync-api
-    tag: latest
+    # Defaults to v<Chart.Version> when empty
+    tag: ""
     pullPolicy: IfNotPresent
   replicaCount: 1
   resources:
@@ -34,7 +35,8 @@ ingress:
 worker:
   image:
     repository: ghcr.io/max5800/comdirect-firefly-sync-worker
-    tag: latest
+    # Defaults to v<Chart.Version> when empty
+    tag: ""
     pullPolicy: IfNotPresent
   replicaCount: 1
   resources:
