@@ -124,7 +124,10 @@ class TestSyncTrigger:
         assert resp.status_code == 401
 
     def test_trigger_forwards_to_worker(self, client):
-        mock_response = httpx.Response(200, json={"status": "triggered"})
+        mock_response = httpx.Response(
+            200,
+            json={"status": "pending_tan", "message": "TAN sent to device, confirm in app"},
+        )
         with patch("src.api.serve_exports.httpx.AsyncClient") as mock_cls:
             mock_client = AsyncMock()
             mock_client.post.return_value = mock_response
@@ -136,7 +139,7 @@ class TestSyncTrigger:
                 "/sync/trigger", headers={"Authorization": "Bearer test-secret"}
             )
             assert resp.status_code == 200
-            assert resp.json() == {"status": "triggered"}
+            assert resp.json()["status"] == "pending_tan"
 
     def test_trigger_worker_unreachable_returns_503(self, client):
         with patch("src.api.serve_exports.httpx.AsyncClient") as mock_cls:
@@ -151,3 +154,37 @@ class TestSyncTrigger:
             )
             assert resp.status_code == 503
             assert "unreachable" in resp.json()["detail"].lower()
+
+
+class TestSyncStatus:
+    def test_status_requires_auth(self, client):
+        resp = client.get("/sync/status")
+        assert resp.status_code == 401
+
+    def test_status_forwards_to_worker(self, client):
+        mock_response = httpx.Response(200, json={"status": "done", "error": None})
+        with patch("src.api.serve_exports.httpx.AsyncClient") as mock_cls:
+            mock_client = AsyncMock()
+            mock_client.get.return_value = mock_response
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=False)
+            mock_cls.return_value = mock_client
+
+            resp = client.get(
+                "/sync/status", headers={"Authorization": "Bearer test-secret"}
+            )
+            assert resp.status_code == 200
+            assert resp.json()["status"] == "done"
+
+    def test_status_worker_unreachable_returns_503(self, client):
+        with patch("src.api.serve_exports.httpx.AsyncClient") as mock_cls:
+            mock_client = AsyncMock()
+            mock_client.get.side_effect = httpx.ConnectError("connection refused")
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=False)
+            mock_cls.return_value = mock_client
+
+            resp = client.get(
+                "/sync/status", headers={"Authorization": "Bearer test-secret"}
+            )
+            assert resp.status_code == 503
