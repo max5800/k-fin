@@ -33,6 +33,12 @@ spec:
           env:
             - name: WORKER_URL
               value: "http://{{ include "comdirect-firefly-sync.fullname" . }}-worker:8001"
+            - name: API_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "comdirect-firefly-sync.fullname" . }}-comdirect-secrets
+                  key: API_TOKEN
+                  optional: true
             {{- range $key, $value := .Values.api.env }}
             - name: {{ $key }}
               value: {{ $value | quote }}

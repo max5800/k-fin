@@ -68,3 +68,5 @@ externalSecret:
       envVar: COMDIRECT_USERNAME
     - vaultKey: comdirect-pin
       envVar: COMDIRECT_PIN
+    - vaultKey: api-token
+      envVar: API_TOKEN
