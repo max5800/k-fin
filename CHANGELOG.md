@@ -1,3 +1,10 @@
+## [1.9.2](https://github.com/max5800/comdirect-firefly-sync/compare/v1.9.1...v1.9.2) (2026-04-10)
+
+
+### Bug Fixes
+
+* use uppercase comdirect vault keys ([638f6dc](https://github.com/max5800/comdirect-firefly-sync/commit/638f6dcbb560d7b1955eda1b530f71453e32e9d4))
+
 ## [1.9.1](https://github.com/max5800/comdirect-firefly-sync/compare/v1.9.0...v1.9.1) (2026-04-10)
 
 
