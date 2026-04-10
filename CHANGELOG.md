@@ -1,3 +1,10 @@
+# [1.12.0](https://github.com/max5800/comdirect-firefly-sync/compare/v1.11.0...v1.12.0) (2026-04-10)
+
+
+### Features
+
+* allow per-sync request overrides ([e4abd02](https://github.com/max5800/comdirect-firefly-sync/commit/e4abd02970b4d1b296b8ab73c054a689e6f0a0d9))
+
 # [1.11.0](https://github.com/max5800/comdirect-firefly-sync/compare/v1.10.0...v1.11.0) (2026-04-10)
 
 
