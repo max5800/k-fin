@@ -30,7 +30,7 @@ ingress:
 # --- Internal worker (security-sensitive, has bank credentials) ---
 worker:
   image:
-    repository: ghcr.io/max5800/comdirect-firefly-sync
+    repository: ghcr.io/max5800/comdirect-firefly-sync-worker
     tag: latest
     pullPolicy: IfNotPresent
   replicaCount: 1
