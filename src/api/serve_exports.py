@@ -18,6 +18,8 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 EXPORTS_DIR = Path(os.getenv("EXPORTS_DIR", "/data/exports"))
 API_TOKEN = os.getenv("API_TOKEN", "")
+if not API_TOKEN:
+    raise RuntimeError("CRITICAL: API_TOKEN environment variable is required")
 WORKER_URL = os.getenv("WORKER_URL", "http://comdirect-worker:8001")
 
 app = FastAPI(
@@ -43,8 +45,6 @@ _bearer_scheme = HTTPBearer(auto_error=False)
 def _check_token(
     credentials: HTTPAuthorizationCredentials | None = Depends(_bearer_scheme),
 ) -> None:
-    if not API_TOKEN:
-        return
     if not credentials or not hmac.compare_digest(credentials.credentials, API_TOKEN):
         raise HTTPException(status_code=401, detail="Unauthorized")
 

@@ -27,14 +27,7 @@ def client(exports_dir):
         yield TestClient(mod.app)
 
 
-@pytest.fixture
-def client_no_auth(exports_dir):
-    """Test client with no API_TOKEN set."""
-    with patch.dict(os.environ, {"EXPORTS_DIR": str(exports_dir), "API_TOKEN": ""}):
-        import importlib
-        import src.api.serve_exports as mod
-        importlib.reload(mod)
-        yield TestClient(mod.app)
+
 
 
 class TestHealth:
@@ -57,12 +50,6 @@ class TestAuth:
         resp = client.get("/exports", headers={"Authorization": "Bearer test-secret"})
         assert resp.status_code == 200
 
-    def test_no_auth_when_token_empty(self, client_no_auth):
-        resp = client_no_auth.get("/exports")
-        assert resp.status_code == 200
-
-
-class TestListExports:
     def test_lists_csv_files(self, client):
         resp = client.get("/exports", headers={"Authorization": "Bearer test-secret"})
         data = resp.json()
