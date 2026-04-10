@@ -1,3 +1,11 @@
+# [1.4.0](https://github.com/max5800/comdirect-firefly-sync/compare/v1.3.0...v1.4.0) (2026-04-10)
+
+
+### Features
+
+* add model-based JSON export path ([5d6e318](https://github.com/max5800/comdirect-firefly-sync/commit/5d6e318037c56647f6c5ede49cd609d76bd1e4ac))
+* harden report generator for multi-format input and missing data ([1c43609](https://github.com/max5800/comdirect-firefly-sync/commit/1c43609b00b2ffb7a1ce7f65605614084f5b6b3a))
+
 # [1.3.0](https://github.com/max5800/comdirect-firefly-sync/compare/v1.2.0...v1.3.0) (2026-04-10)
 
 
