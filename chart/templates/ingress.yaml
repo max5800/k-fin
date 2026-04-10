@@ -2,9 +2,10 @@
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: {{ include "comdirect-firefly-sync.fullname" . }}
+  name: {{ include "comdirect-firefly-sync.fullname" . }}-api
   labels:
     {{- include "comdirect-firefly-sync.labels" . | nindent 4 }}
+    app.kubernetes.io/component: api
   {{- with .Values.ingress.annotations }}
   annotations:
     {{- toYaml . | nindent 4 }}
@@ -19,7 +20,7 @@ spec:
             pathType: Prefix
             backend:
               service:
-                name: {{ include "comdirect-firefly-sync.fullname" . }}
+                name: {{ include "comdirect-firefly-sync.fullname" . }}-api
                 port:
                   number: {{ .Values.service.port }}
 {{- end }}

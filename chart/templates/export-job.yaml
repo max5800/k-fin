@@ -1,0 +1,44 @@
+{{- if .Values.exportJob.enabled }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "comdirect-firefly-sync.fullname" . }}-export
+  labels:
+    {{- include "comdirect-firefly-sync.labels" . | nindent 4 }}
+    app.kubernetes.io/component: export
+  annotations:
+    # Delete before re-applying: kubectl delete job <name> && helm upgrade ...
+    helm.sh/hook-delete-policy: before-hook-creation
+spec:
+  backoffLimit: {{ .Values.exportJob.backoffLimit }}
+  template:
+    metadata:
+      labels:
+        {{- include "comdirect-firefly-sync.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: export
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: export
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          env:
+            {{- range $key, $value := .Values.exportJob.env }}
+            - name: {{ $key }}
+              value: {{ $value | quote }}
+            {{- end }}
+          envFrom:
+            - secretRef:
+                name: {{ include "comdirect-firefly-sync.fullname" . }}-comdirect-secrets
+          volumeMounts:
+            {{- if .Values.persistence.enabled }}
+            - name: exports
+              mountPath: /data/exports
+            {{- end }}
+      volumes:
+        {{- if .Values.persistence.enabled }}
+        - name: exports
+          persistentVolumeClaim:
+            claimName: {{ include "comdirect-firefly-sync.fullname" . }}-exports
+        {{- end }}
+{{- end }}

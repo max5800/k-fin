@@ -9,7 +9,7 @@ profile = cfg.get("profile", "local")
 
 # Release name — must match helm() below
 RELEASE_NAME = "comdirect-sync"
-SECRET_NAME = RELEASE_NAME + "-comdirect-firefly-sync-secrets"
+SECRET_NAME = RELEASE_NAME + "-comdirect-firefly-sync-comdirect-secrets"
 
 # Select K8s context and values based on profile
 if profile == "remote":
@@ -60,7 +60,7 @@ k8s_yaml(helm(
 
 # Configure Tilt resource
 k8s_resource(
-    RELEASE_NAME + "-comdirect-firefly-sync",
+    RELEASE_NAME + "-comdirect-firefly-sync-api",
     port_forwards=["8000:8000"],
     labels=["sync"],
     links=[
