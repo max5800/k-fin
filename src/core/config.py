@@ -18,6 +18,10 @@ class Settings(BaseSettings):
     sync_interval_minutes: int = 60
     sync_initial_days: int = 90
     sync_dedup_enabled: bool = True
+    account_transaction_limit: int = 500
+    account_transaction_min_booking_date: str | None = None
+    depot_transaction_limit: int = 100
+    depot_transaction_min_booking_date: str | None = None
 
     # App
     app_env: str = "development"
