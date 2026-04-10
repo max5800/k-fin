@@ -39,4 +39,20 @@ externalSecret:
   secretStore:
     name: vault-backend
     kind: ClusterSecretStore
-  vaultPath: secret/data/k8s/finance-api
+  vaultPath: k8s/finance-api
+  keys:
+    - path: finance/comdirect
+      vaultKey: comdirect-client-id
+      envVar: COMDIRECT_CLIENT_ID
+    - path: finance/comdirect
+      vaultKey: comdirect-client-secret
+      envVar: COMDIRECT_CLIENT_SECRET
+    - path: finance/comdirect
+      vaultKey: comdirect-username
+      envVar: COMDIRECT_USERNAME
+    - path: finance/comdirect
+      vaultKey: comdirect-pin
+      envVar: COMDIRECT_PIN
+    - path: k8s/finance-api
+      vaultKey: API_TOKEN
+      envVar: API_TOKEN
