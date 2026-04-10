@@ -1,8 +1,8 @@
 """
-Read-only REST API to serve exported CSV files.
+Read-only REST API to serve exported CSV files and trigger syncs.
 
-Designed to run in an isolated container with access only to the
-exports volume — no Comdirect credentials, no source code access.
+Public-facing service (comdirect-api). Has NO bank secrets — delegates
+sync work to the internal comdirect-worker via HTTP.
 """
 
 import hmac
@@ -11,12 +11,14 @@ import re
 from collections import defaultdict
 from pathlib import Path
 
+import httpx
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 EXPORTS_DIR = Path(os.getenv("EXPORTS_DIR", "/data/exports"))
 API_TOKEN = os.getenv("API_TOKEN", "")
+WORKER_URL = os.getenv("WORKER_URL", "http://comdirect-worker:8001")
 
 app = FastAPI(
     title="Comdirect Finance Export API",
@@ -117,3 +119,16 @@ def download_export(filename: str, _auth: None = Depends(_check_token)):
         media_type="text/csv; charset=utf-8-sig",
         filename=filename,
     )
+
+
+@app.post("/sync/trigger")
+async def trigger_sync(_auth: None = Depends(_check_token)):
+    """Trigger a sync run by calling the internal worker service."""
+    try:
+        async with httpx.AsyncClient(timeout=300) as client:
+            resp = await client.post(f"{WORKER_URL}/internal/sync")
+            return resp.json()
+    except httpx.ConnectError:
+        raise HTTPException(status_code=503, detail="Worker service unreachable")
+    except httpx.HTTPError as e:
+        raise HTTPException(status_code=503, detail=f"Worker communication failed: {e}")
