@@ -44,3 +44,49 @@ jobs:
             @semantic-release/git
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  publish:
+    name: Publish Images & Helm Chart
+    needs: release
+    if: needs.release.outputs.published == 'true'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push API image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: Dockerfile.api
+          push: true
+          tags: |
+            ghcr.io/max5800/comdirect-firefly-sync-api:v${{ needs.release.outputs.version }}
+            ghcr.io/max5800/comdirect-firefly-sync-api:latest
+
+      - name: Build and push Worker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: Dockerfile
+          push: true
+          tags: |
+            ghcr.io/max5800/comdirect-firefly-sync-worker:v${{ needs.release.outputs.version }}
+            ghcr.io/max5800/comdirect-firefly-sync-worker:latest
+
+      - name: Helm registry login
+        run: helm registry login ghcr.io -u ${{ github.actor }} -p ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Package Helm chart
+        run: helm package chart/ --version ${{ needs.release.outputs.version }} --app-version ${{ needs.release.outputs.version }}
+
+      - name: Push Helm chart
+        run: helm push comdirect-firefly-sync-${{ needs.release.outputs.version }}.tgz oci://ghcr.io/max5800/helm-charts
