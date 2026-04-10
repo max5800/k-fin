@@ -164,6 +164,8 @@ Account type mapping (from `accountType.key`):
 
 Read-only API serving exported files. No transformation — serves raw CSVs.
 
+In the Kubernetes deployment, the API (`comdirect-api`, port 8000) is the public-facing service. Sync is triggered via the API, which calls the internal `comdirect-worker` (port 8001) to perform the actual Comdirect data export.
+
 | Endpoint | Response |
 |----------|----------|
 | `GET /health` | `{"status": "ok"}` |

@@ -21,19 +21,35 @@ tilt up --stream -- --profile=local
 helm upgrade --install comdirect-sync ./chart -f dev/values.remote.yaml
 ```
 
-## Architecture
+## Architecture — Two-Service Model
 
-### 1. Read-only API deployment
+The deployment consists of two microservices with strict secret separation:
 
-The API container serves already exported CSV files and does **not** need bank credentials.
-This is the safe always-on component. The PVC is mounted read-only.
+### 1. comdirect-api (Public)
 
-### 2. Manual export job
+- **Port:** 8000
+- **Role:** Public-facing, read-only API serving exported CSVs. Also triggers sync by calling the worker.
+- **Secrets:** None — no bank credentials
+- **PVC:** Shared volume mounted read-only for serving exports
 
-The export runner needs the Comdirect credentials and therefore must be treated as a manually triggered, security-sensitive workload.
-Do **not** run it as an unattended CronJob unless the auth model changes.
+### 2. comdirect-worker (Internal)
 
-The export job is the **only** workload that receives the Comdirect credentials via `envFrom`.
+- **Port:** 8001
+- **Role:** Internal worker that performs Comdirect data export. Requires manual pushTAN confirmation.
+- **Secrets:** Receives Comdirect credentials via `envFrom` (ExternalSecret/Vault)
+- **PVC:** Shared volume mounted read-write for writing exports
+
+Do **not** run the worker as an unattended CronJob unless the auth model changes.
+
+### NetworkPolicy
+
+A NetworkPolicy restricts ingress to `comdirect-worker` so that only `comdirect-api` can reach it. No other pod in the cluster can call the worker directly. This enforces the secret boundary — the API acts as the only gateway to the worker.
+
+### PVC Sharing
+
+Both services mount the same PersistentVolumeClaim:
+- `comdirect-worker` writes exports to the PVC
+- `comdirect-api` reads and serves them from the same PVC
 
 ## Secrets via Vault + ESO
 
@@ -53,10 +69,11 @@ Expected fields:
 These are projected into Kubernetes via ExternalSecret (`chart/templates/externalsecret.yaml`).
 Enable with `externalSecret.enabled: true` in your values file.
 
-**The API deployment does NOT receive these secrets. Only the export job does.**
+**Only `comdirect-worker` receives these secrets. The API deployment does NOT.**
 
 ## Important
 
-- The API should **not** get the finance credentials.
-- The manual export job **does** get the finance credentials.
+- `comdirect-api` must **not** receive bank credentials.
+- `comdirect-worker` is the only workload with bank credentials and must not be publicly accessible.
+- The NetworkPolicy ensures only `comdirect-api` can call `comdirect-worker`.
 - If you later add Firefly import or agentic analysis, keep those concerns as separate workloads.

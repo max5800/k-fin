@@ -11,17 +11,28 @@ Connects to the Comdirect REST API (read-only), exports your financial data as C
 - **Comdirect connector** — OAuth2 + pushTAN authentication, strictly read-only
 - **CSV export** — Accounts, transactions, depot positions, depot transactions, financial overview
 - **REST API** — Serves exported CSVs over HTTP (e.g. for AI agents or dashboards)
-- **Docker** — Two-container setup: export job + API server with shared volume
+- **Docker / Kubernetes** — Two-microservice architecture: public API + internal worker
 - **Firefly III import** — Planned: periodic sync with deduplication
 
 ## Architecture
 
+The project is split into two microservices with strict secret separation:
+
+| Service | Port | Role | Bank Secrets |
+|---------|------|------|-------------|
+| **comdirect-api** | 8000 | Public-facing read-only API | No |
+| **comdirect-worker** | 8001 | Internal export/sync worker | Yes |
+
+A Kubernetes NetworkPolicy ensures only `comdirect-api` can reach `comdirect-worker`. Both services share a PVC for exported data.
+
+### Source Modules
+
 | Module | Description |
 |--------|-------------|
 | `src/connector/` | Comdirect API client (auth, accounts, transactions, depot) |
-| `src/api/` | Read-only FastAPI serving CSV exports |
+| `src/api/` | Read-only FastAPI serving CSV exports (comdirect-api) |
 | `src/importer/` | Firefly III client + transaction mapper *(planned)* |
-| `src/scheduler/` | Sync job orchestration |
+| `src/scheduler/` | Sync job orchestration (comdirect-worker) |
 | `src/core/` | Config (pydantic-settings), logging |
 | `scripts/` | Export script, auth test, debug tools |
 
@@ -70,7 +81,7 @@ This triggers the Comdirect OAuth flow (including pushTAN confirmation) and writ
 uv run uvicorn main:app --reload
 ```
 
-The API serves the exported CSVs at `http://localhost:8001`.
+The API serves the exported CSVs at `http://localhost:8000`.
 
 ### Docker
 
@@ -90,10 +101,12 @@ tilt up --stream -- --profile=local
 helm upgrade --install comdirect-sync ./chart -f dev/values.remote.yaml
 ```
 
-The chart separates concerns:
+The chart deploys two microservices:
 
-- **Read-only API** — always-on deployment, no bank credentials
-- **Manual export job** — security-sensitive workload, receives Comdirect credentials via ExternalSecret/Vault
+- **comdirect-api** (port 8000) — public-facing, read-only API. No bank credentials. Triggers syncs by calling the worker.
+- **comdirect-worker** (port 8001) — internal only. Holds Comdirect credentials via ExternalSecret/Vault. A NetworkPolicy restricts ingress to `comdirect-api` only.
+
+Both services share a PVC for exported data.
 
 See `docs/kubernetes-deployment.md` for the full deployment guide.
 
