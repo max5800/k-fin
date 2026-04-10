@@ -14,13 +14,18 @@ from src.scheduler.sync_job import run_sync
 setup_logging()
 logger = get_logger("worker")
 
-_background_tasks: set[asyncio.Task] = set()
-
 app = FastAPI(
     title="comdirect-worker",
     description="Internal sync worker — not publicly accessible",
     version="0.1.0",
 )
+
+# ---------------------------------------------------------------------------
+# In-memory sync state (single-worker deployment)
+# ---------------------------------------------------------------------------
+
+_sync_state: dict = {"status": "idle", "error": None}
+_sync_task: asyncio.Task | None = None
 
 
 @app.get("/health")
@@ -31,14 +36,29 @@ def health():
 @app.post("/internal/sync")
 async def internal_sync():
     """Run a sync job. Called by the public API service."""
+    global _sync_task
 
-    async def _safe_sync():
+    if _sync_task and not _sync_task.done():
+        return {"status": _sync_state["status"], "message": "Sync already in progress"}
+
+    _sync_state["status"] = "pending_tan"
+    _sync_state["error"] = None
+
+    async def _run():
         try:
+            _sync_state["status"] = "pending_tan"
             await run_sync()
-        except Exception:
+            _sync_state["status"] = "done"
+        except Exception as exc:
             logger.exception("Sync run failed")
+            _sync_state["status"] = "error"
+            _sync_state["error"] = str(exc)
 
-    task = asyncio.create_task(_safe_sync())
-    _background_tasks.add(task)
-    task.add_done_callback(_background_tasks.discard)
-    return {"status": "triggered"}
+    _sync_task = asyncio.create_task(_run())
+    return {"status": "pending_tan", "message": "TAN sent to device, confirm in app"}
+
+
+@app.get("/internal/sync/status")
+async def sync_status():
+    """Return current sync state."""
+    return {"status": _sync_state["status"], "error": _sync_state.get("error")}

@@ -14,6 +14,7 @@ After that, account/transaction endpoints are available.
 
 import asyncio
 import json
+import time
 import uuid
 
 import httpx
@@ -25,6 +26,10 @@ logger = get_logger("comdirect")
 
 BASE_URL = "https://api.comdirect.de"
 OAUTH_URL = f"{BASE_URL}/oauth/token"
+
+
+class ComdirectTANTimeoutError(Exception):
+    """Raised when TAN confirmation is not received within the timeout."""
 
 
 class ComdirectClient:
@@ -118,12 +123,13 @@ class ComdirectClient:
         """
         Full Comdirect OAuth auth flow (steps 1–6).
 
-        Steps 1–3 are automated; step 4 blocks until the user confirms the
-        TAN in their app and presses Enter.  Steps 5–6 then complete the
-        session activation and obtain the secondary access token required
+        Steps 1–3 are automated; step 4 polls the session activation
+        endpoint until TAN is confirmed in the app (or timeout).
+        Steps 5–6 then obtain the secondary access token required
         for all data API calls.
 
         Returns True on success, False on any error.
+        Raises ComdirectTANTimeoutError if TAN is not confirmed in time.
         """
         async with httpx.AsyncClient() as http:
             # ---- Step 1: Password grant --------------------------------
@@ -208,19 +214,13 @@ class ComdirectClient:
             tan_typ = tan_info.get("typ", settings.comdirect_tan_method)
             logger.info(f"Step 3 OK — TAN challenge sent, typ={tan_typ!r}")
 
-            # ---- Step 4: Wait for user to confirm TAN ------------------
-            print(f"\nTAN method: {tan_typ}")
-            print("Please confirm the TAN in your Comdirect app, then press Enter…")
-            # run_in_executor so we don't block the event loop
-            loop = asyncio.get_event_loop()
-            await loop.run_in_executor(None, input)
-            logger.info("Step 4: User confirmed TAN")
+            # ---- Step 4+5: Poll for TAN confirmation --------------------
+            logger.info(
+                f"Step 4: Waiting for TAN confirmation (typ={tan_typ!r}), "
+                f"polling every {settings.comdirect_tan_poll_interval_s}s, "
+                f"timeout {settings.comdirect_tan_timeout_s}s…"
+            )
 
-            # ---- Step 5: Activate session with TAN ---------------------
-            logger.info("Step 5: Activating session…")
-
-            # Per docs (Ch. 2.4): body must contain ONLY identifier,
-            # sessionTanActive=true, activated2FA=true — no extra fields.
             activation_body = {
                 "identifier": session_identifier,
                 "sessionTanActive": True,
@@ -233,14 +233,33 @@ class ComdirectClient:
                 "x-once-authentication-info": json.dumps({"id": challenge_id}),
             }
 
-            resp = await http.patch(
-                f"{BASE_URL}/api/session/clients/user/v1/sessions/{session_identifier}",
-                headers=headers_step_5,
-                json=activation_body,
-            )
-            if resp.status_code not in (200, 201):
-                logger.error(f"Step 5 failed: HTTP {resp.status_code}")
+            deadline = time.monotonic() + settings.comdirect_tan_timeout_s
+            activated = False
+
+            while time.monotonic() < deadline:
+                resp = await http.patch(
+                    f"{BASE_URL}/api/session/clients/user/v1/sessions/{session_identifier}",
+                    headers=headers_step_5,
+                    json=activation_body,
+                )
+                if resp.status_code in (200, 201):
+                    activated = True
+                    break
+                if resp.status_code in (401, 403):
+                    logger.debug(
+                        f"TAN not yet confirmed (HTTP {resp.status_code}), retrying…"
+                    )
+                    await asyncio.sleep(settings.comdirect_tan_poll_interval_s)
+                    continue
+                # Unexpected status — abort
+                logger.error(f"Step 5 unexpected HTTP {resp.status_code}")
                 return False
+
+            if not activated:
+                raise ComdirectTANTimeoutError(
+                    f"TAN not confirmed within {settings.comdirect_tan_timeout_s}s"
+                )
+
             logger.info("Step 5 OK — session activated")
 
             # Wait briefly for the backend session state to propagate

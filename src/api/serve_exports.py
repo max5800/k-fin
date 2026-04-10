@@ -125,8 +125,21 @@ def download_export(filename: str, _auth: None = Depends(_check_token)):
 async def trigger_sync(_auth: None = Depends(_check_token)):
     """Trigger a sync run by calling the internal worker service."""
     try:
-        async with httpx.AsyncClient(timeout=300) as client:
+        async with httpx.AsyncClient(timeout=30) as client:
             resp = await client.post(f"{WORKER_URL}/internal/sync")
+            return resp.json()
+    except httpx.ConnectError:
+        raise HTTPException(status_code=503, detail="Worker service unreachable")
+    except httpx.HTTPError as e:
+        raise HTTPException(status_code=503, detail=f"Worker communication failed: {e}")
+
+
+@app.get("/sync/status")
+async def sync_status(_auth: None = Depends(_check_token)):
+    """Proxy sync status from the internal worker service."""
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.get(f"{WORKER_URL}/internal/sync/status")
             return resp.json()
     except httpx.ConnectError:
         raise HTTPException(status_code=503, detail="Worker service unreachable")
