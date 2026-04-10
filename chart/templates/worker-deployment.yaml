@@ -23,7 +23,7 @@ spec:
       {{- end }}
       containers:
         - name: worker
-          image: "{{ .Values.worker.image.repository }}:{{ .Values.worker.image.tag }}"
+          image: "{{ .Values.worker.image.repository }}:{{ .Values.worker.image.tag | default (printf "v%s" .Chart.Version) }}"
           imagePullPolicy: {{ .Values.worker.image.pullPolicy }}
           {{- if .Values.worker.command }}
           command:

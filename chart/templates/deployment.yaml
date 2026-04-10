@@ -23,7 +23,7 @@ spec:
       {{- end }}
       containers:
         - name: api
-          image: "{{ .Values.api.image.repository }}:{{ .Values.api.image.tag }}"
+          image: "{{ .Values.api.image.repository }}:{{ .Values.api.image.tag | default (printf "v%s" .Chart.Version) }}"
           imagePullPolicy: {{ .Values.api.image.pullPolicy }}
           {{- if .Values.api.command }}
           command:
