@@ -121,12 +121,12 @@ def download_export(filename: str, _auth: None = Depends(_check_token)):
     )
 
 
-@app.post("/sync/trigger")
-async def trigger_sync(_auth: None = Depends(_check_token)):
-    """Trigger a sync run by calling the internal worker service."""
+@app.post("/sync/start")
+async def sync_start(_auth: None = Depends(_check_token)):
+    """Begin a sync run — triggers TAN challenge via the internal worker."""
     try:
         async with httpx.AsyncClient(timeout=30) as client:
-            resp = await client.post(f"{WORKER_URL}/internal/sync")
+            resp = await client.post(f"{WORKER_URL}/internal/sync/start")
             return resp.json()
     except httpx.ConnectError:
         raise HTTPException(status_code=503, detail="Worker service unreachable")
@@ -134,12 +134,15 @@ async def trigger_sync(_auth: None = Depends(_check_token)):
         raise HTTPException(status_code=503, detail=f"Worker communication failed: {e}")
 
 
-@app.get("/sync/status")
-async def sync_status(_auth: None = Depends(_check_token)):
-    """Proxy sync status from the internal worker service."""
+@app.post("/sync/confirm")
+async def sync_confirm(session_id: str, _auth: None = Depends(_check_token)):
+    """Confirm TAN and complete sync via the internal worker."""
     try:
-        async with httpx.AsyncClient(timeout=10) as client:
-            resp = await client.get(f"{WORKER_URL}/internal/sync/status")
+        async with httpx.AsyncClient(timeout=120) as client:
+            resp = await client.post(
+                f"{WORKER_URL}/internal/sync/confirm",
+                params={"session_id": session_id},
+            )
             return resp.json()
     except httpx.ConnectError:
         raise HTTPException(status_code=503, detail="Worker service unreachable")

@@ -118,15 +118,15 @@ class TestPathTraversal:
         assert resp.status_code == 400
 
 
-class TestSyncTrigger:
-    def test_trigger_requires_auth(self, client):
-        resp = client.post("/sync/trigger")
+class TestSyncStart:
+    def test_start_requires_auth(self, client):
+        resp = client.post("/sync/start")
         assert resp.status_code == 401
 
-    def test_trigger_forwards_to_worker(self, client):
+    def test_start_forwards_to_worker(self, client):
         mock_response = httpx.Response(
             200,
-            json={"status": "pending_tan", "message": "TAN sent to device, confirm in app"},
+            json={"status": "pending_tan", "session_id": "abc-123"},
         )
         with patch("src.api.serve_exports.httpx.AsyncClient") as mock_cls:
             mock_client = AsyncMock()
@@ -136,12 +136,13 @@ class TestSyncTrigger:
             mock_cls.return_value = mock_client
 
             resp = client.post(
-                "/sync/trigger", headers={"Authorization": "Bearer test-secret"}
+                "/sync/start", headers={"Authorization": "Bearer test-secret"}
             )
             assert resp.status_code == 200
             assert resp.json()["status"] == "pending_tan"
+            assert "session_id" in resp.json()
 
-    def test_trigger_worker_unreachable_returns_503(self, client):
+    def test_start_worker_unreachable_returns_503(self, client):
         with patch("src.api.serve_exports.httpx.AsyncClient") as mock_cls:
             mock_client = AsyncMock()
             mock_client.post.side_effect = httpx.ConnectError("connection refused")
@@ -150,41 +151,46 @@ class TestSyncTrigger:
             mock_cls.return_value = mock_client
 
             resp = client.post(
-                "/sync/trigger", headers={"Authorization": "Bearer test-secret"}
+                "/sync/start", headers={"Authorization": "Bearer test-secret"}
             )
             assert resp.status_code == 503
             assert "unreachable" in resp.json()["detail"].lower()
 
 
-class TestSyncStatus:
-    def test_status_requires_auth(self, client):
-        resp = client.get("/sync/status")
+class TestSyncConfirm:
+    def test_confirm_requires_auth(self, client):
+        resp = client.post("/sync/confirm?session_id=abc")
         assert resp.status_code == 401
 
-    def test_status_forwards_to_worker(self, client):
-        mock_response = httpx.Response(200, json={"status": "done", "error": None})
+    def test_confirm_forwards_to_worker(self, client):
+        mock_response = httpx.Response(
+            200,
+            json={"status": "done", "message": "Export completed"},
+        )
         with patch("src.api.serve_exports.httpx.AsyncClient") as mock_cls:
             mock_client = AsyncMock()
-            mock_client.get.return_value = mock_response
+            mock_client.post.return_value = mock_response
             mock_client.__aenter__ = AsyncMock(return_value=mock_client)
             mock_client.__aexit__ = AsyncMock(return_value=False)
             mock_cls.return_value = mock_client
 
-            resp = client.get(
-                "/sync/status", headers={"Authorization": "Bearer test-secret"}
+            resp = client.post(
+                "/sync/confirm?session_id=abc-123",
+                headers={"Authorization": "Bearer test-secret"},
             )
             assert resp.status_code == 200
             assert resp.json()["status"] == "done"
 
-    def test_status_worker_unreachable_returns_503(self, client):
+    def test_confirm_worker_unreachable_returns_503(self, client):
         with patch("src.api.serve_exports.httpx.AsyncClient") as mock_cls:
             mock_client = AsyncMock()
-            mock_client.get.side_effect = httpx.ConnectError("connection refused")
+            mock_client.post.side_effect = httpx.ConnectError("connection refused")
             mock_client.__aenter__ = AsyncMock(return_value=mock_client)
             mock_client.__aexit__ = AsyncMock(return_value=False)
             mock_cls.return_value = mock_client
 
-            resp = client.get(
-                "/sync/status", headers={"Authorization": "Bearer test-secret"}
+            resp = client.post(
+                "/sync/confirm?session_id=abc-123",
+                headers={"Authorization": "Bearer test-secret"},
             )
             assert resp.status_code == 503
