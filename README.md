@@ -80,12 +80,22 @@ docker-compose up
 
 ## Kubernetes
 
-A Kubernetes deployment path is prepared under `k8s/`, but it intentionally separates concerns:
+Deploy via the **Helm chart** in `chart/` (or **Tilt** for local development):
 
-- **Read-only API** as an always-on deployment
-- **Manual export job** as a security-sensitive workload using Comdirect credentials
+```bash
+# Local dev
+tilt up --stream -- --profile=local
 
-See `docs/kubernetes-deployment.md` for the recommended Vault + ESO model.
+# Remote
+helm upgrade --install comdirect-sync ./chart -f dev/values.remote.yaml
+```
+
+The chart separates concerns:
+
+- **Read-only API** — always-on deployment, no bank credentials
+- **Manual export job** — security-sensitive workload, receives Comdirect credentials via ExternalSecret/Vault
+
+See `docs/kubernetes-deployment.md` for the full deployment guide.
 
 ## API
 
