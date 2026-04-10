@@ -22,7 +22,7 @@ COPY main.py ./
 
 # Export directory — mount a volume here
 RUN mkdir -p /data/exports && \
-    adduser --disabled-password --gecos "" --no-create-home appuser && \
+    adduser --disabled-password --gecos "" appuser && \
     chown -R appuser:appuser /app /data/exports
 
 USER appuser

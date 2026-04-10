@@ -1,19 +1,20 @@
 image:
   pullPolicy: Always
 
-resources:
-  requests:
-    cpu: 50m
-    memory: 64Mi
-  limits:
-    cpu: 500m
-    memory: 512Mi
+api:
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
 
-env:
-  APP_ENV: "production"
-  LOG_LEVEL: "INFO"
-  SYNC_INTERVAL_MINUTES: "60"
-  FIREFLY_BASE_URL: "http://firefly-iii:8080"
+  env:
+    APP_ENV: "production"
+    LOG_LEVEL: "INFO"
+    SYNC_INTERVAL_MINUTES: "60"
+    FIREFLY_BASE_URL: "http://firefly-iii:8080"
 
 ingress:
   enabled: true
