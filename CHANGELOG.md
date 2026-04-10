@@ -1,3 +1,10 @@
+## [1.8.5](https://github.com/max5800/comdirect-firefly-sync/compare/v1.8.4...v1.8.5) (2026-04-10)
+
+
+### Bug Fixes
+
+* document CORS_ORIGINS in env example ([acd656a](https://github.com/max5800/comdirect-firefly-sync/commit/acd656abe382225f72efd2417258f6e5e81f9e86))
+
 ## [1.8.4](https://github.com/max5800/comdirect-firefly-sync/compare/v1.8.3...v1.8.4) (2026-04-10)
 
 
