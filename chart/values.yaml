@@ -44,6 +44,8 @@ worker:
   env:
     EXPORTS_DIR: "/data/exports"
 
+imagePullSecrets: []
+
 persistence:
   enabled: true
   storageClass: ""
