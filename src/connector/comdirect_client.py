@@ -1,20 +1,15 @@
 """
 Comdirect REST API client — read-only.
 
-Auth flow:
-1. POST /oauth/token → access_token (password grant)
-2. POST /api/session/clients/user/v1/sessions → session object
-3. POST /api/session/clients/user/v1/sessions/{sessionId}/validate → trigger TAN
-4. User confirms TAN (pushTAN / photoTAN / smsTAN)
-5. PATCH /api/session/clients/user/v1/sessions/{sessionId}/tan → activate session
-6. POST /oauth/token → secondary access_token (cd_secondary grant)
+Two-step auth flow:
+1. begin_auth() — steps 1-3: obtain token, create session, trigger TAN challenge
+2. User confirms TAN in banking app
+3. complete_auth() — steps 4-6: activate session, obtain secondary token
 
 After that, account/transaction endpoints are available.
 """
 
-import asyncio
 import json
-import time
 import uuid
 
 import httpx
@@ -26,10 +21,6 @@ logger = get_logger("comdirect")
 
 BASE_URL = "https://api.comdirect.de"
 OAUTH_URL = f"{BASE_URL}/oauth/token"
-
-
-class ComdirectTANTimeoutError(Exception):
-    """Raised when TAN confirmation is not received within the timeout."""
 
 
 class ComdirectClient:
@@ -116,20 +107,14 @@ class ComdirectClient:
                 return False
 
     # ------------------------------------------------------------------
-    # Full 6-step auth flow
+    # Two-step auth flow
     # ------------------------------------------------------------------
 
-    async def authenticate_full(self) -> bool:
-        """
-        Full Comdirect OAuth auth flow (steps 1–6).
+    async def begin_auth(self) -> dict:
+        """Steps 1–3: obtain token, create session, trigger TAN challenge.
 
-        Steps 1–3 are automated; step 4 polls the session activation
-        endpoint until TAN is confirmed in the app (or timeout).
-        Steps 5–6 then obtain the secondary access token required
-        for all data API calls.
-
-        Returns True on success, False on any error.
-        Raises ComdirectTANTimeoutError if TAN is not confirmed in time.
+        Returns {"session_identifier": ..., "challenge_id": ...} on success.
+        Raises RuntimeError on failure.
         """
         async with httpx.AsyncClient() as http:
             # ---- Step 1: Password grant --------------------------------
@@ -150,8 +135,7 @@ class ComdirectClient:
                 },
             )
             if resp.status_code != 200:
-                logger.error(f"Step 1 failed: HTTP {resp.status_code}")
-                return False
+                raise RuntimeError(f"Step 1 failed: HTTP {resp.status_code}")
 
             token_data = resp.json()
             self._primary_token = token_data["access_token"]
@@ -169,22 +153,17 @@ class ComdirectClient:
                 },
             )
             if resp.status_code not in (200, 201):
-                logger.error(f"Step 2 failed: HTTP {resp.status_code}")
-                return False
+                raise RuntimeError(f"Step 2 failed: HTTP {resp.status_code}")
 
             session_data = resp.json()
-            # If the API returns a list, unwrap the first element.
             if isinstance(session_data, list):
                 session_data = session_data[0] if session_data else {}
             session_identifier = session_data.get("identifier", self.session_id)
-            self.session_id = session_identifier  # Update to backend session ID
+            self.session_id = session_identifier
             logger.info("Step 2 OK — session acquired")
 
             # ---- Step 3: Validate session (triggers TAN) ---------------
             logger.info("Step 3: Validating session — TAN will be sent to device…")
-
-            # Per docs (Ch. 2.3): body must contain identifier,
-            # sessionTanActive=true AND activated2FA=true.
             validate_body = {
                 "identifier": session_identifier,
                 "sessionTanActive": True,
@@ -200,10 +179,8 @@ class ComdirectClient:
                 json=validate_body,
             )
             if resp.status_code not in (200, 201, 202):
-                logger.error(f"Step 3 failed: HTTP {resp.status_code}")
-                return False
+                raise RuntimeError(f"Step 3 failed: HTTP {resp.status_code}")
 
-            # Extract the challenge info returned by the server.
             tan_info_raw = resp.headers.get("x-once-authentication-info", "{}")
             try:
                 tan_info = json.loads(tan_info_raw)
@@ -214,61 +191,46 @@ class ComdirectClient:
             tan_typ = tan_info.get("typ", settings.comdirect_tan_method)
             logger.info(f"Step 3 OK — TAN challenge sent, typ={tan_typ!r}")
 
-            # ---- Step 4+5: Poll for TAN confirmation --------------------
-            logger.info(
-                f"Step 4: Waiting for TAN confirmation (typ={tan_typ!r}), "
-                f"polling every {settings.comdirect_tan_poll_interval_s}s, "
-                f"timeout {settings.comdirect_tan_timeout_s}s…"
-            )
+            return {
+                "session_identifier": session_identifier,
+                "challenge_id": challenge_id,
+            }
 
+    async def complete_auth(
+        self, session_identifier: str, challenge_id: str
+    ) -> bool:
+        """Steps 4–6: activate session after TAN confirmation, get secondary token.
+
+        Call this after the user has confirmed the TAN in the banking app.
+        Returns True on success, False on error.
+        """
+        async with httpx.AsyncClient() as http:
+            # ---- Step 5: Activate session (TAN already confirmed) ------
+            logger.info("Step 5: Activating session…")
             activation_body = {
                 "identifier": session_identifier,
                 "sessionTanActive": True,
                 "activated2FA": True,
             }
-
             headers_step_5 = {
                 **self._auth_headers(),
                 "Content-Type": "application/json",
                 "x-once-authentication-info": json.dumps({"id": challenge_id}),
             }
 
-            deadline = time.monotonic() + settings.comdirect_tan_timeout_s
-            activated = False
-
-            while time.monotonic() < deadline:
-                resp = await http.patch(
-                    f"{BASE_URL}/api/session/clients/user/v1/sessions/{session_identifier}",
-                    headers=headers_step_5,
-                    json=activation_body,
-                )
-                if resp.status_code in (200, 201):
-                    activated = True
-                    break
-                if resp.status_code in (401, 403):
-                    logger.debug(
-                        f"TAN not yet confirmed (HTTP {resp.status_code}), retrying…"
-                    )
-                    await asyncio.sleep(settings.comdirect_tan_poll_interval_s)
-                    continue
-                # Unexpected status — abort
-                logger.error(f"Step 5 unexpected HTTP {resp.status_code}")
+            resp = await http.patch(
+                f"{BASE_URL}/api/session/clients/user/v1/sessions/{session_identifier}",
+                headers=headers_step_5,
+                json=activation_body,
+            )
+            if resp.status_code not in (200, 201):
+                logger.error(f"Step 5 failed: HTTP {resp.status_code}")
                 return False
-
-            if not activated:
-                raise ComdirectTANTimeoutError(
-                    f"TAN not confirmed within {settings.comdirect_tan_timeout_s}s"
-                )
 
             logger.info("Step 5 OK — session activated")
 
-            # Wait briefly for the backend session state to propagate
-            await asyncio.sleep(2.0)
-
             # ---- Step 6: Secondary token (cd_secondary grant) ----------
             logger.info("Step 6: Obtaining secondary access token…")
-
-            # The API expects "token" as form data to refer to the primary token that authenticated the session.
             resp = await http.post(
                 OAUTH_URL,
                 data={
