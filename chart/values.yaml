@@ -1,10 +1,9 @@
-image:
-  repository: ghcr.io/max5800/comdirect-firefly-sync
-  tag: latest
-  pullPolicy: IfNotPresent
-
-# --- Read-only API (always-on) ---
+# --- Read-only API (always-on, lean image, no bank secrets) ---
 api:
+  image:
+    repository: ghcr.io/max5800/comdirect-firefly-sync-api
+    tag: latest
+    pullPolicy: IfNotPresent
   replicaCount: 1
   resources:
     requests:
@@ -30,6 +29,10 @@ ingress:
 
 # --- Internal worker (security-sensitive, has bank credentials) ---
 worker:
+  image:
+    repository: ghcr.io/max5800/comdirect-firefly-sync
+    tag: latest
+    pullPolicy: IfNotPresent
   replicaCount: 1
   resources:
     requests:
@@ -47,7 +50,7 @@ persistence:
   accessMode: ReadWriteOnce
   size: 1Gi
 
-# --- ExternalSecret for Comdirect credentials (export job only) ---
+# --- ExternalSecret for Comdirect credentials (worker only) ---
 externalSecret:
   enabled: false
   refreshInterval: 1h
