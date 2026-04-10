@@ -1,3 +1,10 @@
+## [1.8.2](https://github.com/max5800/comdirect-firefly-sync/compare/v1.8.1...v1.8.2) (2026-04-10)
+
+
+### Bug Fixes
+
+* make API_TOKEN required to prevent unauthenticated access ([f4e86e2](https://github.com/max5800/comdirect-firefly-sync/commit/f4e86e2b6947f2990cb5f264c13924b9b2c787c9))
+
 ## [1.8.1](https://github.com/max5800/comdirect-firefly-sync/compare/v1.8.0...v1.8.1) (2026-04-10)
 
 
