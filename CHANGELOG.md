@@ -1,3 +1,10 @@
+# [1.6.0](https://github.com/max5800/comdirect-firefly-sync/compare/v1.5.0...v1.6.0) (2026-04-10)
+
+
+### Features
+
+* split into api and worker microservices ([612b62d](https://github.com/max5800/comdirect-firefly-sync/commit/612b62dc41c61fa5d228e8dd628671a3e43e5649))
+
 # [1.5.0](https://github.com/max5800/comdirect-firefly-sync/compare/v1.4.0...v1.5.0) (2026-04-10)
 
 
