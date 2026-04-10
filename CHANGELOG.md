@@ -1,3 +1,10 @@
+## [1.1.1](https://github.com/max5800/comdirect-firefly-sync/compare/v1.1.0...v1.1.1) (2026-04-10)
+
+
+### Bug Fixes
+
+* align env example with config and document TAN security design ([384ab6b](https://github.com/max5800/comdirect-firefly-sync/commit/384ab6bbb1f79ac749722e1b021ebf8bf8e7a030))
+
 # [1.1.0](https://github.com/max5800/comdirect-firefly-sync/compare/v1.0.0...v1.1.0) (2026-03-16)
 
 
