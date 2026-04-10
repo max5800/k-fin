@@ -1,14 +1,10 @@
 """Main sync job — orchestrates Comdirect → Firefly pipeline.
 
 NOTE: The Comdirect API requires interactive TAN confirmation (pushTAN)
-for every session. This means the scheduler CANNOT run fully unattended.
-The sync job will skip execution unless the client already holds a valid
-secondary token (e.g., from a manual authenticate_full() call).
+for every session. Auth is handled via the two-step flow in the worker
+endpoints (POST /internal/sync/start → confirm TAN → POST /internal/sync/confirm).
 
-Future options to solve this:
-- Token persistence: store secondary token + refresh token after manual auth
-- Webhook-triggered flow: user confirms TAN via mobile, webhook resumes sync
-- Headless TAN: if Comdirect ever supports non-interactive auth
+This module provides run_sync() which accepts a pre-authenticated client.
 """
 
 from src.connector.comdirect_client import ComdirectClient
@@ -19,22 +15,18 @@ from src.importer.transaction_mapper import map_transaction
 logger = get_logger("sync_job")
 
 
-async def run_sync():
+async def run_sync(comdirect: ComdirectClient | None = None):
     """Full sync: pull from Comdirect, push to Firefly III.
 
-    Requires the client to be authenticated with a secondary token
-    (full 6-step TAN flow). Will skip if auth is not possible.
+    Accepts an already-authenticated ComdirectClient. If none is provided,
+    logs an error and returns (auth must be done via the two-step flow).
     """
     logger.info("Starting sync...")
-    comdirect = ComdirectClient()
-    firefly = FireflyClient()
-
-    # Auth: requires full 6-step flow with TAN confirmation.
-    # authenticate_full() blocks for user input — only works interactively.
-    auth_ok = await comdirect.authenticate_full()
-    if not auth_ok:
-        logger.error("Comdirect auth failed — skipping sync")
+    if comdirect is None or not comdirect.is_authenticated:
+        logger.error("No authenticated client provided — skipping sync")
         return
+
+    firefly = FireflyClient()
 
     # Step 2: Fetch accounts
     try:
