@@ -1,3 +1,10 @@
+## [1.12.2](https://github.com/max5800/comdirect-firefly-sync/compare/v1.12.1...v1.12.2) (2026-04-11)
+
+
+### Bug Fixes
+
+* pass transaction fetch params from settings to all callers ([7729c80](https://github.com/max5800/comdirect-firefly-sync/commit/7729c80d1b60d10bbbf416def6fd03edd5b2b059))
+
 ## [1.12.1](https://github.com/max5800/comdirect-firefly-sync/compare/v1.12.0...v1.12.1) (2026-04-10)
 
 
