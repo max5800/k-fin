@@ -58,7 +58,12 @@ async def _run(output_dir: str, since: date | None, pretty: bool) -> None:
         sys.exit(1)
 
     logger.info("Fetching all data…")
-    raw = await client.get_all_data()
+    raw = await client.get_all_data(
+        account_transaction_limit=settings.account_transaction_limit,
+        account_transaction_min_booking_date=settings.account_transaction_min_booking_date,
+        depot_transaction_limit=settings.depot_transaction_limit,
+        depot_transaction_min_booking_date=settings.depot_transaction_min_booking_date,
+    )
 
     logger.info("Building JSON export…")
     payload = build_export(raw, since=since)

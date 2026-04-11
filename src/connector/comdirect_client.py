@@ -10,7 +10,9 @@ After that, account/transaction endpoints are available.
 """
 
 import json
+import re
 import uuid
+from datetime import date, timedelta
 
 import httpx
 
@@ -21,6 +23,25 @@ logger = get_logger("comdirect")
 
 BASE_URL = "https://api.comdirect.de"
 OAUTH_URL = f"{BASE_URL}/oauth/token"
+
+_RELATIVE_DATE_RE = re.compile(r"^-(\d+)d$")
+
+
+def resolve_booking_date(value: str | None) -> str | None:
+    """Convert a booking-date value to YYYY-MM-DD if it uses relative notation.
+
+    Accepted formats:
+    - ``None`` → ``None`` (no filter)
+    - ``"2025-01-15"`` → ``"2025-01-15"`` (absolute, passed through)
+    - ``"-30d"`` → today minus 30 days as ``YYYY-MM-DD``
+    """
+    if not value:
+        return None
+    m = _RELATIVE_DATE_RE.match(value)
+    if m:
+        days = int(m.group(1))
+        return (date.today() - timedelta(days=days)).isoformat()
+    return value
 
 
 class ComdirectClient:
@@ -291,9 +312,19 @@ class ComdirectClient:
         if not (self._secondary_token or self.access_token):
             raise RuntimeError("Not authenticated")
 
+        resolved_date = resolve_booking_date(min_booking_date)
+
         params: dict[str, str | int] = {"paging-count": paging_count}
-        if min_booking_date:
-            params["min-bookingDate"] = min_booking_date
+        if resolved_date:
+            params["min-bookingDate"] = resolved_date
+
+        logger.info(
+            "get_transactions(%s): paging-count=%s, min-bookingDate=%s (raw=%s)",
+            account_id,
+            paging_count,
+            resolved_date,
+            min_booking_date,
+        )
 
         async with httpx.AsyncClient() as client:
             response = await client.get(
@@ -353,9 +384,19 @@ class ComdirectClient:
         if not (self._secondary_token or self.access_token):
             raise RuntimeError("Not authenticated")
 
+        resolved_date = resolve_booking_date(min_booking_date)
+
         params: dict[str, str | int] = {"paging-count": limit}
-        if min_booking_date:
-            params["min-bookingDate"] = min_booking_date
+        if resolved_date:
+            params["min-bookingDate"] = resolved_date
+
+        logger.info(
+            "get_depot_transactions(%s): paging-count=%s, min-bookingDate=%s (raw=%s)",
+            depot_id,
+            limit,
+            resolved_date,
+            min_booking_date,
+        )
 
         async with httpx.AsyncClient() as client:
             response = await client.get(

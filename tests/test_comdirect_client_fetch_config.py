@@ -1,8 +1,9 @@
+from datetime import date, timedelta
 from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from src.connector.comdirect_client import ComdirectClient
+from src.connector.comdirect_client import ComdirectClient, resolve_booking_date
 
 
 @pytest.fixture
@@ -75,3 +76,28 @@ async def test_get_all_data_accepts_custom_fetch_limits(client):
         limit=250,
         min_booking_date="2025-01-01",
     )
+
+
+# ---- resolve_booking_date -------------------------------------------------
+
+
+def test_resolve_booking_date_none():
+    assert resolve_booking_date(None) is None
+
+
+def test_resolve_booking_date_empty_string():
+    assert resolve_booking_date("") is None
+
+
+def test_resolve_booking_date_absolute():
+    assert resolve_booking_date("2025-06-15") == "2025-06-15"
+
+
+def test_resolve_booking_date_relative():
+    expected = (date.today() - timedelta(days=30)).isoformat()
+    assert resolve_booking_date("-30d") == expected
+
+
+def test_resolve_booking_date_relative_large():
+    expected = (date.today() - timedelta(days=365)).isoformat()
+    assert resolve_booking_date("-365d") == expected

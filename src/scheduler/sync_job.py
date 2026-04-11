@@ -8,6 +8,7 @@ This module provides run_sync() which accepts a pre-authenticated client.
 """
 
 from src.connector.comdirect_client import ComdirectClient
+from src.core.config import settings
 from src.core.logging import get_logger
 from src.importer.firefly_client import FireflyClient
 from src.importer.transaction_mapper import map_transaction
@@ -57,7 +58,11 @@ async def run_sync(comdirect: ComdirectClient | None = None):
 
         # Step 3: Fetch transactions
         try:
-            transactions = await comdirect.get_transactions(account_id)
+            transactions = await comdirect.get_transactions(
+                account_id,
+                paging_count=settings.account_transaction_limit,
+                min_booking_date=settings.account_transaction_min_booking_date,
+            )
         except Exception as e:
             logger.error(f"Failed to fetch transactions for {iban[:8]}***: {e}")
             continue
