@@ -34,6 +34,7 @@ else:
 # Registry
 REGISTRY_API = "ghcr.io/max5800/comdirect-firefly-sync-api"
 REGISTRY_WORKER = "ghcr.io/max5800/comdirect-firefly-sync"
+REGISTRY_MIGRATE = "ghcr.io/max5800/comdirect-firefly-sync-migrate"
 
 # Build API image (lean, no bank secrets)
 docker_build(
@@ -59,6 +60,13 @@ docker_build(
     ],
 )
 
+# Build Migrate image (same Dockerfile, no entrypoint override — chart's command wins)
+docker_build(
+    REGISTRY_MIGRATE,
+    context=".",
+    dockerfile="./Dockerfile",
+)
+
 # Deploy Helm chart
 k8s_yaml(helm(
     "./chart",
@@ -67,6 +75,7 @@ k8s_yaml(helm(
     set=[
         "api.image.repository=" + REGISTRY_API,
         "worker.image.repository=" + REGISTRY_WORKER,
+        "postgres.migrate.image.repository=" + REGISTRY_MIGRATE,
         "ingress.host=" + ingress_host,
     ],
 ))

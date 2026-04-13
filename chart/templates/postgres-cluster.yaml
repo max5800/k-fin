@@ -1,0 +1,56 @@
+{{- if .Values.postgres.enabled }}
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: {{ include "comdirect-firefly-sync.fullname" . }}-postgres
+  labels:
+    {{- include "comdirect-firefly-sync.labels" . | nindent 4 }}
+    app.kubernetes.io/component: postgres
+spec:
+  instances: {{ .Values.postgres.instances | default 1 }}
+  imageName: {{ .Values.postgres.image | default "ghcr.io/cloudnative-pg/postgresql:16.4" }}
+
+  bootstrap:
+    initdb:
+      database: {{ .Values.postgres.db | default "finance" | quote }}
+      owner: {{ .Values.postgres.owner | default "finance" | quote }}
+      {{- if .Values.postgres.credentialsSecret }}
+      secret:
+        name: {{ .Values.postgres.credentialsSecret }}
+      {{- end }}
+
+  storage:
+    size: {{ .Values.postgres.persistence.size | default "10Gi" }}
+    {{- with .Values.postgres.persistence.storageClass }}
+    storageClass: {{ . | quote }}
+    {{- end }}
+
+  {{- with .Values.postgres.resources }}
+  resources:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+
+  {{- if .Values.postgres.backup.enabled }}
+  backup:
+    retentionPolicy: {{ .Values.postgres.backup.retentionPolicy | default "7d" | quote }}
+    barmanObjectStore:
+      destinationPath: {{ .Values.postgres.backup.destinationPath | quote }}
+      endpointURL: {{ .Values.postgres.backup.endpointURL | quote }}
+      s3Credentials:
+        accessKeyId:
+          name: {{ .Values.postgres.backup.credentialsSecret }}
+          key: ACCESS_KEY_ID
+        secretAccessKey:
+          name: {{ .Values.postgres.backup.credentialsSecret }}
+          key: SECRET_ACCESS_KEY
+      wal:
+        compression: gzip
+      data:
+        compression: gzip
+  {{- end }}
+
+  {{- with .Values.postgres.monitoring }}
+  monitoring:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+{{- end }}

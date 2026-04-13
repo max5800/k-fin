@@ -1,4 +1,5 @@
 """Application configuration via environment variables."""
+from pydantic import model_validator
 from pydantic_settings import BaseSettings
 
 
@@ -28,7 +29,25 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     api_token: str = ""
 
-    model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
+    # Database / normalization
+    database_url: str = ""
+    own_ibans: list[str] = []
+
+    model_config = {
+        "env_file": ".env",
+        "env_file_encoding": "utf-8",
+        "extra": "ignore",
+    }
+
+    @model_validator(mode="after")
+    def _normalize_database_url(self):
+        # CloudNativePG's *-app secret publishes a postgresql:// URI.
+        # Swap the scheme so SQLAlchemy picks the psycopg v3 driver.
+        if self.database_url.startswith("postgresql://"):
+            self.database_url = self.database_url.replace(
+                "postgresql://", "postgresql+psycopg://", 1
+            )
+        return self
 
 
 settings = Settings()

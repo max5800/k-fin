@@ -40,10 +40,25 @@ Two-microservice split with strict secret separation:
 
 ## Agent Team
 
-This project uses specialized review agents in `.claude/agents/`:
-- `security-reviewer` — AppSec engineer for banking security
+Specialized agents live in `.claude/agents/`. The main Claude spawns them via the Task tool.
+
+### Reviewers (read-only analysis)
+
+- `security-reviewer` — AppSec for banking security
 - `platform-reviewer` — DevOps for Docker/CI/CD
 - `code-reviewer` — Senior Python dev for quality/tests
 - `architect` — Architecture and design review
 
-Run `/full-review` for a complete team review, `/security-check` for security-only.
+### Executors (can also write/run)
+
+- `test-engineer` — writes/runs tests, knows the Comdirect API flow and FastAPI entry points
+- `deployment-engineer` — Helm chart, K3s (app vs. infra cluster), Vault/ESO, Docker, release
+
+### When to spawn which
+
+- Adding a feature → `test-engineer` for coverage once code is in place
+- Touching `chart/`, `Dockerfile`, `values*.yaml`, or `.env.example` → `deployment-engineer`
+- Full audit → `/full-review` (spawns the 4 reviewers in parallel)
+- Security-only audit → `/security-check`
+
+Executors are invoked ad-hoc (not part of `/full-review`) because they make changes.
