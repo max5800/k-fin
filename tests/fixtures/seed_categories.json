@@ -1,0 +1,10 @@
+[
+  {"id": "rent",       "name": "Miete",         "type": "fix"},
+  {"id": "streaming",  "name": "Streaming",     "type": "fix"},
+  {"id": "insurance",  "name": "Versicherung",  "type": "fix"},
+  {"id": "salary",     "name": "Gehalt",        "type": "fix"},
+  {"id": "groceries",  "name": "Lebensmittel",  "type": "variabel"},
+  {"id": "fuel",       "name": "Kraftstoff",    "type": "variabel"},
+  {"id": "dining",     "name": "Gastronomie",   "type": "diskretionaer"},
+  {"id": "shopping",   "name": "Shopping",      "type": "diskretionaer"}
+]

@@ -43,6 +43,13 @@ spec:
                   name: {{ include "comdirect-firefly-sync.fullname" . }}-comdirect-secrets
                   key: API_TOKEN
                   optional: true
+            {{- if .Values.postgres.enabled }}
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.postgres.credentialsSecret }}
+                  key: uri
+            {{- end }}
             {{- range $key, $value := .Values.api.env }}
             - name: {{ $key }}
               value: {{ $value | quote }}

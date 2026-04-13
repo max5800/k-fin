@@ -18,7 +18,8 @@ RUN uv sync --no-dev --no-install-project
 # Copy application code (no secrets, no .env — see .dockerignore)
 COPY src/ src/
 COPY scripts/ scripts/
-COPY main.py ./
+COPY alembic/ alembic/
+COPY alembic.ini main.py ./
 
 # Export directory — mount a volume here
 RUN mkdir -p /data/exports && \

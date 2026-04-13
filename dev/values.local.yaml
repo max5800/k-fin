@@ -37,3 +37,20 @@ ingress:
 
 externalSecret:
   enabled: false
+
+postgres:
+  enabled: true
+  instances: 1
+  db: finance
+  owner: finance
+  credentialsSecret: comdirect-firefly-sync-postgres-credentials
+  persistence:
+    size: 2Gi
+  backup:
+    enabled: false
+  externalSecret:
+    enabled: false
+  migrate:
+    image:
+      repository: ghcr.io/max5800/comdirect-firefly-sync-migrate
+      pullPolicy: IfNotPresent

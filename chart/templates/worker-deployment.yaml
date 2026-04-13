@@ -21,6 +21,19 @@ spec:
       imagePullSecrets:
         {{- toYaml .Values.imagePullSecrets | nindent 8 }}
       {{- end }}
+      {{- if .Values.postgres.enabled }}
+      initContainers:
+        - name: migrate
+          image: "{{ .Values.postgres.migrate.image.repository | default .Values.worker.image.repository }}:{{ .Values.postgres.migrate.image.tag | default .Values.worker.image.tag | default (printf "v%s" .Chart.Version) }}"
+          imagePullPolicy: {{ .Values.postgres.migrate.image.pullPolicy | default .Values.worker.image.pullPolicy }}
+          command: ["uv", "run", "python", "scripts/migrate.py"]
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.postgres.credentialsSecret }}
+                  key: uri
+      {{- end }}
       containers:
         - name: worker
           image: "{{ .Values.worker.image.repository }}:{{ .Values.worker.image.tag | default (printf "v%s" .Chart.Version) }}"
@@ -35,6 +48,13 @@ spec:
             - containerPort: 8001
               protocol: TCP
           env:
+            {{- if .Values.postgres.enabled }}
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.postgres.credentialsSecret }}
+                  key: uri
+            {{- end }}
             {{- range $key, $value := .Values.worker.env }}
             - name: {{ $key }}
               value: {{ $value | quote }}
