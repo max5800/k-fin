@@ -1,3 +1,10 @@
+# [1.13.0](https://github.com/max5800/comdirect-firefly-sync/compare/v1.12.2...v1.13.0) (2026-04-13)
+
+
+### Features
+
+* **m5:** postgres via CNPG + alembic baseline + normalization pipeline ([d5b90a3](https://github.com/max5800/comdirect-firefly-sync/commit/d5b90a3d1e36d4b92461785178ecdf19c9b63c2b))
+
 ## [1.12.2](https://github.com/max5800/comdirect-firefly-sync/compare/v1.12.1...v1.12.2) (2026-04-11)
 
 
