@@ -9,6 +9,7 @@ import uuid
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
+from src.api.routers import transactions
 from src.connector.comdirect_client import ComdirectClient
 from src.core.config import settings
 from src.core.logging import get_logger, setup_logging
@@ -27,6 +28,9 @@ app = FastAPI(
 # ---------------------------------------------------------------------------
 
 _pending_sessions: dict[str, dict] = {}
+
+# Finance API (M6) — transaction endpoints
+app.include_router(transactions.router, prefix="/api/v1")
 
 
 class SyncStartRequest(BaseModel):
