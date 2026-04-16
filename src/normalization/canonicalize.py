@@ -130,22 +130,23 @@ def content_hash(canonical: dict[str, Any]) -> str:
 def _clean_remittance_info(raw_text: str) -> str:
     """Strip SWIFT/MT940 numbered field prefixes from remittance info.
 
-    Comdirect sometimes returns structured remittance data with numbered
-    prefixes like ``01Aral Station...02Karte Nr...``.  This strips the
-    ``\\d{2}`` prefixes and joins the fragments with ``", "``.
+    Comdirect returns structured remittance data as fixed-width blocks:
+    each field is exactly 37 characters (2-digit prefix + 35 chars content).
     """
     if not raw_text:
         return ""
-    # Detect numbered prefix pattern: two digits at start or preceded by
-    # whitespace/boundary, followed by non-digit content.
-    if re.match(r"^\d{2}\D", raw_text):
-        parts = re.split(r"(?:^|\s)(\d{2})(?=\D)", raw_text)
-        # split produces: ['', '01', 'content', '02', 'content', ...]
-        cleaned = [
-            p.strip() for p in parts if p.strip() and not re.fullmatch(r"\d{2}", p)
-        ]
-        return ", ".join(cleaned) if cleaned else raw_text.strip()
-    return raw_text.strip()
+    if not re.match(r"^01\D", raw_text):
+        return raw_text.strip()
+
+    # Split into 37-char fixed-width SWIFT fields
+    chunks = [raw_text[i : i + 37] for i in range(0, len(raw_text), 37)]
+    cleaned = []
+    for chunk in chunks:
+        m = re.match(r"^\d{2}(.*)", chunk)
+        content = m.group(1).strip() if m else chunk.strip()
+        if content:
+            cleaned.append(content)
+    return ", ".join(cleaned) if cleaned else raw_text.strip()
 
 
 def _to_decimal(value: Any) -> Decimal:
