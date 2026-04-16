@@ -1,7 +1,7 @@
 [project]
 name = "comdirect-firefly-sync"
 version = "0.1.0"
-description = "Automatic read-only sync from Comdirect to Firefly III"
+description = "K-Fin — Personal Finance Intelligence Platform"
 requires-python = ">=3.11"
 dependencies = [
     "fastapi>=0.115.0",

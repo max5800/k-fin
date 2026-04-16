@@ -26,7 +26,6 @@ worker:
   env:
     EXPORTS_DIR: "/data/exports"
     SYNC_INTERVAL_MINUTES: "60"
-    FIREFLY_BASE_URL: "http://firefly-iii:8080"
 
 ingress:
   enabled: true

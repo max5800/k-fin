@@ -1,8 +1,8 @@
-# CLAUDE.md — comdirect-firefly-sync
+# CLAUDE.md — K-Fin
 
 ## Project
 
-Read-only financial data export from the Comdirect REST API — as CSV, REST API, or (planned) Firefly III import. This is a personal banking application handling highly sensitive financial data.
+K-Fin — Personal Finance Intelligence Platform. Read-only financial data export from the Comdirect REST API — as CSV, Finance API, and normalization pipeline into Postgres. This is a personal banking application handling highly sensitive financial data.
 
 ## Commands
 
@@ -23,7 +23,7 @@ Two-microservice split with strict secret separation:
 
 - `src/connector/` — Comdirect API client (OAuth2 + pushTAN, strictly read-only)
 - `src/api/` — Read-only FastAPI serving exported CSVs (comdirect-api)
-- `src/importer/` — Firefly III client + transaction mapper (planned)
+- `src/importer/` — ~~Firefly III client + transaction mapper~~ (deleted/legacy)
 - `src/exporter/` — Finance agent mapper + model-based JSON export
 - `src/scheduler/` — Sync job orchestration (comdirect-worker)
 - `src/core/` — Config (pydantic-settings), logging
