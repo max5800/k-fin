@@ -16,7 +16,16 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Optional
 
-from sqlalchemy import JSON, Boolean, Date, DateTime, ForeignKey, Integer, Numeric, String
+from sqlalchemy import (
+    JSON,
+    Boolean,
+    Date,
+    DateTime,
+    ForeignKey,
+    Integer,
+    Numeric,
+    String,
+)
 from sqlalchemy import Enum as SQLEnum
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from sqlalchemy.sql import func
@@ -68,7 +77,9 @@ class RawTransaction(Base):
     __tablename__ = "raw_transactions"
 
     content_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
-    comdirect_id: Mapped[Optional[str]] = mapped_column(String, nullable=True, index=True)
+    comdirect_id: Mapped[Optional[str]] = mapped_column(
+        String, nullable=True, index=True
+    )
     raw_data: Mapped[dict] = mapped_column(JSON, nullable=False)
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     superseded_by: Mapped[Optional[str]] = mapped_column(
@@ -85,7 +96,10 @@ class Category(Base):
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
     name: Mapped[str] = mapped_column(String, nullable=False, unique=True)
-    type: Mapped[TypeEnum] = mapped_column(SQLEnum(TypeEnum, values_callable=lambda e: [m.value for m in e]), nullable=False)
+    type: Mapped[TypeEnum] = mapped_column(
+        SQLEnum(TypeEnum, values_callable=lambda e: [m.value for m in e]),
+        nullable=False,
+    )
 
 
 class Budget(Base):
@@ -112,7 +126,9 @@ class Rule(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     regex_pattern: Mapped[str] = mapped_column(String, nullable=False)
-    target_category_id: Mapped[str] = mapped_column(ForeignKey("categories.id"), nullable=False)
+    target_category_id: Mapped[str] = mapped_column(
+        ForeignKey("categories.id"), nullable=False
+    )
     priority: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
 
@@ -130,7 +146,9 @@ class NormalizedTransaction(Base):
     raw_content_hash: Mapped[str] = mapped_column(
         ForeignKey("raw_transactions.content_hash"), nullable=False, index=True
     )
-    comdirect_id: Mapped[Optional[str]] = mapped_column(String, nullable=True, index=True)
+    comdirect_id: Mapped[Optional[str]] = mapped_column(
+        String, nullable=True, index=True
+    )
 
     booking_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
     valuation_date: Mapped[date] = mapped_column(Date, nullable=False)
@@ -143,11 +161,15 @@ class NormalizedTransaction(Base):
     recipient_iban: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     description: Mapped[Optional[str]] = mapped_column(String, nullable=True)
 
-    category_id: Mapped[Optional[str]] = mapped_column(ForeignKey("categories.id"), nullable=True)
+    category_id: Mapped[Optional[str]] = mapped_column(
+        ForeignKey("categories.id"), nullable=True
+    )
 
     is_recurring: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     is_outlier: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
-    internal_transfer: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    internal_transfer: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False
+    )
 
     recurring_pattern_id: Mapped[Optional[int]] = mapped_column(
         ForeignKey("recurring_patterns.id"), nullable=True
@@ -220,17 +242,23 @@ class AgentRun(Base):
     id: Mapped[str] = mapped_column(String, primary_key=True)
     agent_name: Mapped[str] = mapped_column(String, nullable=False, index=True)
     status: Mapped[RunStatus] = mapped_column(
-        SQLEnum(RunStatus, values_callable=lambda e: [m.value for m in e]), nullable=False, default=RunStatus.PENDING
+        SQLEnum(RunStatus, values_callable=lambda e: [m.value for m in e]),
+        nullable=False,
+        default=RunStatus.PENDING,
     )
     trigger: Mapped[RunTrigger] = mapped_column(
-        SQLEnum(RunTrigger, values_callable=lambda e: [m.value for m in e]), nullable=False, default=RunTrigger.MANUAL
+        SQLEnum(RunTrigger, values_callable=lambda e: [m.value for m in e]),
+        nullable=False,
+        default=RunTrigger.MANUAL,
     )
     result: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
     error: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     started_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
-    finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    finished_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
 
 class ReportStatus(str, enum.Enum):
@@ -249,14 +277,20 @@ class Report(Base):
     __tablename__ = "reports"
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
+    report_type: Mapped[str] = mapped_column(String, nullable=False, index=True)
     title: Mapped[str] = mapped_column(String, nullable=False)
     period_start: Mapped[date] = mapped_column(Date, nullable=False, index=True)
     period_end: Mapped[date] = mapped_column(Date, nullable=False)
-    format: Mapped[str] = mapped_column(String(10), nullable=False)  # pdf, md, html
+    format: Mapped[str] = mapped_column(
+        String(10), nullable=False
+    )  # pdf, md, html, json
+    content: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
     file_path: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     size_bytes: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     status: Mapped[ReportStatus] = mapped_column(
-        SQLEnum(ReportStatus, values_callable=lambda e: [m.value for m in e]), nullable=False, default=ReportStatus.PENDING
+        SQLEnum(ReportStatus, values_callable=lambda e: [m.value for m in e]),
+        nullable=False,
+        default=ReportStatus.PENDING,
     )
     error: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
@@ -285,11 +319,15 @@ class SyncRun(Base):
         nullable=False,
     )
     status: Mapped[SyncStatus] = mapped_column(
-        SQLEnum(SyncStatus, values_callable=lambda e: [m.value for m in e]), nullable=False, default=SyncStatus.RUNNING
+        SQLEnum(SyncStatus, values_callable=lambda e: [m.value for m in e]),
+        nullable=False,
+        default=SyncStatus.RUNNING,
     )
     started_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
-    finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    finished_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     rows_processed: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     error: Mapped[Optional[str]] = mapped_column(String, nullable=True)
