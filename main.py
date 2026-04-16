@@ -18,7 +18,7 @@ setup_logging()
 logger = get_logger("worker")
 
 app = FastAPI(
-    title="comdirect-worker",
+    title="K-Fin Worker",
     description="Internal sync worker — not publicly accessible",
     version="0.2.0",
 )
