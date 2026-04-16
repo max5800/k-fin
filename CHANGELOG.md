@@ -1,3 +1,10 @@
+# [1.14.0](https://github.com/max5800/k-fin/compare/v1.13.0...v1.14.0) (2026-04-16)
+
+
+### Features
+
+* **m6:** add Finance API foundation with transactions endpoints ([9d7e9a5](https://github.com/max5800/k-fin/commit/9d7e9a555ed537443d3fa49bc0a4d706f14470a3))
+
 # [1.13.0](https://github.com/max5800/comdirect-firefly-sync/compare/v1.12.2...v1.13.0) (2026-04-13)
 
 
