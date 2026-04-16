@@ -160,18 +160,88 @@ Account type mapping (from `accountType.key`):
 | `SAVINGS_ACCOUNT`, `TAGESGELD` | `tagesgeld` |
 | `CLEARING_ACCOUNT`, `DEPOT_VERRECHNUNGSKONTO` | `verrechnungskonto` |
 
-### 2.3 REST API (`src/api/serve_exports.py`)
+### 2.3 K-Fin Finance API (`src/api/app.py`)
 
-Read-only API serving exported files. No transformation — serves raw CSVs.
+RESTful API serving normalized financial data from Postgres. All endpoints (except `/health`) require Bearer token authentication.
 
-In the Kubernetes deployment, the API (`comdirect-api`, port 8000) is the public-facing service. Sync is triggered via the API, which calls the internal `comdirect-worker` (port 8001) to perform the actual Comdirect data export.
+Base URL: `/api/v1` · Port 8000 · Auth: `Authorization: Bearer <API_TOKEN>`
 
-| Endpoint | Response |
-|----------|----------|
-| `GET /health` | `{"status": "ok"}` |
-| `GET /exports` | File listing with metadata |
-| `GET /exports/latest` | Latest file per category |
-| `GET /exports/{filename}` | Raw CSV download (`text/csv; charset=utf-8-sig`) |
+#### Transactions (`src/api/routers/transactions.py`)
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/transactions` | List transactions (paginated, filterable by date, category, flags) |
+| GET | `/transactions/{id}` | Get single transaction |
+| PATCH | `/transactions/{id}` | Update category/tags on a transaction |
+
+Query params for list: `limit`, `offset`, `date_from`, `date_to`, `category_id`, `is_recurring`, `is_outlier`, `internal_transfer`, `search`.
+
+#### Categories & Budgets (`src/api/routers/categories.py`)
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/categories` | List all categories |
+| POST | `/categories` | Create category |
+| DELETE | `/categories/{id}` | Delete category |
+| GET | `/categories/budgets` | List all budgets |
+| PUT | `/categories/budgets/{category_id}` | Set/update budget for category |
+
+#### Tags (`src/api/routers/tags.py`)
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/tags` | List all tags |
+| POST | `/tags` | Create tag |
+| DELETE | `/tags/{id}` | Delete tag |
+
+#### Aggregates (`src/api/routers/aggregates.py`)
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/aggregates/monthly-summary` | Income/expenses/net for a given month (with category breakdown) |
+| GET | `/aggregates/cashflow-over-time` | Cashflow series over a date range |
+
+#### Runs (`src/api/routers/runs.py`)
+
+Agent names: `categorization`, `weekly_analysis`, `monthly_analysis`, `anomaly`, `synthesis`.
+
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/runs/full` | Trigger all agents |
+| POST | `/runs/{agent_name}` | Trigger single agent |
+| GET | `/runs` | List runs (filterable by agent, status) |
+| GET | `/runs/{id}` | Get run details |
+
+#### Reports (`src/api/routers/reports.py`)
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/reports` | List reports (filterable by format, status) |
+| GET | `/reports/{id}` | Get report metadata |
+| GET | `/reports/{id}/download` | Download report file (PDF/MD/HTML) |
+
+#### Sync Proxy (`src/api/routers/sync.py`)
+
+Proxies to the internal worker service (`comdirect-worker`, port 8001).
+
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/sync/start` | Begin sync — triggers pushTAN challenge |
+| POST | `/sync/confirm?session_id=...` | Confirm TAN and complete sync |
+| POST | `/sync/normalize` | Re-run normalization pipeline |
+
+#### Worker Internal Endpoints (`main.py`, port 8001)
+
+Not publicly accessible — network-isolated via Kubernetes NetworkPolicy.
+
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| GET | `/health` | None | Health check |
+| POST | `/internal/sync/start` | None | Begin Comdirect auth flow |
+| POST | `/internal/sync/confirm` | None | Complete auth + run export + ingest |
+| POST | `/internal/normalize` | None | Re-run normalization only |
+
+The worker also mounts the same Finance API routers (transactions, categories, aggregates, runs, reports) at `/api/v1` for internal use.
 
 ---
 

@@ -71,7 +71,7 @@ Firefly).  Treating it as the core creates three problems:
 | `src/connector/` | **Keep** | Already clean; no Firefly knowledge |
 | `src/connector/models.py` | **Keep** | `ComdirectData` is the canonical intermediate model |
 | `src/exporter/finance_agent_mapper.py` | **Keep** | Good example of a pure transform |
-| `src/api/serve_exports.py` | **Keep** | Correctly isolated; no Firefly dependency |
+| `src/api/app.py` | **Keep** | K-Fin Finance API — replaces legacy serve_exports.py |
 | `scripts/export_csv.py` | **Keep** | Standalone, well-tested |
 | `scripts/export_finance_data.py` | **Keep** | Standalone |
 | `src/importer/firefly_client.py` | **Keep (move)** | Good HTTP client, just needs a new home |
