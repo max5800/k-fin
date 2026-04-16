@@ -37,6 +37,21 @@ async def sync_start(payload: SyncStartRequest | None = Body(default=None)):
         raise HTTPException(status_code=503, detail=f"Worker communication failed: {e}")
 
 
+@router.post("/normalize")
+async def normalize():
+    """Re-run normalization pipeline over existing raw_transactions."""
+    try:
+        async with httpx.AsyncClient(timeout=120) as client:
+            resp = await client.post(
+                f"{settings.worker_url}/internal/normalize",
+            )
+            return resp.json()
+    except httpx.ConnectError:
+        raise HTTPException(status_code=503, detail="Worker service unreachable")
+    except httpx.HTTPError as e:
+        raise HTTPException(status_code=503, detail=f"Worker communication failed: {e}")
+
+
 @router.post("/confirm")
 async def sync_confirm(session_id: str):
     """Confirm TAN and complete sync via the internal worker."""
