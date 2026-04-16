@@ -7,7 +7,7 @@ K-Fin — Personal Finance Intelligence Platform. Read-only financial data expor
 ## Architecture
 
 - `src/connector/` — Comdirect API client (OAuth2 + pushTAN auth, accounts, transactions, depot)
-- `src/api/` — Read-only FastAPI to serve exported CSVs (runs in isolated container)
+- `src/api/` — K-Fin Finance API (FastAPI, port 8000) with routers for transactions, categories, tags, aggregates, runs, reports, sync
 - `src/importer/` — ~~Firefly III client + transaction mapper~~ (deleted/legacy)
 - `src/exporter/` — Finance agent mapper
 - `src/scheduler/` — Sync job orchestration
@@ -38,22 +38,19 @@ K-Fin — Personal Finance Intelligence Platform. Read-only financial data expor
 
 ## AI Agent Skill — REQUIRED
 
-This project exposes a **read-only Finance API** (`src/api/serve_exports.py`) used by AI agents (Klaus/OpenClaw) to query financial data.
+This project exposes a **read-only Finance API** (`src/api/app.py`) used by AI agents (Klaus/OpenClaw) to query financial data.
 
 **The OpenClaw skill lives at:** `.openclaw/skills/comdirect-finance-api/` (in this repository)
 
 ### Rules: always update the skill when changing the API
 
-1. **After ANY change to `src/api/serve_exports.py`** — update the skill:
+1. **After ANY change to `src/api/routers/`** — update the skill:
    - New endpoint → add to endpoints table in `SKILL.md`
    - Auth change → update connection section in `SKILL.md`
-   - New CSV format → update `references/api.md`
 
-2. **After adding new export types** (new filename prefix) → add to export categories table in `SKILL.md`
+2. **After adding new routers or schemas** → update `references/api.md`
 
-3. **After changing CSV format** (columns, delimiter, encoding) → update `references/api.md`
-
-4. **The skill must always reflect the actual API** — a stale skill causes the agent to call wrong endpoints or misparse data
+3. **The skill must always reflect the actual API** — a stale skill causes the agent to call wrong endpoints or misparse data
 
 ### Skill location in this repository
 
