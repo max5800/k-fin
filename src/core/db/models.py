@@ -52,6 +52,19 @@ class SyncSource(str, enum.Enum):
     NORMALIZE = "normalize"
 
 
+class RunStatus(str, enum.Enum):
+    PENDING = "pending"
+    RUNNING = "running"
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+
+
+class RunTrigger(str, enum.Enum):
+    MANUAL = "manual"
+    SCHEDULED = "scheduled"
+    WEBHOOK = "webhook"
+
+
 class RawTransaction(Base):
     """Immutable audit log of raw transaction payloads.
 
@@ -202,6 +215,31 @@ class TransactionTag(Base):
         ForeignKey("normalized_transactions.id"), primary_key=True
     )
     tag_id: Mapped[str] = mapped_column(ForeignKey("tags.id"), primary_key=True)
+
+
+class AgentRun(Base):
+    """Tracks individual agent runs triggered via the Runs API (M6).
+
+    Each row represents one invocation of a named agent (e.g. weekly_report,
+    anomaly_scan). The result column stores the agent's structured output.
+    """
+
+    __tablename__ = "agent_runs"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    agent_name: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    status: Mapped[RunStatus] = mapped_column(
+        SQLEnum(RunStatus), nullable=False, default=RunStatus.PENDING
+    )
+    trigger: Mapped[RunTrigger] = mapped_column(
+        SQLEnum(RunTrigger), nullable=False, default=RunTrigger.MANUAL
+    )
+    result: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    error: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    started_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class SyncRun(Base):
