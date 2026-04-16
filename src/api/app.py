@@ -6,7 +6,7 @@ No bank secrets — those stay in the worker (port 8001).
 
 from fastapi import FastAPI
 
-from src.api.routers import aggregates, categories, reports, runs, tags, transactions
+from src.api.routers import aggregates, categories, reports, runs, sync, tags, transactions
 
 app = FastAPI(
     title="K-Fin API",
@@ -26,3 +26,4 @@ app.include_router(runs.router, prefix="/api/v1")
 app.include_router(aggregates.router, prefix="/api/v1")
 app.include_router(reports.router, prefix="/api/v1")
 app.include_router(tags.router, prefix="/api/v1")
+app.include_router(sync.router, prefix="/api/v1")

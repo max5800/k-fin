@@ -7,7 +7,7 @@ Receives sync requests from the public comdirect-api service.
 import uuid
 
 from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from src.api.routers import aggregates, categories, reports, runs, transactions
 from src.connector.comdirect_client import ComdirectClient
@@ -38,10 +38,14 @@ app.include_router(reports.router, prefix="/api/v1")
 
 
 class SyncStartRequest(BaseModel):
-    account_transaction_limit: int | None = None
-    account_transaction_min_booking_date: str | None = None
-    depot_transaction_limit: int | None = None
-    depot_transaction_min_booking_date: str | None = None
+    account_transaction_limit: int | None = Field(default=None, gt=0)
+    account_transaction_min_booking_date: str | None = Field(
+        default=None, pattern=r"^\d{4}-\d{2}-\d{2}$|^-\d+d$"
+    )
+    depot_transaction_limit: int | None = Field(default=None, gt=0)
+    depot_transaction_min_booking_date: str | None = Field(
+        default=None, pattern=r"^\d{4}-\d{2}-\d{2}$|^-\d+d$"
+    )
 
 
 @app.get("/health")
