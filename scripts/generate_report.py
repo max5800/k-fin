@@ -108,10 +108,7 @@ def generate_report(data: dict, report_date: str | None = None) -> str:
     total_in = 0.0
     total_out = 0.0
     all_transactions: list[dict] = []
-    account_keys = [
-        k for k in data
-        if k not in ("depot", "meta") and _is_account_entry(data[k])
-    ]
+    account_keys = [k for k in data if k not in ("depot", "meta") and _is_account_entry(data[k])]
 
     for key in sorted(account_keys):
         entry = data[key]
@@ -249,8 +246,7 @@ def generate_report(data: dict, report_date: str | None = None) -> str:
         tg = depot_summary.get("total_gains", 0)
         tgp = depot_summary.get("total_gains_percent", 0)
         lines.append(
-            f"| **Gesamt** | | | **{_fmt_eur(tv)}** "
-            f"| **{_fmt_eur(tg)} ({_fmt_pct(tgp)})** |"
+            f"| **Gesamt** | | | **{_fmt_eur(tv)}** | **{_fmt_eur(tg)} ({_fmt_pct(tgp)})** |"
         )
         lines.append("")
 
@@ -284,38 +280,102 @@ def _build_demo_data() -> dict:
         "girokonto": {
             "account_id": "ACC001",
             "transactions": [
-                {"date": "2026-04-01", "booking_date": "2026-04-01", "value_date": "2026-04-01",
-                 "type": "Gehalt", "text": "Gehalt April", "amount": 3200.00, "currency": "EUR",
-                 "counterpart_name": "Arbeitgeber GmbH", "counterpart_iban": "DE00000000000000000000",
-                 "transaction_id": "TX001"},
-                {"date": "2026-04-02", "booking_date": "2026-04-02", "value_date": "2026-04-02",
-                 "type": "Lastschrift", "text": "Miete April", "amount": -850.00, "currency": "EUR",
-                 "counterpart_name": "Hausverwaltung Müller", "counterpart_iban": "DE00000000000000000000",
-                 "transaction_id": "TX002"},
-                {"date": "2026-04-03", "booking_date": "2026-04-03", "value_date": "2026-04-03",
-                 "type": "Lastschrift", "text": "Einkauf Lebensmittel", "amount": -67.89, "currency": "EUR",
-                 "counterpart_name": "REWE GmbH", "counterpart_iban": "DE00000000000000000000",
-                 "transaction_id": "TX003"},
-                {"date": "2026-04-04", "booking_date": "2026-04-04", "value_date": "2026-04-04",
-                 "type": "Lastschrift", "text": "Einkauf", "amount": -23.45, "currency": "EUR",
-                 "counterpart_name": "REWE GmbH", "counterpart_iban": "DE00000000000000000000",
-                 "transaction_id": "TX004"},
-                {"date": "2026-04-05", "booking_date": "2026-04-05", "value_date": "2026-04-05",
-                 "type": "Lastschrift", "text": "Einkauf Bio", "amount": -34.12, "currency": "EUR",
-                 "counterpart_name": "REWE GmbH", "counterpart_iban": "DE00000000000000000000",
-                 "transaction_id": "TX005"},
-                {"date": "2026-04-03", "booking_date": "2026-04-03", "value_date": "2026-04-03",
-                 "type": "Lastschrift", "text": "Strom April", "amount": -75.00, "currency": "EUR",
-                 "counterpart_name": "Stadtwerke Berlin", "counterpart_iban": "DE00000000000000000000",
-                 "transaction_id": "TX006"},
-                {"date": "2026-04-05", "booking_date": "2026-04-05", "value_date": "2026-04-05",
-                 "type": "Lastschrift", "text": "Internet", "amount": -39.99, "currency": "EUR",
-                 "counterpart_name": "Telekom", "counterpart_iban": "DE00000000000000000000",
-                 "transaction_id": "TX007"},
-                {"date": "2026-04-07", "booking_date": "2026-04-07", "value_date": "2026-04-07",
-                 "type": "Überweisung", "text": "Rückzahlung Abendessen", "amount": 25.00, "currency": "EUR",
-                 "counterpart_name": "John Doe", "counterpart_iban": "DE00000000000000000000",
-                 "transaction_id": "TX008"},
+                {
+                    "date": "2026-04-01",
+                    "booking_date": "2026-04-01",
+                    "value_date": "2026-04-01",
+                    "type": "Gehalt",
+                    "text": "Gehalt April",
+                    "amount": 3200.00,
+                    "currency": "EUR",
+                    "counterpart_name": "Arbeitgeber GmbH",
+                    "counterpart_iban": "DE00000000000000000000",
+                    "transaction_id": "TX001",
+                },
+                {
+                    "date": "2026-04-02",
+                    "booking_date": "2026-04-02",
+                    "value_date": "2026-04-02",
+                    "type": "Lastschrift",
+                    "text": "Miete April",
+                    "amount": -850.00,
+                    "currency": "EUR",
+                    "counterpart_name": "Hausverwaltung Müller",
+                    "counterpart_iban": "DE00000000000000000000",
+                    "transaction_id": "TX002",
+                },
+                {
+                    "date": "2026-04-03",
+                    "booking_date": "2026-04-03",
+                    "value_date": "2026-04-03",
+                    "type": "Lastschrift",
+                    "text": "Einkauf Lebensmittel",
+                    "amount": -67.89,
+                    "currency": "EUR",
+                    "counterpart_name": "REWE GmbH",
+                    "counterpart_iban": "DE00000000000000000000",
+                    "transaction_id": "TX003",
+                },
+                {
+                    "date": "2026-04-04",
+                    "booking_date": "2026-04-04",
+                    "value_date": "2026-04-04",
+                    "type": "Lastschrift",
+                    "text": "Einkauf",
+                    "amount": -23.45,
+                    "currency": "EUR",
+                    "counterpart_name": "REWE GmbH",
+                    "counterpart_iban": "DE00000000000000000000",
+                    "transaction_id": "TX004",
+                },
+                {
+                    "date": "2026-04-05",
+                    "booking_date": "2026-04-05",
+                    "value_date": "2026-04-05",
+                    "type": "Lastschrift",
+                    "text": "Einkauf Bio",
+                    "amount": -34.12,
+                    "currency": "EUR",
+                    "counterpart_name": "REWE GmbH",
+                    "counterpart_iban": "DE00000000000000000000",
+                    "transaction_id": "TX005",
+                },
+                {
+                    "date": "2026-04-03",
+                    "booking_date": "2026-04-03",
+                    "value_date": "2026-04-03",
+                    "type": "Lastschrift",
+                    "text": "Strom April",
+                    "amount": -75.00,
+                    "currency": "EUR",
+                    "counterpart_name": "Stadtwerke Berlin",
+                    "counterpart_iban": "DE00000000000000000000",
+                    "transaction_id": "TX006",
+                },
+                {
+                    "date": "2026-04-05",
+                    "booking_date": "2026-04-05",
+                    "value_date": "2026-04-05",
+                    "type": "Lastschrift",
+                    "text": "Internet",
+                    "amount": -39.99,
+                    "currency": "EUR",
+                    "counterpart_name": "Telekom",
+                    "counterpart_iban": "DE00000000000000000000",
+                    "transaction_id": "TX007",
+                },
+                {
+                    "date": "2026-04-07",
+                    "booking_date": "2026-04-07",
+                    "value_date": "2026-04-07",
+                    "type": "Überweisung",
+                    "text": "Rückzahlung Abendessen",
+                    "amount": 25.00,
+                    "currency": "EUR",
+                    "counterpart_name": "John Doe",
+                    "counterpart_iban": "DE00000000000000000000",
+                    "transaction_id": "TX008",
+                },
             ],
             "summary": {
                 "total_in": 3225.00,
@@ -327,10 +387,18 @@ def _build_demo_data() -> dict:
         "tagesgeld": {
             "account_id": "ACC002",
             "transactions": [
-                {"date": "2026-04-01", "booking_date": "2026-04-01", "value_date": "2026-04-01",
-                 "type": "Zinsen", "text": "Zinsgutschrift Q1/2026", "amount": 62.50, "currency": "EUR",
-                 "counterpart_name": "", "counterpart_iban": "",
-                 "transaction_id": "TX009"},
+                {
+                    "date": "2026-04-01",
+                    "booking_date": "2026-04-01",
+                    "value_date": "2026-04-01",
+                    "type": "Zinsen",
+                    "text": "Zinsgutschrift Q1/2026",
+                    "amount": 62.50,
+                    "currency": "EUR",
+                    "counterpart_name": "",
+                    "counterpart_iban": "",
+                    "transaction_id": "TX009",
+                },
             ],
             "summary": {
                 "total_in": 62.50,
@@ -342,18 +410,44 @@ def _build_demo_data() -> dict:
         "depot": {
             "depot_id": "DEP001",
             "positions": [
-                {"isin": "IE00B4L5Y983", "wkn": "A0RPWH", "name": "iShares MSCI World",
-                 "quantity": 15.0, "current_price": 95.30, "current_value": 1429.50,
-                 "purchase_value": 1200.00, "gains": 229.50, "gains_percent": 19.125, "currency": "EUR"},
-                {"isin": "IE00B1XNHC34", "wkn": "A0RPWJ", "name": "iShares Euro Gov Bond",
-                 "quantity": 20.0, "current_price": 110.50, "current_value": 2210.00,
-                 "purchase_value": 2300.00, "gains": -90.00, "gains_percent": -3.913, "currency": "EUR"},
+                {
+                    "isin": "IE00B4L5Y983",
+                    "wkn": "A0RPWH",
+                    "name": "iShares MSCI World",
+                    "quantity": 15.0,
+                    "current_price": 95.30,
+                    "current_value": 1429.50,
+                    "purchase_value": 1200.00,
+                    "gains": 229.50,
+                    "gains_percent": 19.125,
+                    "currency": "EUR",
+                },
+                {
+                    "isin": "IE00B1XNHC34",
+                    "wkn": "A0RPWJ",
+                    "name": "iShares Euro Gov Bond",
+                    "quantity": 20.0,
+                    "current_price": 110.50,
+                    "current_value": 2210.00,
+                    "purchase_value": 2300.00,
+                    "gains": -90.00,
+                    "gains_percent": -3.913,
+                    "currency": "EUR",
+                },
             ],
             "transactions": [
-                {"date": "2026-03-15", "isin": "IE00B4L5Y983", "wkn": "A0RPWH",
-                 "name": "iShares MSCI World", "transaction_type": "BUY",
-                 "quantity": 5.0, "price": 93.00, "amount": -465.00, "currency": "EUR",
-                 "transaction_id": "DTX001"},
+                {
+                    "date": "2026-03-15",
+                    "isin": "IE00B4L5Y983",
+                    "wkn": "A0RPWH",
+                    "name": "iShares MSCI World",
+                    "transaction_type": "BUY",
+                    "quantity": 5.0,
+                    "price": 93.00,
+                    "amount": -465.00,
+                    "currency": "EUR",
+                    "transaction_id": "DTX001",
+                },
             ],
             "summary": {
                 "total_value": 3639.50,
@@ -376,11 +470,13 @@ def main() -> None:
         description="Generate a Markdown financial report from Finance Agent JSON"
     )
     parser.add_argument(
-        "--input", "-i",
+        "--input",
+        "-i",
         help="Path to Finance Agent JSON file",
     )
     parser.add_argument(
-        "--output", "-o",
+        "--output",
+        "-o",
         help="Path for the output Markdown file (default: stdout)",
     )
     parser.add_argument(

@@ -1,4 +1,5 @@
 """Application configuration via environment variables."""
+
 from pydantic import model_validator
 from pydantic_settings import BaseSettings
 

@@ -60,10 +60,7 @@ def test_ground_truth_end_to_end(postgres_url, db_engine):
     assert len(df) == len(transactions)
 
     with Session(db_engine) as session:
-        normalized = {
-            n.comdirect_id: n
-            for n in session.query(NormalizedTransaction).all()
-        }
+        normalized = {n.comdirect_id: n for n in session.query(NormalizedTransaction).all()}
 
     mismatches: list[str] = []
     for tx_id, exp in expected.items():
@@ -73,9 +70,7 @@ def test_ground_truth_end_to_end(postgres_url, db_engine):
             got = getattr(actual, field)
             want = exp[field]
             if got != want:
-                mismatches.append(
-                    f"{tx_id}.{field}: expected {want!r}, got {got!r}"
-                )
+                mismatches.append(f"{tx_id}.{field}: expected {want!r}, got {got!r}")
 
     assert not mismatches, "ground-truth mismatches:\n" + "\n".join(mismatches)
 

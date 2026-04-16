@@ -87,9 +87,7 @@ def _run_ingest(
 ) -> int:
     run_id = str(uuid.uuid4())
     with Session(pipeline.engine) as session:
-        session.add(
-            SyncRun(id=run_id, source=SyncSource.RAW_IMPORT, status=SyncStatus.RUNNING)
-        )
+        session.add(SyncRun(id=run_id, source=SyncSource.RAW_IMPORT, status=SyncStatus.RUNNING))
         session.commit()
 
     try:
