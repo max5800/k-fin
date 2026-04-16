@@ -9,8 +9,8 @@ from fastapi import FastAPI
 from src.api.routers import transactions
 
 app = FastAPI(
-    title="Finance API",
-    description="Personal Finance Intelligence Platform — central API",
+    title="K-Fin API",
+    description="K-Fin — Personal Finance Intelligence Platform",
     version="0.1.0",
 )
 

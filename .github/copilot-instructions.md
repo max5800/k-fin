@@ -1,14 +1,14 @@
-# Copilot Instructions — comdirect-firefly-sync
+# Copilot Instructions — K-Fin
 
 ## Project
 
-Read-only financial data export from the Comdirect REST API — as CSV, REST API, or (planned) Firefly III import.
+K-Fin — Personal Finance Intelligence Platform. Read-only financial data export from the Comdirect REST API — as CSV, Finance API, and normalization pipeline into Postgres.
 
 ## Architecture
 
 - `src/connector/` — Comdirect API client (OAuth2 + pushTAN auth, accounts, transactions, depot)
 - `src/api/` — Read-only FastAPI to serve exported CSVs (runs in isolated container)
-- `src/importer/` — Firefly III client + transaction mapper (planned)
+- `src/importer/` — ~~Firefly III client + transaction mapper~~ (deleted/legacy)
 - `src/exporter/` — Finance agent mapper
 - `src/scheduler/` — Sync job orchestration
 - `src/core/` — Config (pydantic-settings), logging
@@ -21,7 +21,7 @@ Read-only financial data export from the Comdirect REST API — as CSV, REST API
 - Async httpx for all HTTP calls
 - `uv` as package manager — use `uv run` to execute scripts
 - APScheduler for periodic sync (planned)
-- Dedup via external_id in Firefly III (planned)
+- Dedup via external_id in normalization pipeline
 - Conventional Commits required
 - Docker: two-container architecture (export job + API), shared named volume
 
@@ -85,7 +85,7 @@ This project exposes a **read-only Finance API** (`src/api/serve_exports.py`) us
 - Mask any data if logging is required for debugging (e.g. `IBAN: DE** **** 1234`).
 
 ## 4. Data Transmission Boundaries
-- Financial data must ONLY flow between the Comdirect API and the local Firefly III instance.
+- Data flows from Comdirect into the local Postgres DB via the Normalization Pipeline.
 - No telemetry, analytics, or third-party API calls that could leak financial data.
 
 ## 5. Safe Dependency Management
