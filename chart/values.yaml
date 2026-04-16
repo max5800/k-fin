@@ -6,6 +6,14 @@ api:
     tag: ""
     pullPolicy: IfNotPresent
   replicaCount: 1
+  podSecurityContext:
+    runAsNonRoot: true
+    fsGroup: 1001
+  securityContext:
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: true
+    runAsNonRoot: true
+    runAsUser: 1001
   resources:
     requests:
       cpu: 50m
@@ -39,6 +47,14 @@ worker:
     tag: ""
     pullPolicy: IfNotPresent
   replicaCount: 1
+  podSecurityContext:
+    runAsNonRoot: true
+    fsGroup: 1001
+  securityContext:
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: true
+    runAsNonRoot: true
+    runAsUser: 1001
   resources:
     requests:
       cpu: 50m

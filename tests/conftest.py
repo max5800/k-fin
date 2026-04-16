@@ -33,10 +33,24 @@ def postgres_url():
     if not _docker_available():
         pytest.skip("Docker not available — integration tests need testcontainers")
 
+    import time
+
     from testcontainers.postgres import PostgresContainer
 
     with PostgresContainer("postgres:16-alpine", driver="psycopg") as pg:
-        yield pg.get_connection_url()
+        url = pg.get_connection_url()
+        # Wait until Postgres actually accepts connections — testcontainers
+        # sometimes yields before the socket is fully ready.
+        engine = create_engine(url)
+        for _ in range(30):
+            try:
+                with engine.connect() as conn:
+                    conn.execute(text("SELECT 1"))
+                break
+            except Exception:
+                time.sleep(0.3)
+        engine.dispose()
+        yield url
 
 
 @pytest.fixture

@@ -64,7 +64,7 @@ A Kubernetes NetworkPolicy ensures only `comdirect-api` can reach `comdirect-wor
 ## Setup
 
 ```bash
-git clone https://github.com/max5800/comdirect-firefly-sync.git
+git clone https://github.com/max5800/k-fin.git
 cd comdirect-firefly-sync
 cp .env.example .env
 # Fill in your credentials in .env
