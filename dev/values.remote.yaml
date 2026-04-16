@@ -30,7 +30,7 @@ worker:
 ingress:
   enabled: true
   className: traefik
-  host: comdirect-sync.max5800.com
+  host: k-fin-dev.max5800.com
 
 externalSecret:
   enabled: true

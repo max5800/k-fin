@@ -29,7 +29,7 @@ spec:
           command:
             {{- toYaml .Values.api.command | nindent 12 }}
           {{- else }}
-          command: ["uvicorn", "src.api.serve_exports:app", "--host", "0.0.0.0", "--port", "8000"]
+          command: ["uvicorn", "src.api.app:app", "--host", "0.0.0.0", "--port", "8000"]
           {{- end }}
           ports:
             - containerPort: 8000

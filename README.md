@@ -97,15 +97,17 @@ docker-compose up
 
 ## Kubernetes
 
-Deploy via the **Helm chart** in `chart/` (or **Tilt** for local development):
+Deploy via the **Helm chart** in `chart/` and **Tilt** for dev:
 
 ```bash
-# Local dev
-tilt up --stream -- --profile=local
+# Remote dev stage (preferred) — deploys to k3s-app cluster as k-fin-dev
+tilt up --stream
 
-# Remote
-helm upgrade --install comdirect-sync ./chart -f dev/values.remote.yaml
+# Local dev (legacy, Rancher Desktop)
+tilt up --stream -- --profile=local
 ```
+
+The remote dev stage deploys to `k-fin-dev.max5800.com` with Swagger UI at `/docs`. Tilt links in the dashboard point directly to Swagger, ReDoc, and the health endpoint.
 
 The chart deploys two microservices:
 
