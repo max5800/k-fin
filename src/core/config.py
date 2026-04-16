@@ -11,10 +11,6 @@ class Settings(BaseSettings):
     comdirect_pin: str = ""
     comdirect_tan_method: str = "pushTAN"
 
-    # Firefly III
-    firefly_base_url: str = "http://localhost:8080"
-    firefly_access_token: str = ""
-
     # Sync
     sync_interval_minutes: int = 60
     sync_initial_days: int = 90
