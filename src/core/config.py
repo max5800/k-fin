@@ -28,6 +28,7 @@ class Settings(BaseSettings):
     app_env: str = "development"
     log_level: str = "INFO"
     api_token: str = ""
+    worker_url: str = "http://comdirect-worker:8001"
 
     # Database / normalization
     database_url: str = ""
