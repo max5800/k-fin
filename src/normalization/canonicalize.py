@@ -53,10 +53,7 @@ def canonicalize(raw: dict[str, Any]) -> dict[str, Any]:
 
     booking_date = raw.get("bookingDate") or raw.get("booking_date") or ""
     valuation_date = (
-        raw.get("valutaDate")
-        or raw.get("value_date")
-        or raw.get("valuation_date")
-        or booking_date
+        raw.get("valutaDate") or raw.get("value_date") or raw.get("valuation_date") or booking_date
     )
 
     creditor_name = creditor.get("holderName") if creditor else raw.get("creditor_name", "")

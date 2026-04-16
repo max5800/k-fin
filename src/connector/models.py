@@ -40,9 +40,7 @@ class ComdirectAccount(BaseModel):
                 else float(balance_raw or 0)
             ),
             "currency": (
-                balance_raw.get("unit", "EUR")
-                if isinstance(balance_raw, dict)
-                else "EUR"
+                balance_raw.get("unit", "EUR") if isinstance(balance_raw, dict) else "EUR"
             ),
         }
 
@@ -80,20 +78,14 @@ class ComdirectTransaction(BaseModel):
             currency = data.get("currency") or "EUR"
 
         return {
-            "transaction_id": data.get("transactionId")
-            or data.get("transaction_id")
-            or "",
+            "transaction_id": data.get("transactionId") or data.get("transaction_id") or "",
             "booking_date": data.get("bookingDate") or data.get("booking_date") or "",
             "value_date": data.get("valutaDate") or data.get("value_date") or "",
             "amount": amount,
             "currency": currency,
             "type_text": data.get("typeText") or data.get("type_text") or "",
-            "remittance_info": data.get("remittanceInfo")
-            or data.get("remittance_info")
-            or "",
-            "creditor_name": creditor.get("holderName")
-            or data.get("creditor_name")
-            or "",
+            "remittance_info": data.get("remittanceInfo") or data.get("remittance_info") or "",
+            "creditor_name": creditor.get("holderName") or data.get("creditor_name") or "",
             "creditor_iban": creditor.get("iban") or data.get("creditor_iban") or "",
             "debtor_name": debtor.get("holderName") or data.get("debtor_name") or "",
             "debtor_iban": debtor.get("iban") or data.get("debtor_iban") or "",
@@ -138,13 +130,9 @@ class DepotPosition(BaseModel):
             "isin": instrument.get("isin") or data.get("isin") or "",
             "wkn": instrument.get("wkn") or data.get("wkn") or "",
             "name": instrument.get("name") or data.get("name") or "",
-            "quantity": float(
-                data.get("quantity", {}).get("value") or data.get("stueckzahl") or 0
-            ),
+            "quantity": float(data.get("quantity", {}).get("value") or data.get("stueckzahl") or 0),
             "current_price": float(
-                data.get("currentPrice", {}).get("value")
-                or data.get("kurs", {}).get("value")
-                or 0
+                data.get("currentPrice", {}).get("value") or data.get("kurs", {}).get("value") or 0
             ),
             "current_value": float(
                 data.get("currentValue", {}).get("value")
@@ -169,9 +157,7 @@ class DepotPosition(BaseModel):
 
     @property
     def gains_percent(self) -> float:
-        return round(
-            (self.gains / self.purchase_value * 100) if self.purchase_value else 0, 4
-        )
+        return round((self.gains / self.purchase_value * 100) if self.purchase_value else 0, 4)
 
 
 class DepotTransaction(BaseModel):
@@ -205,9 +191,7 @@ class DepotTransaction(BaseModel):
         if not isinstance(data, dict):
             return data
         instrument = data.get("instrument") or {}
-        raw_type = (
-            data.get("transactionType") or data.get("transactionDirection") or ""
-        ).upper()
+        raw_type = (data.get("transactionType") or data.get("transactionDirection") or "").upper()
         type_map = {
             "BUY": "BUY",
             "IN": "BUY",
@@ -220,20 +204,14 @@ class DepotTransaction(BaseModel):
         }
         return {
             "transaction_id": data.get("transactionId") or "",
-            "booking_date": data.get("bookingDate")
-            or data.get("transactionDate")
-            or "",
+            "booking_date": data.get("bookingDate") or data.get("transactionDate") or "",
             "isin": instrument.get("isin") or data.get("isin") or "",
             "wkn": instrument.get("wkn") or data.get("wkn") or "",
             "name": instrument.get("name") or data.get("name") or "",
             "transaction_type": type_map.get(raw_type, "OTHER"),
-            "quantity": float(
-                data.get("quantity", {}).get("value") or data.get("stueckzahl") or 0
-            ),
+            "quantity": float(data.get("quantity", {}).get("value") or data.get("stueckzahl") or 0),
             "price": float(
-                data.get("price", {}).get("value")
-                or data.get("kurs", {}).get("value")
-                or 0
+                data.get("price", {}).get("value") or data.get("kurs", {}).get("value") or 0
             ),
             "amount": float(
                 data.get("transactionValue", {}).get("value")
@@ -263,9 +241,7 @@ class ComdirectData(BaseModel):
         if not isinstance(data, dict):
             return data
         return {
-            "accounts": [
-                ComdirectAccount.model_validate(a) for a in (data.get("accounts") or [])
-            ],
+            "accounts": [ComdirectAccount.model_validate(a) for a in (data.get("accounts") or [])],
             "transactions": {
                 k: [ComdirectTransaction.model_validate(tx) for tx in v]
                 for k, v in (data.get("transactions") or {}).items()

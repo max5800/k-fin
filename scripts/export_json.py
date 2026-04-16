@@ -37,8 +37,7 @@ def parse_since(since_str: str | None) -> date | None:
         return date.fromisoformat(since_str)
     except ValueError:
         raise ValueError(
-            f"Invalid --since format: '{since_str}'. "
-            "Expected: YYYY-MM-DD or Xd (e.g. 30d)"
+            f"Invalid --since format: '{since_str}'. Expected: YYYY-MM-DD or Xd (e.g. 30d)"
         )
 
 

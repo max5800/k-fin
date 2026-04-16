@@ -42,7 +42,11 @@ def _sample_raw() -> dict:
         "depot_positions": {
             "DEP1": [
                 {
-                    "instrument": {"isin": "IE00B4L5Y983", "wkn": "A0RPWH", "name": "iShares MSCI World"},
+                    "instrument": {
+                        "isin": "IE00B4L5Y983",
+                        "wkn": "A0RPWH",
+                        "name": "iShares MSCI World",
+                    },
                     "quantity": {"value": "10"},
                     "currentPrice": {"value": "95.00"},
                     "currentValue": {"value": "950.00", "unit": "EUR"},
@@ -127,11 +131,13 @@ class TestBuildExport:
     def test_unbooked_transactions_kept_with_since(self):
         """Transactions without a booking_date are always included."""
         raw = _sample_raw()
-        raw["transactions"]["ACC1"].append({
-            "transactionId": "TX_OPEN",
-            "bookingDate": "",
-            "transactionValue": {"value": "-15.00", "unit": "EUR"},
-        })
+        raw["transactions"]["ACC1"].append(
+            {
+                "transactionId": "TX_OPEN",
+                "bookingDate": "",
+                "transactionValue": {"value": "-15.00", "unit": "EUR"},
+            }
+        )
         result = build_export(raw, since=date(2026, 12, 31))
 
         tx_ids = [tx["transaction_id"] for tx in result["transactions"]["ACC1"]]

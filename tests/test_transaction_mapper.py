@@ -42,7 +42,11 @@ class TestMapTransaction:
 
     def test_deposit(self):
         result = map_transaction(
-            _make_tx(amount="1500.00", debtor_name="Arbeitgeber GmbH", debtor_iban="DE11111111111111111111"),
+            _make_tx(
+                amount="1500.00",
+                debtor_name="Arbeitgeber GmbH",
+                debtor_iban="DE11111111111111111111",
+            ),
             FIREFLY_ACCOUNT_ID,
         )
         tx = result["transactions"][0]
@@ -68,7 +72,9 @@ class TestMapTransaction:
         assert result["transactions"][0]["description"] == "Miete Januar"
 
     def test_description_fallback_to_type_text(self):
-        result = map_transaction(_make_tx(remittance_info="", type_text="Dauerauftrag"), FIREFLY_ACCOUNT_ID)
+        result = map_transaction(
+            _make_tx(remittance_info="", type_text="Dauerauftrag"), FIREFLY_ACCOUNT_ID
+        )
         assert result["transactions"][0]["description"] == "Dauerauftrag"
 
     def test_description_truncated_at_255(self):
