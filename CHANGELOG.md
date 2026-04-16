@@ -1,3 +1,10 @@
+## [1.14.1](https://github.com/max5800/k-fin/compare/v1.14.0...v1.14.1) (2026-04-16)
+
+
+### Bug Fixes
+
+* **ci:** move dev deps to dependency-groups and auto-format codebase ([f7ab07e](https://github.com/max5800/k-fin/commit/f7ab07e38477905e01670a5b6cb33ee0e59f8f86))
+
 # [1.14.0](https://github.com/max5800/k-fin/compare/v1.13.0...v1.14.0) (2026-04-16)
 
 
