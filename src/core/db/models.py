@@ -84,6 +84,25 @@ class Category(Base):
     type: Mapped[TypeEnum] = mapped_column(SQLEnum(TypeEnum), nullable=False)
 
 
+class Budget(Base):
+    __tablename__ = "budgets"
+
+    category_id: Mapped[str] = mapped_column(
+        ForeignKey("categories.id"), primary_key=True
+    )
+    monthly_limit: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False)
+    currency: Mapped[str] = mapped_column(String(3), nullable=False, default="EUR")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+
 class Rule(Base):
     __tablename__ = "rules"
 
