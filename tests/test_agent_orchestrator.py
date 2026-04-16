@@ -29,7 +29,6 @@ from src.core.db.models import (
     TypeEnum,
 )
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -46,102 +45,132 @@ def agent_seed(db_engine):
 
         # Raw transactions (FK target)
         for char in "abcde":
-            s.add(RawTransaction(
-                content_hash=char * 64,
-                comdirect_id=f"CD-{char}",
-                raw_data={"stub": True},
-            ))
+            s.add(
+                RawTransaction(
+                    content_hash=char * 64,
+                    comdirect_id=f"CD-{char}",
+                    raw_data={"stub": True},
+                )
+            )
         s.flush()
 
         # Categorized transactions
-        s.add(NormalizedTransaction(
-            id="txn-cat-1",
-            raw_content_hash="a" * 64,
-            booking_date=date(2026, 4, 7),
-            valuation_date=date(2026, 4, 7),
-            amount=Decimal("-42.50"),
-            sender="John Doe",
-            recipient="REWE",
-            description="Einkauf REWE",
-            category_id="groceries",
-            is_recurring=False, is_outlier=False, internal_transfer=False,
-        ))
-        s.add(NormalizedTransaction(
-            id="txn-cat-2",
-            raw_content_hash="b" * 64,
-            booking_date=date(2026, 4, 1),
-            valuation_date=date(2026, 4, 1),
-            amount=Decimal("-850.00"),
-            sender="John Doe",
-            recipient="Vermieter GmbH",
-            description="Miete April",
-            category_id="rent",
-            is_recurring=True, is_outlier=False, internal_transfer=False,
-        ))
+        s.add(
+            NormalizedTransaction(
+                id="txn-cat-1",
+                raw_content_hash="a" * 64,
+                booking_date=date(2026, 4, 7),
+                valuation_date=date(2026, 4, 7),
+                amount=Decimal("-42.50"),
+                sender="John Doe",
+                recipient="REWE",
+                description="Einkauf REWE",
+                category_id="groceries",
+                is_recurring=False,
+                is_outlier=False,
+                internal_transfer=False,
+            )
+        )
+        s.add(
+            NormalizedTransaction(
+                id="txn-cat-2",
+                raw_content_hash="b" * 64,
+                booking_date=date(2026, 4, 1),
+                valuation_date=date(2026, 4, 1),
+                amount=Decimal("-850.00"),
+                sender="John Doe",
+                recipient="Vermieter GmbH",
+                description="Miete April",
+                category_id="rent",
+                is_recurring=True,
+                is_outlier=False,
+                internal_transfer=False,
+            )
+        )
 
         # Uncategorized transaction (target for categorization agent)
-        s.add(NormalizedTransaction(
-            id="txn-uncat-1",
-            raw_content_hash="c" * 64,
-            booking_date=date(2026, 4, 5),
-            valuation_date=date(2026, 4, 5),
-            amount=Decimal("-15.90"),
-            sender="John Doe",
-            recipient="Bäckerei Schmidt",
-            description="Brötchen und Kaffee",
-            category_id=None,
-            is_recurring=False, is_outlier=False, internal_transfer=False,
-        ))
+        s.add(
+            NormalizedTransaction(
+                id="txn-uncat-1",
+                raw_content_hash="c" * 64,
+                booking_date=date(2026, 4, 5),
+                valuation_date=date(2026, 4, 5),
+                amount=Decimal("-15.90"),
+                sender="John Doe",
+                recipient="Bäckerei Schmidt",
+                description="Brötchen und Kaffee",
+                category_id=None,
+                is_recurring=False,
+                is_outlier=False,
+                internal_transfer=False,
+            )
+        )
 
         # Income
-        s.add(NormalizedTransaction(
-            id="txn-income-1",
-            raw_content_hash="d" * 64,
-            booking_date=date(2026, 4, 1),
-            valuation_date=date(2026, 4, 1),
-            amount=Decimal("3500.00"),
-            sender="Arbeitgeber AG",
-            recipient="John Doe",
-            description="Gehalt April",
-            category_id=None,
-            is_recurring=True, is_outlier=False, internal_transfer=False,
-        ))
+        s.add(
+            NormalizedTransaction(
+                id="txn-income-1",
+                raw_content_hash="d" * 64,
+                booking_date=date(2026, 4, 1),
+                valuation_date=date(2026, 4, 1),
+                amount=Decimal("3500.00"),
+                sender="Arbeitgeber AG",
+                recipient="John Doe",
+                description="Gehalt April",
+                category_id=None,
+                is_recurring=True,
+                is_outlier=False,
+                internal_transfer=False,
+            )
+        )
 
         # Outlier
-        s.add(NormalizedTransaction(
-            id="txn-outlier-1",
-            raw_content_hash="e" * 64,
-            booking_date=date(2026, 4, 10),
-            valuation_date=date(2026, 4, 10),
-            amount=Decimal("-1271.00"),
-            sender="John Doe",
-            recipient="PayPal Europe",
-            description="PayPal Zahlung",
-            category_id=None,
-            is_recurring=False, is_outlier=True, internal_transfer=False,
-        ))
+        s.add(
+            NormalizedTransaction(
+                id="txn-outlier-1",
+                raw_content_hash="e" * 64,
+                booking_date=date(2026, 4, 10),
+                valuation_date=date(2026, 4, 10),
+                amount=Decimal("-1271.00"),
+                sender="John Doe",
+                recipient="PayPal Europe",
+                description="PayPal Zahlung",
+                category_id=None,
+                is_recurring=False,
+                is_outlier=True,
+                internal_transfer=False,
+            )
+        )
 
         # Recurring pattern
-        s.add(RecurringPattern(
-            recipient="Vermieter GmbH",
-            avg_amount=Decimal("-850.00"),
-            amount_stddev=Decimal("0.00"),
-            first_seen_month=date(2025, 1, 1),
-            last_seen_month=date(2026, 4, 1),
-            occurrence_count=16,
-        ))
+        s.add(
+            RecurringPattern(
+                recipient="Vermieter GmbH",
+                avg_amount=Decimal("-850.00"),
+                amount_stddev=Decimal("0.00"),
+                first_seen_month=date(2025, 1, 1),
+                last_seen_month=date(2026, 4, 1),
+                occurrence_count=16,
+            )
+        )
 
         # A previous report (for memory testing)
-        s.add(Report(
-            id="prev-report-001",
-            report_type="weekly_analysis",
-            title="weekly_analysis — 2026-W14",
-            content={"observations": [], "period": "2026-W14", "summary_text": "Ruhige Woche."},
-            period_start=date(2026, 4, 6),
-            period_end=date(2026, 4, 12),
-            format="json",
-            status=ReportStatus.READY,
-        ))
+        s.add(
+            Report(
+                id="prev-report-001",
+                report_type="weekly_analysis",
+                title="weekly_analysis — 2026-W14",
+                content={
+                    "observations": [],
+                    "period": "2026-W14",
+                    "summary_text": "Ruhige Woche.",
+                },
+                period_start=date(2026, 4, 6),
+                period_end=date(2026, 4, 12),
+                format="json",
+                status=ReportStatus.READY,
+            )
+        )
 
         s.commit()
 
@@ -190,9 +219,7 @@ class TestGather:
     def test_get_period_transactions(self, db_engine, agent_seed):
         from src.agents.gather import get_period_transactions
 
-        result = get_period_transactions(
-            db_engine, date(2026, 4, 1), date(2026, 4, 30)
-        )
+        result = get_period_transactions(db_engine, date(2026, 4, 1), date(2026, 4, 30))
         assert len(result) == 5
         assert all("id" in r for r in result)
 
@@ -255,14 +282,18 @@ class TestCategorizationAgent:
 
         with Session(db_engine) as s:
             from src.core.db.models import NormalizedTransaction as NT
+
             s.execute(update(NT).values(category_id=None))
             s.commit()
-            from src.core.db.models import Category as Cat, Rule
+            from src.core.db.models import Category as Cat
+            from src.core.db.models import Rule
+
             s.query(Rule).delete()
             s.query(Cat).delete()
             s.commit()
 
         from src.agents.categorization import run_categorization
+
         result = run_categorization(db_engine)
         assert result.suggestions == []
         assert result.uncategorized_count > 0
@@ -306,10 +337,14 @@ class TestOrchestrator:
             assert run.agent_name == "categorization"
             assert run.status == RunStatus.SUCCEEDED
 
-            reports = s.query(Report).filter(
-                Report.report_type == "categorization",
-                Report.id != "prev-report-001",
-            ).all()
+            reports = (
+                s.query(Report)
+                .filter(
+                    Report.report_type == "categorization",
+                    Report.id != "prev-report-001",
+                )
+                .all()
+            )
             assert len(reports) == 1
             assert reports[0].report_type == "categorization"
             assert reports[0].content is not None
@@ -376,13 +411,15 @@ class TestOrchestrator:
         # Pre-create a PENDING run (as the API would)
         run_id = "test-run-001"
         with Session(db_engine) as s:
-            s.add(AgentRun(
-                id=run_id,
-                agent_name="categorization",
-                status=RunStatus.PENDING,
-                trigger="manual",
-                started_at=datetime.now(timezone.utc),
-            ))
+            s.add(
+                AgentRun(
+                    id=run_id,
+                    agent_name="categorization",
+                    status=RunStatus.PENDING,
+                    trigger="manual",
+                    started_at=datetime.now(timezone.utc),
+                )
+            )
             s.commit()
 
         with categorization_agent.override(model=TestModel()):

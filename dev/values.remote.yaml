@@ -1,3 +1,6 @@
+imagePullSecrets:
+  - name: ghcr-pull-secret
+
 api:
   image:
     pullPolicy: Always
@@ -36,8 +39,8 @@ externalSecret:
   enabled: true
   refreshInterval: 1h
   secretStore:
-    name: vault-backend
-    kind: ClusterSecretStore
+    name: vault-finance
+    kind: SecretStore
   vaultPath: k8s/finance-api
   keys:
     - path: finance/comdirect
@@ -75,6 +78,6 @@ postgres:
     enabled: true
     refreshInterval: 1h
     secretStore:
-      name: vault-backend
-      kind: ClusterSecretStore
+      name: vault-finance
+      kind: SecretStore
     vaultPath: k8s/finance-postgres

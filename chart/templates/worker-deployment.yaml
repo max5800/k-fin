@@ -28,15 +28,22 @@ spec:
         - name: migrate
           image: "{{ .Values.postgres.migrate.image.repository | default .Values.worker.image.repository }}:{{ .Values.postgres.migrate.image.tag | default .Values.worker.image.tag | default (printf "v%s" .Chart.Version) }}"
           imagePullPolicy: {{ .Values.postgres.migrate.image.pullPolicy | default .Values.worker.image.pullPolicy }}
-          command: ["uv", "run", "python", "scripts/migrate.py"]
+          command: ["/app/.venv/bin/python", "scripts/migrate.py"]
           securityContext:
             {{- toYaml .Values.worker.securityContext | nindent 12 }}
           env:
+            - name: UV_CACHE_DIR
+              value: /tmp/.cache/uv
+            - name: PYTHONPATH
+              value: /app
             - name: DATABASE_URL
               valueFrom:
                 secretKeyRef:
                   name: {{ .Values.postgres.credentialsSecret }}
                   key: uri
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
       {{- end }}
       containers:
         - name: worker
@@ -46,12 +53,14 @@ spec:
           command:
             {{- toYaml .Values.worker.command | nindent 12 }}
           {{- else }}
-          command: ["uv", "run", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8001"]
+          command: ["/app/.venv/bin/uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8001"]
           {{- end }}
           ports:
             - containerPort: 8001
               protocol: TCP
           env:
+            - name: PYTHONPATH
+              value: /app
             {{- if .Values.postgres.enabled }}
             - name: DATABASE_URL
               valueFrom:
@@ -67,6 +76,8 @@ spec:
             - secretRef:
                 name: {{ include "k-fin.fullname" . }}-comdirect-secrets
           volumeMounts:
+            - name: tmp
+              mountPath: /tmp
             {{- if .Values.persistence.enabled }}
             - name: exports
               mountPath: /data/exports
@@ -88,6 +99,8 @@ spec:
             initialDelaySeconds: 5
             periodSeconds: 10
       volumes:
+        - name: tmp
+          emptyDir: {}
         {{- if .Values.persistence.enabled }}
         - name: exports
           persistentVolumeClaim:
