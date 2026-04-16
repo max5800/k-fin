@@ -72,3 +72,40 @@ class TransactionListOut(BaseModel):
 class TransactionUpdate(BaseModel):
     category_id: str | None = None
     tags: list[str] | None = None
+
+
+# ---------------------------------------------------------------------------
+# Aggregates
+# ---------------------------------------------------------------------------
+
+
+class CategoryBreakdown(BaseModel):
+    category_id: str
+    category_name: str
+    total: Decimal
+    transaction_count: int
+
+
+class MonthlySummaryOut(BaseModel):
+    year: int
+    month: int
+    income: Decimal
+    expenses: Decimal
+    net: Decimal
+    savings_rate: Decimal
+    transaction_count: int
+    by_category: list[CategoryBreakdown]
+
+
+class CashflowPoint(BaseModel):
+    year: int
+    month: int
+    income: Decimal
+    expenses: Decimal
+    net: Decimal
+    transaction_count: int
+
+
+class CashflowOverTimeOut(BaseModel):
+    series: list[CashflowPoint]
+    total_months: int
