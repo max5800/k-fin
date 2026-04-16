@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import logging
 import uuid
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from typing import Any
 
 from sqlalchemy import Engine, create_engine, update
@@ -19,7 +19,7 @@ from src.agents.categorization import run_categorization
 from src.agents.monthly_analysis import run_monthly_analysis
 from src.agents.synthesizer import run_synthesizer
 from src.agents.weekly_analysis import run_weekly_analysis
-from src.core.db.models import AgentRun, RunStatus, RunTrigger
+from src.core.db.models import AgentRun, Report, ReportStatus, RunStatus, RunTrigger
 
 logger = logging.getLogger(__name__)
 
@@ -37,64 +37,46 @@ class AgentOrchestrator:
         self.engine: Engine = create_engine(database_url)
         self.own_ibans = list(own_ibans or [])
 
-    def run_full(self) -> str:
-        """Run all agents in sequence, return the SyncRun ID."""
-        run_id = str(uuid.uuid4())
-        self._create_run(run_id, agent_type="full")
+    # ------------------------------------------------------------------
+    # Entry points called from the Runs API (run ID already exists)
+    # ------------------------------------------------------------------
 
-        results: dict[str, Any] = {}
-        errors: list[str] = []
-
-        # 1. Categorization
+    def run_single_for(self, run_id: str, agent_type: str) -> None:
+        """Execute a single agent for an existing run (API-triggered)."""
+        self._mark_running(run_id)
         try:
-            results["categorization"] = run_categorization(self.engine)
+            result = self._run_agent(agent_type)
+            results = {agent_type: result}
+            self._finish_run(run_id, results=results)
+            self._persist_report(agent_type, result)
         except Exception as exc:
-            logger.error("Categorization agent failed: %s", exc)
-            errors.append(f"categorization: {exc}")
+            logger.error("Agent %s failed: %s", agent_type, exc)
+            self._finish_run(run_id, results={}, error=str(exc), status=RunStatus.FAILED)
 
-        # 2. Weekly analysis
-        try:
-            results["weekly_analysis"] = run_weekly_analysis(self.engine)
-        except Exception as exc:
-            logger.error("Weekly analysis agent failed: %s", exc)
-            errors.append(f"weekly_analysis: {exc}")
-
-        # 3. Monthly analysis
-        try:
-            results["monthly_analysis"] = run_monthly_analysis(self.engine)
-        except Exception as exc:
-            logger.error("Monthly analysis agent failed: %s", exc)
-            errors.append(f"monthly_analysis: {exc}")
-
-        # 4. Anomaly detection
-        try:
-            results["anomaly"] = run_anomaly_detection(self.engine)
-        except Exception as exc:
-            logger.error("Anomaly agent failed: %s", exc)
-            errors.append(f"anomaly: {exc}")
-
-        # 5. Synthesizer (receives all previous results)
-        try:
-            results["synthesis"] = run_synthesizer(
-                engine=self.engine,
-                categorization=results.get("categorization"),
-                weekly=results.get("weekly_analysis"),
-                monthly=results.get("monthly_analysis"),
-                anomaly=results.get("anomaly"),
-            )
-        except Exception as exc:
-            logger.error("Synthesizer agent failed: %s", exc)
-            errors.append(f"synthesis: {exc}")
-
-        # Finish run
+    def run_full_for(self, run_id: str) -> None:
+        """Execute all agents for an existing run (API-triggered)."""
+        self._mark_running(run_id)
+        results, errors = self._run_all_agents()
         error_msg = "; ".join(errors) if errors else None
         status = RunStatus.FAILED if not results else RunStatus.SUCCEEDED
         self._finish_run(run_id, results=results, error=error_msg, status=status)
 
+    # ------------------------------------------------------------------
+    # Standalone entry points (create their own run)
+    # ------------------------------------------------------------------
+
+    def run_full(self) -> str:
+        """Run all agents in sequence, return the AgentRun ID."""
+        run_id = str(uuid.uuid4())
+        self._create_run(run_id, agent_type="full")
+        results, errors = self._run_all_agents()
+        error_msg = "; ".join(errors) if errors else None
+        status = RunStatus.FAILED if not results else RunStatus.SUCCEEDED
+        self._finish_run(run_id, results=results, error=error_msg, status=status)
         return run_id
 
     def run_single(self, agent_type: str) -> str:
-        """Run a single agent, return the SyncRun ID."""
+        """Run a single agent, return the AgentRun ID."""
         if agent_type not in VALID_AGENT_TYPES:
             raise ValueError(
                 f"Invalid agent type '{agent_type}'. "
@@ -107,11 +89,52 @@ class AgentOrchestrator:
         try:
             result = self._run_agent(agent_type)
             self._finish_run(run_id, results={agent_type: result})
+            self._persist_report(agent_type, result)
         except Exception as exc:
             logger.error("Agent %s failed: %s", agent_type, exc)
             self._finish_run(run_id, results={}, error=str(exc), status=RunStatus.FAILED)
 
         return run_id
+
+    # ------------------------------------------------------------------
+    # Agent dispatch
+    # ------------------------------------------------------------------
+
+    def _run_all_agents(self) -> tuple[dict[str, Any], list[str]]:
+        """Run all agents, return (results, errors)."""
+        results: dict[str, Any] = {}
+        errors: list[str] = []
+
+        for agent_type, runner in [
+            ("categorization", lambda: run_categorization(self.engine)),
+            ("weekly_analysis", lambda: run_weekly_analysis(self.engine)),
+            ("monthly_analysis", lambda: run_monthly_analysis(self.engine)),
+            ("anomaly", lambda: run_anomaly_detection(self.engine)),
+        ]:
+            try:
+                result = runner()
+                results[agent_type] = result
+                self._persist_report(agent_type, result)
+            except Exception as exc:
+                logger.error("%s agent failed: %s", agent_type, exc)
+                errors.append(f"{agent_type}: {exc}")
+
+        # Synthesizer receives all prior results
+        try:
+            result = run_synthesizer(
+                engine=self.engine,
+                categorization=results.get("categorization"),
+                weekly=results.get("weekly_analysis"),
+                monthly=results.get("monthly_analysis"),
+                anomaly=results.get("anomaly"),
+            )
+            results["synthesis"] = result
+            self._persist_report("synthesis", result)
+        except Exception as exc:
+            logger.error("Synthesizer agent failed: %s", exc)
+            errors.append(f"synthesis: {exc}")
+
+        return results, errors
 
     def _run_agent(self, agent_type: str) -> Any:
         """Dispatch to the correct agent runner."""
@@ -143,7 +166,14 @@ class AgentOrchestrator:
             )
             session.commit()
 
-
+    def _mark_running(self, run_id: str) -> None:
+        with Session(self.engine) as session:
+            session.execute(
+                update(AgentRun)
+                .where(AgentRun.id == run_id)
+                .values(status=RunStatus.RUNNING)
+            )
+            session.commit()
 
     def _finish_run(
         self,
@@ -153,7 +183,6 @@ class AgentOrchestrator:
         error: str | None = None,
         status: RunStatus = RunStatus.SUCCEEDED,
     ) -> None:
-        # Convert Pydantic models to dicts
         json_results = {}
         for k, v in results.items():
             json_results[k] = v.model_dump() if hasattr(v, "model_dump") else v
@@ -167,6 +196,27 @@ class AgentOrchestrator:
                     finished_at=datetime.now(timezone.utc),
                     result=json_results,
                     error=error,
+                )
+            )
+            session.commit()
+
+    def _persist_report(self, agent_type: str, result: Any) -> None:
+        """Save an agent result as a Report row (agent memory loop)."""
+        today = date.today()
+        content = result.model_dump() if hasattr(result, "model_dump") else result
+        period = getattr(result, "period", None) or f"{today.isoformat()}"
+
+        with Session(self.engine) as session:
+            session.add(
+                Report(
+                    id=uuid.uuid4().hex,
+                    report_type=agent_type,
+                    title=f"{agent_type} — {period}",
+                    content=content,
+                    period_start=today,
+                    period_end=today,
+                    format="json",
+                    status=ReportStatus.READY,
                 )
             )
             session.commit()
