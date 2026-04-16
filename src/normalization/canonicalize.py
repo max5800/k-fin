@@ -135,7 +135,7 @@ def _clean_remittance_info(raw_text: str) -> str:
     """
     if not raw_text:
         return ""
-    if not re.match(r"^01\D", raw_text):
+    if not re.match(r"^01", raw_text) or len(raw_text) < 37:
         return raw_text.strip()
 
     # Split into 37-char fixed-width SWIFT fields
