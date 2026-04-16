@@ -57,9 +57,7 @@ def _build_summary(data: dict) -> str:
         lines.append(f"Depot total value : {total_value:,.2f} {currency}")
         lines.append(f"  Gains           : {gains:+,.2f} {currency} ({gains_pct:+.2f}%)")
         lines.append(f"  Positions       : {pos_count}")
-        lines.append(
-            f"  Depot txns      : {len(depot.get('transactions', []))}"
-        )
+        lines.append(f"  Depot txns      : {len(depot.get('transactions', []))}")
 
     return "\n".join(lines)
 

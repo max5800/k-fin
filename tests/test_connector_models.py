@@ -11,10 +11,16 @@ from src.connector.models import (
 
 class TestComdirectAccount:
     def test_nested_shape(self):
-        acc = ComdirectAccount.model_validate({
-            "account": {"accountId": "123", "iban": "DE00000000000000000000", "accountType": {"key": "CURRENT_ACCOUNT"}},
-            "balance": {"value": "1234.56", "unit": "EUR"},
-        })
+        acc = ComdirectAccount.model_validate(
+            {
+                "account": {
+                    "accountId": "123",
+                    "iban": "DE00000000000000000000",
+                    "accountType": {"key": "CURRENT_ACCOUNT"},
+                },
+                "balance": {"value": "1234.56", "unit": "EUR"},
+            }
+        )
         assert acc.account_id == "123"
         assert acc.iban == "DE00000000000000000000"
         assert acc.account_type == "CURRENT_ACCOUNT"
@@ -22,12 +28,14 @@ class TestComdirectAccount:
         assert acc.currency == "EUR"
 
     def test_flat_shape(self):
-        acc = ComdirectAccount.model_validate({
-            "accountId": "456",
-            "iban": "DE11111111111111111111",
-            "accountType": "SAVINGS_ACCOUNT",
-            "balance": {"value": "500", "unit": "EUR"},
-        })
+        acc = ComdirectAccount.model_validate(
+            {
+                "accountId": "456",
+                "iban": "DE11111111111111111111",
+                "accountType": "SAVINGS_ACCOUNT",
+                "balance": {"value": "500", "unit": "EUR"},
+            }
+        )
         assert acc.account_id == "456"
         assert acc.account_type == "SAVINGS_ACCOUNT"
 
@@ -39,29 +47,35 @@ class TestComdirectAccount:
 
 class TestComdirectTransaction:
     def test_debit(self):
-        tx = ComdirectTransaction.model_validate({
-            "transactionId": "tx1",
-            "bookingDate": "2026-01-15",
-            "transactionValue": {"value": "-42.50", "unit": "EUR"},
-            "creditor": {"holderName": "REWE GmbH", "iban": "DE00000000000000000000"},
-        })
+        tx = ComdirectTransaction.model_validate(
+            {
+                "transactionId": "tx1",
+                "bookingDate": "2026-01-15",
+                "transactionValue": {"value": "-42.50", "unit": "EUR"},
+                "creditor": {"holderName": "REWE GmbH", "iban": "DE00000000000000000000"},
+            }
+        )
         assert tx.is_debit is True
         assert tx.counterpart_name == "REWE GmbH"
         assert tx.amount == -42.5
 
     def test_credit(self):
-        tx = ComdirectTransaction.model_validate({
-            "transactionValue": {"value": "1500", "unit": "EUR"},
-            "debtor": {"holderName": "Arbeitgeber GmbH"},
-        })
+        tx = ComdirectTransaction.model_validate(
+            {
+                "transactionValue": {"value": "1500", "unit": "EUR"},
+                "debtor": {"holderName": "Arbeitgeber GmbH"},
+            }
+        )
         assert tx.is_debit is False
         assert tx.counterpart_name == "Arbeitgeber GmbH"
 
     def test_description_fallback(self):
-        tx = ComdirectTransaction.model_validate({
-            "transactionValue": {},
-            "typeText": "Dauerauftrag",
-        })
+        tx = ComdirectTransaction.model_validate(
+            {
+                "transactionValue": {},
+                "typeText": "Dauerauftrag",
+            }
+        )
         assert tx.description == "Dauerauftrag"
 
     def test_empty_transaction(self):
@@ -72,43 +86,55 @@ class TestComdirectTransaction:
 
 class TestDepotPosition:
     def test_with_instrument(self):
-        pos = DepotPosition.model_validate({
-            "instrument": {"isin": "IE00B4L5Y983", "wkn": "A0RPWH", "name": "iShares MSCI World"},
-            "quantity": {"value": "10"},
-            "currentValue": {"value": "900", "unit": "EUR"},
-            "purchaseValue": {"value": "800", "unit": "EUR"},
-        })
+        pos = DepotPosition.model_validate(
+            {
+                "instrument": {
+                    "isin": "IE00B4L5Y983",
+                    "wkn": "A0RPWH",
+                    "name": "iShares MSCI World",
+                },
+                "quantity": {"value": "10"},
+                "currentValue": {"value": "900", "unit": "EUR"},
+                "purchaseValue": {"value": "800", "unit": "EUR"},
+            }
+        )
         assert pos.isin == "IE00B4L5Y983"
         assert pos.quantity == 10.0
         assert pos.gains == 100.0
         assert pos.gains_percent == 12.5
 
     def test_german_field_names(self):
-        pos = DepotPosition.model_validate({
-            "isin": "DE0005140008",
-            "stueckzahl": "5",
-            "kurswert": {"value": "500", "unit": "EUR"},
-            "einstandswert": {"value": "450", "unit": "EUR"},
-        })
+        pos = DepotPosition.model_validate(
+            {
+                "isin": "DE0005140008",
+                "stueckzahl": "5",
+                "kurswert": {"value": "500", "unit": "EUR"},
+                "einstandswert": {"value": "450", "unit": "EUR"},
+            }
+        )
         assert pos.current_value == 500.0
         assert pos.purchase_value == 450.0
 
     def test_zero_purchase_no_division_error(self):
-        pos = DepotPosition.model_validate({
-            "currentValue": {"value": "100"},
-            "purchaseValue": {"value": "0"},
-        })
+        pos = DepotPosition.model_validate(
+            {
+                "currentValue": {"value": "100"},
+                "purchaseValue": {"value": "0"},
+            }
+        )
         assert pos.gains_percent == 0
 
 
 class TestDepotTransaction:
     def test_buy(self):
-        dtx = DepotTransaction.model_validate({
-            "transactionType": "BUY",
-            "instrument": {"isin": "IE00B4L5Y983", "name": "iShares"},
-            "quantity": {"value": "5"},
-            "transactionValue": {"value": "400", "unit": "EUR"},
-        })
+        dtx = DepotTransaction.model_validate(
+            {
+                "transactionType": "BUY",
+                "instrument": {"isin": "IE00B4L5Y983", "name": "iShares"},
+                "quantity": {"value": "5"},
+                "transactionValue": {"value": "400", "unit": "EUR"},
+            }
+        )
         assert dtx.transaction_type == "BUY"
         assert dtx.quantity == 5.0
 
@@ -125,14 +151,23 @@ class TestComdirectData:
     def test_parse_full_dataset(self):
         raw = {
             "accounts": [
-                {"account": {"accountId": "1", "iban": "DE00000000000000000000"}, "balance": {"value": "100"}},
+                {
+                    "account": {"accountId": "1", "iban": "DE00000000000000000000"},
+                    "balance": {"value": "100"},
+                },
             ],
             "transactions": {
                 "1": [{"transactionId": "tx1", "transactionValue": {"value": "-10"}}],
             },
             "depots": [{"depotId": "d1"}],
             "depot_positions": {
-                "d1": [{"instrument": {"isin": "IE00B4L5Y983"}, "currentValue": {"value": "500"}, "purchaseValue": {"value": "400"}}],
+                "d1": [
+                    {
+                        "instrument": {"isin": "IE00B4L5Y983"},
+                        "currentValue": {"value": "500"},
+                        "purchaseValue": {"value": "400"},
+                    }
+                ],
             },
             "depot_transactions": {
                 "d1": [{"transactionType": "BUY", "transactionValue": {"value": "400"}}],

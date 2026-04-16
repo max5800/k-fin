@@ -137,9 +137,7 @@ async def internal_sync_confirm(session_id: str):
                     else str(balance_obj)
                 ),
                 "unit": (
-                    balance_obj.get("unit", "EUR")
-                    if isinstance(balance_obj, dict)
-                    else "EUR"
+                    balance_obj.get("unit", "EUR") if isinstance(balance_obj, dict) else "EUR"
                 ),
                 "account_type": acc_type_text,
             }
