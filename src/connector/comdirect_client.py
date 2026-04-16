@@ -217,9 +217,7 @@ class ComdirectClient:
                 "challenge_id": challenge_id,
             }
 
-    async def complete_auth(
-        self, session_identifier: str, challenge_id: str
-    ) -> bool:
+    async def complete_auth(self, session_identifier: str, challenge_id: str) -> bool:
         """Steps 4–6: activate session after TAN confirmation, get secondary token.
 
         Call this after the user has confirmed the TAN in the banking app.
@@ -364,9 +362,7 @@ class ComdirectClient:
             )
             response.raise_for_status()
             data = response.json()
-            logger.info(
-                f"get_depot_positions({depot_id}): {len(data.get('values', []))} positions"
-            )
+            logger.info(f"get_depot_positions({depot_id}): {len(data.get('values', []))} positions")
             return data.get("values", [])
 
     async def get_depot_transactions(
@@ -443,9 +439,7 @@ class ComdirectClient:
 
         transactions: dict[str, list[dict]] = {}
         for account in accounts:
-            account_id = account.get("account", {}).get("accountId") or account.get(
-                "accountId"
-            )
+            account_id = account.get("account", {}).get("accountId") or account.get("accountId")
             if account_id:
                 logger.info(
                     "get_all_data: fetching transactions for account %s "

@@ -33,17 +33,11 @@ def build_export(
     if since:
         since_str = since.isoformat()
         data.transactions = {
-            acct: [
-                tx for tx in txs
-                if not tx.booking_date or tx.booking_date >= since_str
-            ]
+            acct: [tx for tx in txs if not tx.booking_date or tx.booking_date >= since_str]
             for acct, txs in data.transactions.items()
         }
         data.depot_transactions = {
-            depot: [
-                tx for tx in txs
-                if not tx.booking_date or tx.booking_date >= since_str
-            ]
+            depot: [tx for tx in txs if not tx.booking_date or tx.booking_date >= since_str]
             for depot, txs in data.depot_transactions.items()
         }
 

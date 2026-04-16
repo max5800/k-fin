@@ -35,9 +35,11 @@ def _enrich(tx: NormalizedTransaction, db: Session) -> TransactionOut:
         if cat:
             category = CategoryOut.model_validate(cat)
 
-    tag_rows = db.execute(
-        select(Tag).join(TransactionTag).where(TransactionTag.transaction_id == tx.id)
-    ).scalars().all()
+    tag_rows = (
+        db.execute(select(Tag).join(TransactionTag).where(TransactionTag.transaction_id == tx.id))
+        .scalars()
+        .all()
+    )
     tags = [TagOut.model_validate(t) for t in tag_rows]
 
     return TransactionOut(
@@ -93,9 +95,7 @@ def list_transactions(
         count_stmt = count_stmt.where(NormalizedTransaction.is_outlier == is_outlier)
     if internal_transfer is not None:
         stmt = stmt.where(NormalizedTransaction.internal_transfer == internal_transfer)
-        count_stmt = count_stmt.where(
-            NormalizedTransaction.internal_transfer == internal_transfer
-        )
+        count_stmt = count_stmt.where(NormalizedTransaction.internal_transfer == internal_transfer)
     if search:
         pattern = f"%{search}%"
         clause = (
@@ -155,9 +155,7 @@ def update_transaction(
 
     if body.tags is not None:
         db.execute(
-            TransactionTag.__table__.delete().where(
-                TransactionTag.transaction_id == transaction_id
-            )
+            TransactionTag.__table__.delete().where(TransactionTag.transaction_id == transaction_id)
         )
         for tag_id in body.tags:
             tag = db.get(Tag, tag_id)

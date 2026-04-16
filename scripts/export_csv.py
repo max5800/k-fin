@@ -39,8 +39,7 @@ def parse_since(since_str: str | None) -> date | None:
         return date.fromisoformat(since_str)
     except ValueError:
         raise ValueError(
-            f"Ungültiges --since Format: '{since_str}'. "
-            "Erwartet: YYYY-MM-DD oder Xd (z.B. 30d)"
+            f"Ungültiges --since Format: '{since_str}'. Erwartet: YYYY-MM-DD oder Xd (z.B. 30d)"
         )
 
 
@@ -89,14 +88,8 @@ def build_buchungstext(tx: dict) -> str:
     remittance = tx.get("remittanceInfo", "")
     creditor_obj = tx.get("creditor") or {}
     debtor_obj = tx.get("debtor") or {}
-    creditor = (
-        creditor_obj.get("name", "")
-        if isinstance(creditor_obj, dict)
-        else str(creditor_obj)
-    )
-    debtor = (
-        debtor_obj.get("name", "") if isinstance(debtor_obj, dict) else str(debtor_obj)
-    )
+    creditor = creditor_obj.get("name", "") if isinstance(creditor_obj, dict) else str(creditor_obj)
+    debtor = debtor_obj.get("name", "") if isinstance(debtor_obj, dict) else str(debtor_obj)
 
     parts = []
 
@@ -106,9 +99,7 @@ def build_buchungstext(tx: dict) -> str:
         parts.append(f"Empfänger: {debtor}")
 
     # Manche Transaktionen haben IBANs/BICs im Dictionary
-    creditor_iban = (
-        creditor_obj.get("iban", "") if isinstance(creditor_obj, dict) else ""
-    )
+    creditor_iban = creditor_obj.get("iban", "") if isinstance(creditor_obj, dict) else ""
     debtor_iban = debtor_obj.get("iban", "") if isinstance(debtor_obj, dict) else ""
     if creditor_iban:
         parts.append(f"Kto/IBAN: {creditor_iban}")
@@ -148,9 +139,7 @@ def export_account_to_csv(
         # Kopfzeilen mit Kontostand (wie im Comdirect Web-Export)
         account_type = balance_info.get("account_type", "Girokonto")
         writer.writerow([f"Umsätze {account_type}", f"Konto: {iban}"])
-        writer.writerow(
-            ["Neuer Kontostand", f"{format_amount(balance_val)} {balance_unit}"]
-        )
+        writer.writerow(["Neuer Kontostand", f"{format_amount(balance_val)} {balance_unit}"])
         writer.writerow([])
 
         # Spaltenköpfe
@@ -171,24 +160,18 @@ def export_account_to_csv(
 
             tx_type_obj = tx.get("transactionType", {})
             vorgang = (
-                tx_type_obj.get("text", "")
-                if isinstance(tx_type_obj, dict)
-                else str(tx_type_obj)
+                tx_type_obj.get("text", "") if isinstance(tx_type_obj, dict) else str(tx_type_obj)
             )
 
             buchungstext = build_buchungstext(tx)
 
             amount_obj = tx.get("amount", {})
             amount_val = (
-                amount_obj.get("value", "0.0")
-                if isinstance(amount_obj, dict)
-                else amount_obj
+                amount_obj.get("value", "0.0") if isinstance(amount_obj, dict) else amount_obj
             )
             umsatz_eur = format_amount(amount_val)
 
-            writer.writerow(
-                [b_date, v_date_formatted, vorgang, buchungstext, umsatz_eur]
-            )
+            writer.writerow([b_date, v_date_formatted, vorgang, buchungstext, umsatz_eur])
 
     logger.info(f"Konto {iban[:8]}***: {len(transactions)} Umsätze → {filename.name}")
 
@@ -255,9 +238,7 @@ def export_depot_positions_csv(depot_id: str, positions: list[dict], output_dir:
                 else current_val_obj or 0
             )
 
-            purchase_val_obj = (
-                pos.get("purchaseValue") or pos.get("einstandswert") or {}
-            )
+            purchase_val_obj = pos.get("purchaseValue") or pos.get("einstandswert") or {}
             purchase_val = float(
                 purchase_val_obj.get("value", 0)
                 if isinstance(purchase_val_obj, dict)
@@ -287,9 +268,7 @@ def export_depot_positions_csv(depot_id: str, positions: list[dict], output_dir:
 
         # Summenzeile
         total_gains = round(total_value - total_purchase, 2)
-        total_gains_pct = round(
-            (total_gains / total_purchase * 100) if total_purchase else 0, 2
-        )
+        total_gains_pct = round((total_gains / total_purchase * 100) if total_purchase else 0, 2)
         writer.writerow([])
         writer.writerow(
             [
@@ -341,9 +320,7 @@ def export_depot_transactions_csv(
         )
 
         for tx in transactions:
-            booking_date = format_date(
-                tx.get("bookingDate") or tx.get("transactionDate", "")
-            )
+            booking_date = format_date(tx.get("bookingDate") or tx.get("transactionDate", ""))
 
             tx_type = tx.get("transactionType") or tx.get("transactionDirection") or ""
 
@@ -361,16 +338,12 @@ def export_depot_transactions_csv(
 
             price_obj = tx.get("price") or tx.get("kurs") or {}
             price = float(
-                price_obj.get("value", 0)
-                if isinstance(price_obj, dict)
-                else price_obj or 0
+                price_obj.get("value", 0) if isinstance(price_obj, dict) else price_obj or 0
             )
 
             amount_obj = tx.get("transactionValue") or tx.get("amount") or {}
             amount = float(
-                amount_obj.get("value", 0)
-                if isinstance(amount_obj, dict)
-                else amount_obj or 0
+                amount_obj.get("value", 0) if isinstance(amount_obj, dict) else amount_obj or 0
             )
 
             writer.writerow(
@@ -389,9 +362,7 @@ def export_depot_transactions_csv(
     logger.info(f"Depot: {len(transactions)} Transaktionen → {filename.name}")
 
 
-def export_summary_csv(
-    accounts: list[dict], depot_positions: list[dict], output_dir: Path
-):
+def export_summary_csv(accounts: list[dict], depot_positions: list[dict], output_dir: Path):
     """Exportiert eine Gesamtübersicht aller Konten und Depotwerte."""
     date_str = date.today().strftime("%Y%m%d")
     filename = output_dir / f"finanzuebersicht_{date_str}.csv"
@@ -399,9 +370,7 @@ def export_summary_csv(
     with open(filename, "w", newline="", encoding="utf-8-sig") as f:
         writer = csv.writer(f, delimiter=";", quotechar='"', quoting=csv.QUOTE_ALL)
 
-        writer.writerow(
-            ["Finanzübersicht", f"Stand: {date.today().strftime('%d.%m.%Y')}"]
-        )
+        writer.writerow(["Finanzübersicht", f"Stand: {date.today().strftime('%d.%m.%Y')}"])
         writer.writerow([])
         writer.writerow(["Typ", "Bezeichnung", "IBAN / Depot-Nr.", "Saldo (EUR)"])
 
@@ -420,9 +389,7 @@ def export_summary_csv(
 
             balance_obj = acc.get("balance") or {}
             balance = float(
-                balance_obj.get("value", 0)
-                if isinstance(balance_obj, dict)
-                else balance_obj or 0
+                balance_obj.get("value", 0) if isinstance(balance_obj, dict) else balance_obj or 0
             )
             total += balance
 
@@ -441,9 +408,7 @@ def export_summary_csv(
             for pos in depot_positions:
                 val_obj = pos.get("currentValue") or pos.get("kurswert") or {}
                 depot_value += float(
-                    val_obj.get("value", 0)
-                    if isinstance(val_obj, dict)
-                    else val_obj or 0
+                    val_obj.get("value", 0) if isinstance(val_obj, dict) else val_obj or 0
                 )
             total += depot_value
 
@@ -463,9 +428,7 @@ def export_summary_csv(
     logger.info(f"Übersicht → {filename.name}")
 
 
-async def _fetch_all_transactions(
-    client: ComdirectClient, account_id: str
-) -> list[dict]:
+async def _fetch_all_transactions(client: ComdirectClient, account_id: str) -> list[dict]:
     """Holt alle Transaktionen eines Kontos in einem Request.
 
     Die API unterstützt kein paging-first > 0, daher nutzen wir
@@ -526,15 +489,9 @@ async def _run(output_dir: str, since: date | None = None):
         )
         balance_info = {
             "value": (
-                balance_obj.get("value", "0")
-                if isinstance(balance_obj, dict)
-                else str(balance_obj)
+                balance_obj.get("value", "0") if isinstance(balance_obj, dict) else str(balance_obj)
             ),
-            "unit": (
-                balance_obj.get("unit", "EUR")
-                if isinstance(balance_obj, dict)
-                else "EUR"
-            ),
+            "unit": (balance_obj.get("unit", "EUR") if isinstance(balance_obj, dict) else "EUR"),
             "account_type": acc_type_text,
         }
 
@@ -543,9 +500,7 @@ async def _run(output_dir: str, since: date | None = None):
         if since:
             all_txs = filter_transactions_by_date(all_txs, since)
         logger.info(f"  → {len(all_txs)} Umsätze")
-        export_account_to_csv(
-            account_id, iban, balance_info, all_txs, out_path, since=since
-        )
+        export_account_to_csv(account_id, iban, balance_info, all_txs, out_path, since=since)
 
     # ── 2. Depot ────────────────────────────────────────────────────────
     logger.info("Hole Depots…")
@@ -565,9 +520,7 @@ async def _run(output_dir: str, since: date | None = None):
 
         logger.info(f"Hole Depot-Transaktionen für {depot_id} …")
         min_booking = since.isoformat() if since else None
-        depot_txs = await client.get_depot_transactions(
-            depot_id, min_booking_date=min_booking
-        )
+        depot_txs = await client.get_depot_transactions(depot_id, min_booking_date=min_booking)
         logger.info(f"  → {len(depot_txs)} Transaktionen")
         export_depot_transactions_csv(depot_id, depot_txs, out_path, since=since)
 
@@ -581,9 +534,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="Vollständiger Comdirect Finanz-Export (Konten, Depot, Übersicht)"
     )
-    parser.add_argument(
-        "--output-dir", default="exports", help="Directory to save the CSV files"
-    )
+    parser.add_argument("--output-dir", default="exports", help="Directory to save the CSV files")
     parser.add_argument(
         "--since",
         default=None,

@@ -141,7 +141,9 @@ class TestGenerateReport:
         assert "IE00B4L5Y983" in report
 
     def test_empty_data_does_not_crash(self):
-        report = generate_report({"meta": {}, "depot": {"positions": [], "transactions": [], "summary": {}}})
+        report = generate_report(
+            {"meta": {}, "depot": {"positions": [], "transactions": [], "summary": {}}}
+        )
         assert "Finanzreport" in report
 
     def test_recurring_counterparts(self):

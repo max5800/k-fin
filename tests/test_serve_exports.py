@@ -23,11 +23,9 @@ def client(exports_dir):
         # Re-import to pick up patched env
         import importlib
         import src.api.serve_exports as mod
+
         importlib.reload(mod)
         yield TestClient(mod.app)
-
-
-
 
 
 class TestHealth:
@@ -122,9 +120,7 @@ class TestSyncStart:
             mock_client.__aexit__ = AsyncMock(return_value=False)
             mock_cls.return_value = mock_client
 
-            resp = client.post(
-                "/sync/start", headers={"Authorization": "Bearer test-secret"}
-            )
+            resp = client.post("/sync/start", headers={"Authorization": "Bearer test-secret"})
             assert resp.status_code == 200
             assert resp.json()["status"] == "pending_tan"
             assert "session_id" in resp.json()
@@ -168,9 +164,7 @@ class TestSyncStart:
             mock_client.__aexit__ = AsyncMock(return_value=False)
             mock_cls.return_value = mock_client
 
-            resp = client.post(
-                "/sync/start", headers={"Authorization": "Bearer test-secret"}
-            )
+            resp = client.post("/sync/start", headers={"Authorization": "Bearer test-secret"})
             assert resp.status_code == 503
             assert "unreachable" in resp.json()["detail"].lower()
 
