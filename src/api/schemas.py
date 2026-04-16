@@ -136,3 +136,28 @@ class CashflowPoint(BaseModel):
 class CashflowOverTimeOut(BaseModel):
     series: list[CashflowPoint]
     total_months: int
+
+
+# ── Reports API (M6) ────────────────────────────────────────────
+
+
+class ReportOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    title: str
+    period_start: date
+    period_end: date
+    format: str
+    size_bytes: int | None
+    status: str
+    error: str | None
+    created_at: datetime
+    updated_at: datetime
+
+
+class ReportListOut(BaseModel):
+    items: list[ReportOut]
+    total: int
+    limit: int
+    offset: int
