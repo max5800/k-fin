@@ -23,13 +23,15 @@ from src.core.db.models import AgentRun, Report, ReportStatus, RunStatus, RunTri
 
 logger = logging.getLogger(__name__)
 
-VALID_AGENT_TYPES = frozenset({
-    "categorization",
-    "weekly_analysis",
-    "monthly_analysis",
-    "anomaly",
-    "synthesis",
-})
+VALID_AGENT_TYPES = frozenset(
+    {
+        "categorization",
+        "weekly_analysis",
+        "monthly_analysis",
+        "anomaly",
+        "synthesis",
+    }
+)
 
 
 class AgentOrchestrator:
@@ -51,7 +53,9 @@ class AgentOrchestrator:
             self._persist_report(agent_type, result)
         except Exception as exc:
             logger.error("Agent %s failed: %s", agent_type, exc)
-            self._finish_run(run_id, results={}, error=str(exc), status=RunStatus.FAILED)
+            self._finish_run(
+                run_id, results={}, error=str(exc), status=RunStatus.FAILED
+            )
 
     def run_full_for(self, run_id: str) -> None:
         """Execute all agents for an existing run (API-triggered)."""
@@ -92,7 +96,9 @@ class AgentOrchestrator:
             self._persist_report(agent_type, result)
         except Exception as exc:
             logger.error("Agent %s failed: %s", agent_type, exc)
-            self._finish_run(run_id, results={}, error=str(exc), status=RunStatus.FAILED)
+            self._finish_run(
+                run_id, results={}, error=str(exc), status=RunStatus.FAILED
+            )
 
         return run_id
 
