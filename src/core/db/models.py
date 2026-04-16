@@ -242,6 +242,43 @@ class AgentRun(Base):
     finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
+class ReportStatus(str, enum.Enum):
+    PENDING = "pending"
+    READY = "ready"
+    FAILED = "failed"
+
+
+class Report(Base):
+    """A generated financial report (monthly PDF, Markdown, etc.).
+
+    Reports are produced by scheduled jobs and stored on disk; this table
+    tracks metadata and the storage path so the API can list and serve them.
+    """
+
+    __tablename__ = "reports"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    title: Mapped[str] = mapped_column(String, nullable=False)
+    period_start: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    period_end: Mapped[date] = mapped_column(Date, nullable=False)
+    format: Mapped[str] = mapped_column(String(10), nullable=False)  # pdf, md, html
+    file_path: Mapped[str] = mapped_column(String, nullable=False)
+    size_bytes: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    status: Mapped[ReportStatus] = mapped_column(
+        SQLEnum(ReportStatus), nullable=False, default=ReportStatus.PENDING
+    )
+    error: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+
 class SyncRun(Base):
     """Run record for raw ingestion and normalization passes.
 
