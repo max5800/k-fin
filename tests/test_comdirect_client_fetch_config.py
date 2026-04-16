@@ -24,7 +24,9 @@ async def test_get_all_data_uses_default_fetch_limits(client):
     with (
         patch.object(client, "get_accounts", AsyncMock(return_value=[{"accountId": "A1"}])),
         patch.object(client, "get_depots", AsyncMock(return_value=[{"depotId": "D1"}])),
-        patch.object(client, "get_transactions", AsyncMock(return_value=[])) as mock_get_transactions,
+        patch.object(
+            client, "get_transactions", AsyncMock(return_value=[])
+        ) as mock_get_transactions,
         patch.object(client, "get_depot_positions", AsyncMock(return_value=[])),
         patch.object(
             client,
@@ -51,7 +53,9 @@ async def test_get_all_data_accepts_custom_fetch_limits(client):
     with (
         patch.object(client, "get_accounts", AsyncMock(return_value=[{"accountId": "A1"}])),
         patch.object(client, "get_depots", AsyncMock(return_value=[{"depotId": "D1"}])),
-        patch.object(client, "get_transactions", AsyncMock(return_value=[])) as mock_get_transactions,
+        patch.object(
+            client, "get_transactions", AsyncMock(return_value=[])
+        ) as mock_get_transactions,
         patch.object(client, "get_depot_positions", AsyncMock(return_value=[])),
         patch.object(
             client,

@@ -69,11 +69,15 @@ class NormalizationPipeline:
 
                 version = 1
                 if comdirect_id:
-                    active = session.execute(
-                        select(RawTransaction)
-                        .where(RawTransaction.comdirect_id == comdirect_id)
-                        .where(RawTransaction.superseded_by.is_(None))
-                    ).scalars().all()
+                    active = (
+                        session.execute(
+                            select(RawTransaction)
+                            .where(RawTransaction.comdirect_id == comdirect_id)
+                            .where(RawTransaction.superseded_by.is_(None))
+                        )
+                        .scalars()
+                        .all()
+                    )
                     if active:
                         prev = max(active, key=lambda r: r.version)
                         version = prev.version + 1
@@ -103,9 +107,7 @@ class NormalizationPipeline:
     def process_and_normalize(self) -> pd.DataFrame:
         run_id = str(uuid.uuid4())
         with Session(self.engine) as session:
-            session.add(
-                SyncRun(id=run_id, source=SyncSource.NORMALIZE, status=SyncStatus.RUNNING)
-            )
+            session.add(SyncRun(id=run_id, source=SyncSource.NORMALIZE, status=SyncStatus.RUNNING))
             session.commit()
 
             try:
@@ -132,9 +134,11 @@ class NormalizationPipeline:
     # ------------------------------------------------------------------
 
     def _build_dataframe(self, session: Session) -> pd.DataFrame:
-        active_rows = session.execute(
-            select(RawTransaction).where(RawTransaction.superseded_by.is_(None))
-        ).scalars().all()
+        active_rows = (
+            session.execute(select(RawTransaction).where(RawTransaction.superseded_by.is_(None)))
+            .scalars()
+            .all()
+        )
 
         records: list[dict[str, Any]] = []
         for raw in active_rows:
@@ -266,8 +270,10 @@ class NormalizationPipeline:
                 if mean == 0:
                     continue
                 variance = sum((a - mean) ** 2 for a in amounts) / Decimal(len(amounts))
-                stddev = variance.sqrt() if hasattr(variance, "sqrt") else Decimal(
-                    str(float(variance) ** 0.5)
+                stddev = (
+                    variance.sqrt()
+                    if hasattr(variance, "sqrt")
+                    else Decimal(str(float(variance) ** 0.5))
                 )
                 if stddev > mean * RECURRING_AMOUNT_TOLERANCE:
                     continue
@@ -330,9 +336,7 @@ class NormalizationPipeline:
             )
             session.add(record)
             session.flush()
-            df.loc[df["id"].isin(pattern["transaction_ids"]), "recurring_pattern_id"] = (
-                record.id
-            )
+            df.loc[df["id"].isin(pattern["transaction_ids"]), "recurring_pattern_id"] = record.id
 
     def _upsert_normalized(self, session: Session, df: pd.DataFrame) -> None:
         for _, row in df.iterrows():

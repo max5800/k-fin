@@ -20,9 +20,7 @@ depends_on = None
 # Use postgresql.ENUM with create_type=False so SQLAlchemy never emits
 # CREATE TYPE implicitly during op.create_table — we create the types
 # exactly once, idempotently, in upgrade() via DO blocks.
-TYPE_ENUM = postgresql.ENUM(
-    "fix", "variabel", "diskretionaer", name="type_enum", create_type=False
-)
+TYPE_ENUM = postgresql.ENUM("fix", "variabel", "diskretionaer", name="type_enum", create_type=False)
 SYNC_STATUS_ENUM = postgresql.ENUM(
     "running", "succeeded", "failed", name="sync_status_enum", create_type=False
 )
@@ -142,14 +140,10 @@ def upgrade() -> None:
         sa.Column("sender_iban", sa.String(), nullable=True),
         sa.Column("recipient_iban", sa.String(), nullable=True),
         sa.Column("description", sa.String(), nullable=True),
-        sa.Column(
-            "category_id", sa.String(), sa.ForeignKey("categories.id"), nullable=True
-        ),
+        sa.Column("category_id", sa.String(), sa.ForeignKey("categories.id"), nullable=True),
         sa.Column("is_recurring", sa.Boolean(), nullable=False, server_default=sa.false()),
         sa.Column("is_outlier", sa.Boolean(), nullable=False, server_default=sa.false()),
-        sa.Column(
-            "internal_transfer", sa.Boolean(), nullable=False, server_default=sa.false()
-        ),
+        sa.Column("internal_transfer", sa.Boolean(), nullable=False, server_default=sa.false()),
         sa.Column(
             "recurring_pattern_id",
             sa.Integer(),
@@ -206,9 +200,7 @@ def upgrade() -> None:
         "sync_runs",
         sa.Column("id", sa.String(), primary_key=True),
         sa.Column("source", SYNC_SOURCE_ENUM, nullable=False),
-        sa.Column(
-            "status", SYNC_STATUS_ENUM, nullable=False, server_default="running"
-        ),
+        sa.Column("status", SYNC_STATUS_ENUM, nullable=False, server_default="running"),
         sa.Column(
             "started_at",
             sa.DateTime(timezone=True),
@@ -225,12 +217,8 @@ def downgrade() -> None:
     op.drop_table("sync_runs")
     op.drop_table("transaction_tags")
     op.drop_table("tags")
-    op.drop_index(
-        "ix_normalized_transactions_booking_date", table_name="normalized_transactions"
-    )
-    op.drop_index(
-        "ix_normalized_transactions_comdirect_id", table_name="normalized_transactions"
-    )
+    op.drop_index("ix_normalized_transactions_booking_date", table_name="normalized_transactions")
+    op.drop_index("ix_normalized_transactions_comdirect_id", table_name="normalized_transactions")
     op.drop_index(
         "ix_normalized_transactions_raw_content_hash",
         table_name="normalized_transactions",

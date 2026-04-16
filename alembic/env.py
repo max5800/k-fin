@@ -23,9 +23,7 @@ target_metadata = Base.metadata
 
 def _get_url() -> str:
     if not settings.database_url:
-        raise RuntimeError(
-            "DATABASE_URL is not set — alembic needs a configured target database"
-        )
+        raise RuntimeError("DATABASE_URL is not set — alembic needs a configured target database")
     return settings.database_url
 
 
