@@ -74,6 +74,33 @@ class TransactionUpdate(BaseModel):
     tags: list[str] | None = None
 
 
+# ── Runs API (M6) ────────────────────────────────────────────────
+
+
+class RunCreate(BaseModel):
+    trigger: str = "manual"
+
+
+class RunOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    agent_name: str
+    status: str
+    trigger: str
+    result: dict | None = None
+    error: str | None = None
+    started_at: datetime
+    finished_at: datetime | None = None
+
+
+class RunListOut(BaseModel):
+    items: list[RunOut]
+    total: int
+    limit: int
+    offset: int
+
+
 # ---------------------------------------------------------------------------
 # Aggregates
 # ---------------------------------------------------------------------------
