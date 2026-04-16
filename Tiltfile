@@ -9,12 +9,13 @@ profile = cfg.get("profile", "remote")
 
 # Release name — must match helm() below
 RELEASE_NAME = "k-fin-dev"
-FULLNAME = RELEASE_NAME + "-comdirect-firefly-sync"
+FULLNAME = RELEASE_NAME + "-k-fin"
 SECRET_NAME = FULLNAME + "-comdirect-secrets"
 
 # Select K8s context and values based on profile
 if profile == "remote":
     allow_k8s_contexts("k3s-app")
+    k8s_namespace("comdirect")
     values_file = "dev/values.remote.yaml"
     ingress_host = "k-fin-dev.max5800.com"
     docs_base = "https://" + ingress_host
@@ -57,7 +58,7 @@ docker_build(
     REGISTRY_WORKER,
     context=".",
     dockerfile="./Dockerfile",
-    entrypoint=["uv", "run", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8001", "--reload"],
+    entrypoint=["/app/.venv/bin/uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8001", "--reload"],
     live_update=[
         sync("./src", "/app/src"),
         sync("./main.py", "/app/main.py"),
@@ -76,6 +77,7 @@ docker_build(
 k8s_yaml(helm(
     "./chart",
     name=RELEASE_NAME,
+    namespace="comdirect" if profile == "remote" else "",
     values=[values_file],
     set=[
         "api.image.repository=" + REGISTRY_API,

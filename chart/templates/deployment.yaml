@@ -37,6 +37,8 @@ spec:
             - containerPort: 8000
               protocol: TCP
           env:
+            - name: PYTHONPATH
+              value: /app
             - name: WORKER_URL
               value: "http://{{ include "k-fin.fullname" . }}-worker:8001"
             - name: API_TOKEN
