@@ -4,7 +4,7 @@ Covers:
 - gather.py: DB query helpers against testcontainers Postgres
 - categorization agent: pydantic-ai TestModel (no LLM calls)
 - orchestrator: full/single run lifecycle, partial failure
-- API endpoints: POST /runs/agents, POST /runs/agents/{type}
+- API endpoints: POST /runs/{agent}, POST /runs/full
 """
 
 from __future__ import annotations
@@ -18,12 +18,13 @@ import pytest
 from sqlalchemy.orm import Session
 
 from src.core.db.models import (
+    AgentRun,
     Category,
     NormalizedTransaction,
     RawTransaction,
     RecurringPattern,
-    AgentRun,
-    RunTrigger,
+    Report,
+    ReportStatus,
     RunStatus,
     TypeEnum,
 )
@@ -131,21 +132,15 @@ def agent_seed(db_engine):
         ))
 
         # A previous report (for memory testing)
-        s.add(SyncRun(
-            id="prev-run-001",
-            source=SyncSource.AGENT_RUN,
-            agent_type="weekly_analysis",
-            status=SyncStatus.SUCCEEDED,
-            started_at=datetime(2026, 4, 6, 10, 0, tzinfo=timezone.utc),
-            finished_at=datetime(2026, 4, 6, 10, 1, tzinfo=timezone.utc),
-            rows_processed=1,
-        ))
-        s.flush()  # SyncRun must exist before Report FK
         s.add(Report(
             id="prev-report-001",
-            run_id="prev-run-001",
             report_type="weekly_analysis",
+            title="weekly_analysis — 2026-W14",
             content={"observations": [], "period": "2026-W14", "summary_text": "Ruhige Woche."},
+            period_start=date(2026, 4, 6),
+            period_end=date(2026, 4, 12),
+            format="json",
+            status=ReportStatus.READY,
         ))
 
         s.commit()
@@ -256,10 +251,10 @@ class TestCategorizationAgent:
 
     def test_no_categories_skips_llm(self, db_engine, agent_seed):
         """When no categories exist, skip gracefully."""
-        # Delete all categories first
+        from sqlalchemy import update
+
         with Session(db_engine) as s:
             from src.core.db.models import NormalizedTransaction as NT
-            from sqlalchemy import update
             s.execute(update(NT).values(category_id=None))
             s.commit()
             from src.core.db.models import Category as Cat, Rule
@@ -292,7 +287,7 @@ class TestCategorizationAgent:
 
 class TestOrchestrator:
     def test_run_single_creates_run_and_report(self, db_engine, agent_seed):
-        """run_single creates a SyncRun and a Report."""
+        """run_single creates an AgentRun and a Report."""
         from pydantic_ai.models.test import TestModel
 
         from src.agents.categorization import categorization_agent
@@ -306,15 +301,18 @@ class TestOrchestrator:
             run_id = orchestrator.run_single("categorization")
 
         with Session(db_engine) as s:
-            run = s.get(SyncRun, run_id)
+            run = s.get(AgentRun, run_id)
             assert run is not None
-            assert run.source == SyncSource.AGENT_RUN
-            assert run.agent_type == "categorization"
-            assert run.status == SyncStatus.SUCCEEDED
+            assert run.agent_name == "categorization"
+            assert run.status == RunStatus.SUCCEEDED
 
-            reports = s.query(Report).filter(Report.run_id == run_id).all()
+            reports = s.query(Report).filter(
+                Report.report_type == "categorization",
+                Report.id != "prev-report-001",
+            ).all()
             assert len(reports) == 1
             assert reports[0].report_type == "categorization"
+            assert reports[0].content is not None
 
     def test_run_single_invalid_type_raises(self, db_engine):
         """run_single with invalid type raises ValueError."""
@@ -352,16 +350,48 @@ class TestOrchestrator:
             run_id = orchestrator.run_full()
 
         with Session(db_engine) as s:
-            run = s.get(SyncRun, run_id)
+            run = s.get(AgentRun, run_id)
             assert run is not None
-            assert run.agent_type == "full"
-            assert run.status == SyncStatus.SUCCEEDED
+            assert run.agent_name == "full"
+            assert run.status == RunStatus.SUCCEEDED
 
-            reports = s.query(Report).filter(Report.run_id == run_id).all()
-            report_types = {r.report_type for r in reports}
+            # 5 new reports + 1 seed report
+            new_reports = s.query(Report).filter(Report.id != "prev-report-001").all()
+            report_types = {r.report_type for r in new_reports}
             assert "categorization" in report_types
             assert "synthesis" in report_types
-            assert len(reports) == 5
+            assert len(new_reports) == 5
+
+    def test_run_single_for_reuses_existing_run(self, db_engine, agent_seed):
+        """run_single_for picks up an existing PENDING run."""
+        from pydantic_ai.models.test import TestModel
+
+        from src.agents.categorization import categorization_agent
+        from src.agents.orchestrator import AgentOrchestrator
+
+        orchestrator = AgentOrchestrator.__new__(AgentOrchestrator)
+        orchestrator.engine = db_engine
+        orchestrator.own_ibans = []
+
+        # Pre-create a PENDING run (as the API would)
+        run_id = "test-run-001"
+        with Session(db_engine) as s:
+            s.add(AgentRun(
+                id=run_id,
+                agent_name="categorization",
+                status=RunStatus.PENDING,
+                trigger="manual",
+                started_at=datetime.now(timezone.utc),
+            ))
+            s.commit()
+
+        with categorization_agent.override(model=TestModel()):
+            orchestrator.run_single_for(run_id, "categorization")
+
+        with Session(db_engine) as s:
+            run = s.get(AgentRun, run_id)
+            assert run.status == RunStatus.SUCCEEDED
+            assert run.finished_at is not None
 
 
 # ---------------------------------------------------------------------------
@@ -372,18 +402,16 @@ class TestOrchestrator:
 @pytest.fixture
 def agent_api_client(db_engine):
     """TestClient for agent API endpoints."""
-    from src.core.db import get_db
+    from fastapi.testclient import TestClient
+
+    from src.api.app import app
+    from src.api.deps import get_db
 
     def _override_get_db():
         with Session(db_engine) as session:
             yield session
 
     with patch.dict(os.environ, {"API_TOKEN": "test-secret"}):
-        from src.api.app import create_app
-
-        app = create_app()
-        from fastapi.testclient import TestClient
-
         app.dependency_overrides[get_db] = _override_get_db
         client = TestClient(app)
         yield client
@@ -394,32 +422,42 @@ AUTH = {"Authorization": "Bearer test-secret"}
 
 
 class TestAgentAPI:
-    def test_trigger_agents_invalid_type_returns_400(self, agent_api_client):
-        resp = agent_api_client.post("/api/v1/runs/agents/bogus", headers=AUTH)
-        assert resp.status_code == 400
-        assert "Invalid agent type" in resp.json()["detail"]
+    def test_start_run_unknown_agent_returns_404(self, agent_api_client):
+        resp = agent_api_client.post("/api/v1/runs/bogus", headers=AUTH)
+        assert resp.status_code == 404
+        assert "Unknown agent" in resp.json()["detail"]
 
-    def test_reports_filter_by_type(self, agent_api_client, agent_seed):
-        resp = agent_api_client.get(
-            "/api/v1/reports?report_type=weekly_analysis", headers=AUTH
-        )
-        assert resp.status_code == 200
+    def test_start_run_returns_pending(self, agent_api_client):
+        resp = agent_api_client.post("/api/v1/runs/categorization", headers=AUTH)
+        assert resp.status_code == 201
         data = resp.json()
-        assert len(data) == 1
-        assert data[0]["report_type"] == "weekly_analysis"
+        assert data["agent_name"] == "categorization"
+        assert data["status"] == "pending"
 
-    def test_reports_filter_empty(self, agent_api_client, agent_seed):
-        resp = agent_api_client.get(
-            "/api/v1/reports?report_type=nonexistent", headers=AUTH
-        )
-        assert resp.status_code == 200
-        assert resp.json() == []
+    def test_start_full_run_returns_pending(self, agent_api_client):
+        resp = agent_api_client.post("/api/v1/runs/full", headers=AUTH)
+        assert resp.status_code == 201
+        data = resp.json()
+        assert data["agent_name"] == "full"
+        assert data["status"] == "pending"
 
-    def test_run_response_includes_agent_type(self, agent_api_client, agent_seed):
-        """RunResponse now includes agent_type field."""
+    def test_list_runs(self, agent_api_client):
+        # Create a run first
+        agent_api_client.post("/api/v1/runs/anomaly", headers=AUTH)
         resp = agent_api_client.get("/api/v1/runs", headers=AUTH)
         assert resp.status_code == 200
-        runs = resp.json()
-        agent_runs = [r for r in runs if r.get("agent_type")]
-        assert len(agent_runs) >= 1
-        assert agent_runs[0]["agent_type"] == "weekly_analysis"
+        data = resp.json()
+        assert data["total"] >= 1
+        assert len(data["items"]) >= 1
+
+    def test_get_run_by_id(self, agent_api_client):
+        create_resp = agent_api_client.post("/api/v1/runs/categorization", headers=AUTH)
+        run_id = create_resp.json()["id"]
+
+        resp = agent_api_client.get(f"/api/v1/runs/{run_id}", headers=AUTH)
+        assert resp.status_code == 200
+        assert resp.json()["id"] == run_id
+
+    def test_get_run_not_found(self, agent_api_client):
+        resp = agent_api_client.get("/api/v1/runs/nonexistent", headers=AUTH)
+        assert resp.status_code == 404

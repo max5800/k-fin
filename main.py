@@ -9,7 +9,7 @@ import uuid
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
-from src.api.routers import aggregates, categories, transactions
+from src.api.routers import aggregates, categories, reports, runs, transactions
 from src.connector.comdirect_client import ComdirectClient
 from src.core.config import settings
 from src.core.logging import get_logger, setup_logging
@@ -33,6 +33,8 @@ _pending_sessions: dict[str, dict] = {}
 app.include_router(transactions.router, prefix="/api/v1")
 app.include_router(categories.router, prefix="/api/v1")
 app.include_router(aggregates.router, prefix="/api/v1")
+app.include_router(runs.router, prefix="/api/v1")
+app.include_router(reports.router, prefix="/api/v1")
 
 
 class SyncStartRequest(BaseModel):
@@ -160,9 +162,9 @@ async def internal_sync_confirm(session_id: str):
         export_summary_csv(data["accounts"], all_positions, output_dir)
 
         # JSON export
-        from src.exporter.json_export import build_export
-
         import json as json_mod
+
+        from src.exporter.json_export import build_export
 
         payload = build_export(data)
         from datetime import date
