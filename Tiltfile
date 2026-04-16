@@ -15,7 +15,7 @@ SECRET_NAME = FULLNAME + "-comdirect-secrets"
 # Select K8s context and values based on profile
 if profile == "remote":
     allow_k8s_contexts("k3s-app")
-    k8s_namespace("comdirect")
+    k8s_namespace("k-fin")
     values_file = "dev/values.remote.yaml"
     ingress_host = "k-fin-dev.max5800.com"
     docs_base = "https://" + ingress_host
@@ -77,7 +77,7 @@ docker_build(
 k8s_yaml(helm(
     "./chart",
     name=RELEASE_NAME,
-    namespace="comdirect" if profile == "remote" else "",
+    namespace="k-fin" if profile == "remote" else "",
     values=[values_file],
     set=[
         "api.image.repository=" + REGISTRY_API,
