@@ -69,8 +69,8 @@ jobs:
           file: Dockerfile.api
           push: true
           tags: |
-            ghcr.io/max5800/comdirect-firefly-sync-api:v${{ needs.release.outputs.version }}
-            ghcr.io/max5800/comdirect-firefly-sync-api:latest
+            ghcr.io/max5800/k-fin-api:v${{ needs.release.outputs.version }}
+            ghcr.io/max5800/k-fin-api:latest
 
       - name: Build and push Worker image
         uses: docker/build-push-action@v5
@@ -79,8 +79,8 @@ jobs:
           file: Dockerfile
           push: true
           tags: |
-            ghcr.io/max5800/comdirect-firefly-sync-worker:v${{ needs.release.outputs.version }}
-            ghcr.io/max5800/comdirect-firefly-sync-worker:latest
+            ghcr.io/max5800/k-fin-worker:v${{ needs.release.outputs.version }}
+            ghcr.io/max5800/k-fin-worker:latest
 
       - name: Helm registry login
         run: helm registry login ghcr.io -u ${{ github.actor }} -p ${{ secrets.GITHUB_TOKEN }}
@@ -89,4 +89,4 @@ jobs:
         run: helm package chart/ --version ${{ needs.release.outputs.version }} --app-version ${{ needs.release.outputs.version }}
 
       - name: Push Helm chart
-        run: helm push comdirect-firefly-sync-${{ needs.release.outputs.version }}.tgz oci://ghcr.io/max5800/helm-charts
+        run: helm push k-fin-${{ needs.release.outputs.version }}.tgz oci://ghcr.io/max5800/helm-charts
