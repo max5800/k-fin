@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/assets/logo.png" alt="k-fin logo" width="300"/>
+</p>
+
 # 🏦 comdirect-firefly-sync
 
 **Read-only financial data export from the Comdirect REST API — as CSV, REST API, or (planned) Firefly III import.**
