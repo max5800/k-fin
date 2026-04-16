@@ -2,21 +2,22 @@
   <img src="docs/assets/logo.png" alt="k-fin logo" width="300"/>
 </p>
 
-# 🏦 comdirect-firefly-sync
+# 🏦 K-Fin (Personal Finance Intelligence Platform)
 
-**Read-only financial data export from the Comdirect REST API — as CSV, REST API, or (planned) Firefly III import.**
+**Read-only financial data platform powered by the Comdirect REST API — CSV export, Finance API, and normalization pipeline.**
 
 > I built this for myself. It works for me. If it is useful to you, great — but this comes with no guarantees and no support.
 
 ## What it does
 
-Connects to the Comdirect REST API (read-only), exports your financial data as CSV files, and serves them via a lightweight HTTP API. Planned: periodic import into Firefly III with deduplication.
+Connects to the Comdirect REST API (read-only), normalizes your financial data into a local Postgres database, and serves it via a Finance API. Also supports CSV/JSON export for AI agents and dashboards.
 
 - **Comdirect connector** — OAuth2 + pushTAN authentication, strictly read-only
-- **CSV export** — Accounts, transactions, depot positions, depot transactions, financial overview
-- **REST API** — Serves exported CSVs over HTTP (e.g. for AI agents or dashboards)
+- **CSV/JSON export** — Accounts, transactions, depot positions, depot transactions, financial overview
+- **Finance API** — REST API for normalized financial data (transactions, categorization)
+- **Normalization pipeline** — Ingests raw Comdirect data into a canonical schema in Postgres
 - **Docker / Kubernetes** — Two-microservice architecture: public API + internal worker
-- **Firefly III import** — Planned: periodic sync with deduplication
+- **Firefly III import** — Legacy (frozen / not maintained)
 
 ## Architecture
 
@@ -35,9 +36,10 @@ A Kubernetes NetworkPolicy ensures only `comdirect-api` can reach `comdirect-wor
 |--------|-------------|
 | `src/connector/` | Comdirect API client (auth, accounts, transactions, depot) |
 | `src/api/` | Read-only FastAPI serving CSV exports (comdirect-api) |
-| `src/importer/` | Firefly III client + transaction mapper *(planned)* |
+| `src/normalization/` | Ingest + canonicalize pipeline for Postgres |
+| `src/exporter/` | Finance agent mapper + model-based JSON export |
 | `src/scheduler/` | Sync job orchestration (comdirect-worker) |
-| `src/core/` | Config (pydantic-settings), logging |
+| `src/core/` | Config (pydantic-settings), logging, DB models |
 | `scripts/` | Export script, auth test, debug tools |
 
 ## Tech Stack
@@ -127,7 +129,7 @@ Set `API_TOKEN` in your `.env` to require authentication.
 ## Important Security & Architecture Note
 
 - **Manual pushTAN is a feature, not a bug:** Because Comdirect does not offer scoped read-only API tokens, requiring a manual pushTAN confirmation for every sync is a deliberate security boundary. It ensures no automated system can quietly access your bank data or initiate sessions without your physical device approval.
-- **Your credentials never leave your machine.** All data flows between Comdirect and your local setup only.
+- **Your credentials never leave your machine.** All data flows from Comdirect into your local Postgres DB via the normalization pipeline.
 - Never commit your `.env` file. It contains banking credentials.
 
 ## Built with AI

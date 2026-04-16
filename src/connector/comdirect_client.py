@@ -88,7 +88,7 @@ class ComdirectClient:
             "Authorization": f"Bearer {token}",
             "x-http-request-info": self._request_info_header(),
             "Accept": "application/json",
-            "User-Agent": "comdirect-firefly-sync/1.0",
+            "User-Agent": "k-fin/1.0",
         }
 
     # ------------------------------------------------------------------
@@ -114,7 +114,7 @@ class ComdirectClient:
                 headers={
                     "Content-Type": "application/x-www-form-urlencoded",
                     "Accept": "application/json",
-                    "User-Agent": "comdirect-firefly-sync/1.0",
+                    "User-Agent": "k-fin/1.0",
                 },
             )
             if response.status_code == 200:
@@ -152,7 +152,7 @@ class ComdirectClient:
                 headers={
                     "Content-Type": "application/x-www-form-urlencoded",
                     "Accept": "application/json",
-                    "User-Agent": "comdirect-firefly-sync/1.0",
+                    "User-Agent": "k-fin/1.0",
                 },
             )
             if resp.status_code != 200:
@@ -170,7 +170,7 @@ class ComdirectClient:
                 headers={
                     **self._auth_headers(),
                     "Accept": "application/json",
-                    "User-Agent": "comdirect-firefly-sync/1.0",
+                    "User-Agent": "k-fin/1.0",
                 },
             )
             if resp.status_code not in (200, 201):
@@ -262,7 +262,7 @@ class ComdirectClient:
                     "Content-Type": "application/x-www-form-urlencoded",
                     "Accept": "application/json",
                     "Authorization": f"Bearer {self._primary_token}",
-                    "User-Agent": "comdirect-firefly-sync/1.0",
+                    "User-Agent": "k-fin/1.0",
                 },
             )
             if resp.status_code != 200:
