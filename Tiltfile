@@ -48,6 +48,7 @@ docker_build(
     live_update=[
         sync("./src/api", "/app/src/api"),
         sync("./src/core", "/app/src/core"),
+        sync("./src/agents", "/app/src/agents"),
     ],
 )
 

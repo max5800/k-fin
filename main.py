@@ -171,9 +171,30 @@ async def internal_sync_confirm(session_id: str):
         with open(json_path, "w", encoding="utf-8") as fh:
             json_mod.dump(payload, fh, ensure_ascii=False, indent=2)
 
+        # ----------------------------------------------------------
+        # Ingest raw transactions + normalize (best-effort)
+        # ----------------------------------------------------------
+        ingest_result = None
+        try:
+            from src.normalization.ingest import ingest_json_export
+            from src.normalization.pipeline import NormalizationPipeline
+
+            pipeline = NormalizationPipeline(
+                database_url=settings.database_url,
+                own_ibans=settings.get_own_ibans(),
+            )
+            inserted = ingest_json_export(pipeline, json_path)
+            logger.info("Ingested %d raw transactions", inserted)
+
+            _df = pipeline.process_and_normalize()
+            logger.info("Normalization completed (%d rows)", len(_df))
+            ingest_result = {"inserted": inserted, "normalized": len(_df)}
+        except Exception:
+            logger.exception("Ingest/normalization failed (export still succeeded)")
+
         logger.info("Export completed successfully")
     except Exception as exc:
         logger.exception("Export failed")
         raise HTTPException(status_code=500, detail=f"Export failed: {exc}")
 
-    return {"status": "done", "message": "Export completed"}
+    return {"status": "done", "message": "Export completed", "ingest": ingest_result}
