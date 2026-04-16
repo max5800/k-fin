@@ -14,6 +14,26 @@ class CategoryOut(BaseModel):
     type: str
 
 
+class CategoryCreate(BaseModel):
+    id: str
+    name: str
+    type: str
+
+
+class BudgetOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    category_id: str
+    monthly_limit: Decimal
+    currency: str
+    category: CategoryOut | None = None
+
+
+class BudgetUpdate(BaseModel):
+    monthly_limit: Decimal
+    currency: str = "EUR"
+
+
 class TagOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
