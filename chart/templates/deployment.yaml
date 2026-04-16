@@ -44,8 +44,14 @@ spec:
             - name: API_TOKEN
               valueFrom:
                 secretKeyRef:
-                  name: {{ include "k-fin.fullname" . }}-comdirect-secrets
+                  name: {{ include "k-fin.fullname" . }}-infra-secrets
                   key: API_TOKEN
+                  optional: true
+            - name: ANTHROPIC_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "k-fin.fullname" . }}-infra-secrets
+                  key: ANTHROPIC_API_KEY
                   optional: true
             {{- if .Values.postgres.enabled }}
             - name: DATABASE_URL

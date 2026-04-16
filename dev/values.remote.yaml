@@ -55,29 +55,32 @@ externalSecret:
     - path: finance/comdirect
       vaultKey: COMDIRECT_PIN
       envVar: COMDIRECT_PIN
-    - path: k8s/finance-api
-      vaultKey: API_TOKEN
-      envVar: API_TOKEN
+  infraSecrets:
+    secretStore:
+      name: vault-backend
+      kind: ClusterSecretStore
+    keys:
+      - path: k8s/finance-api
+        vaultKey: API_TOKEN
+        envVar: API_TOKEN
+      - path: k8s/finance-api
+        vaultKey: ANTHROPIC_API_KEY
+        envVar: ANTHROPIC_API_KEY
 
 postgres:
   enabled: true
   instances: 1
   db: finance
   owner: finance
-  credentialsSecret: k-fin-postgres-credentials
+  credentialsSecret: k-fin-dev-postgres-credentials
   persistence:
-    size: 10Gi
+    size: 5Gi
   backup:
-    enabled: true
-    retentionPolicy: "7d"
-    schedule: "0 0 2 * * *"
-    destinationPath: "s3://postgres-backups/finance"
-    endpointURL: "https://s3.max5800.com"
-    credentialsSecret: k-fin-postgres-backup-s3
+    enabled: false
   externalSecret:
     enabled: true
     refreshInterval: 1h
     secretStore:
-      name: vault-finance
-      kind: SecretStore
+      name: vault-backend
+      kind: ClusterSecretStore
     vaultPath: k8s/finance-postgres

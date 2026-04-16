@@ -225,9 +225,32 @@ async def internal_sync_confirm(session_id: str):
         except Exception:
             logger.exception("Ingest/normalization failed (export still succeeded)")
 
+        # ----------------------------------------------------------
+        # Run agent pipeline after successful normalization
+        # ----------------------------------------------------------
+        agent_result = None
+        if ingest_result is not None:
+            try:
+                from src.agents.orchestrator import AgentOrchestrator
+
+                orchestrator = AgentOrchestrator(
+                    database_url=settings.database_url,
+                    own_ibans=settings.get_own_ibans(),
+                )
+                run_id = orchestrator.run_full()
+                logger.info("Agent pipeline completed, run_id=%s", run_id)
+                agent_result = {"run_id": run_id}
+            except Exception:
+                logger.exception("Agent pipeline failed (export + normalization still succeeded)")
+
         logger.info("Export completed successfully")
     except Exception as exc:
         logger.exception("Export failed")
         raise HTTPException(status_code=500, detail=f"Export failed: {exc}")
 
-    return {"status": "done", "message": "Export completed", "ingest": ingest_result}
+    return {
+        "status": "done",
+        "message": "Export completed",
+        "ingest": ingest_result,
+        "agents": agent_result,
+    }

@@ -79,6 +79,15 @@ persistence:
   size: 1Gi
 
 # --- ExternalSecret for Comdirect credentials (worker only) ---
+#
+# Secret Access Split:
+#   Bank credentials (finance/comdirect) → vault-finance SecretStore (eso-comdirect role)
+#   Infrastructure secrets (k8s/*) → vault-backend ClusterSecretStore (eso-reader role)
+#
+# The eso-comdirect Vault role is scoped to secret/data/finance/* only.
+# API token and Postgres credentials live under k8s/* and must use the
+# cluster-wide eso-reader role via vault-backend ClusterSecretStore.
+#
 externalSecret:
   enabled: false
   refreshInterval: 1h
@@ -101,9 +110,19 @@ externalSecret:
     - path: finance/comdirect
       vaultKey: COMDIRECT_PIN
       envVar: COMDIRECT_PIN
-    - path: k8s/finance-api
-      vaultKey: API_TOKEN
-      envVar: API_TOKEN
+  # Infrastructure secrets — via ClusterSecretStore (k8s/* path)
+  # API token, Anthropic API key, and any future infra keys
+  infraSecrets:
+    secretStore:
+      name: vault-backend
+      kind: ClusterSecretStore
+    keys:
+      - path: k8s/finance-api
+        vaultKey: API_TOKEN
+        envVar: API_TOKEN
+      - path: k8s/finance-api
+        vaultKey: ANTHROPIC_API_KEY
+        envVar: ANTHROPIC_API_KEY
 
 # --- Postgres (CloudNativePG) ---
 postgres:
