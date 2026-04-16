@@ -132,7 +132,9 @@ class DepotPosition(BaseModel):
             "name": instrument.get("name") or data.get("name") or "",
             "quantity": float(data.get("quantity", {}).get("value") or data.get("stueckzahl") or 0),
             "current_price": float(
-                data.get("currentPrice", {}).get("value") or data.get("kurs", {}).get("value") or 0
+                data.get("currentPrice", {}).get("price", {}).get("value")
+                or data.get("kurs", {}).get("value")
+                or 0
             ),
             "current_value": float(
                 data.get("currentValue", {}).get("value")
