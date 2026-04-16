@@ -1,7 +1,7 @@
 # --- Read-only API (always-on, lean image, no bank secrets) ---
 api:
   image:
-    repository: ghcr.io/max5800/comdirect-firefly-sync-api
+    repository: ghcr.io/max5800/k-fin-api
     # Defaults to v<Chart.Version> when empty
     tag: ""
     pullPolicy: IfNotPresent
@@ -25,7 +25,7 @@ service:
 ingress:
   enabled: true
   className: traefik
-  host: comdirect-sync.local
+  host: k-fin.local
   annotations: {}
   tls:
     enabled: false
@@ -34,7 +34,7 @@ ingress:
 # --- Internal worker (security-sensitive, has bank credentials) ---
 worker:
   image:
-    repository: ghcr.io/max5800/comdirect-firefly-sync-worker
+    repository: ghcr.io/max5800/k-fin-worker
     # Defaults to v<Chart.Version> when empty
     tag: ""
     pullPolicy: IfNotPresent
@@ -96,7 +96,7 @@ postgres:
   image: ghcr.io/cloudnative-pg/postgresql:16.4
   db: finance
   owner: finance
-  credentialsSecret: comdirect-firefly-sync-postgres-credentials
+  credentialsSecret: k-fin-postgres-credentials
   persistence:
     size: 10Gi
     storageClass: ""
@@ -108,7 +108,7 @@ postgres:
     schedule: "0 0 2 * * *"
     destinationPath: "s3://postgres-backups/finance"
     endpointURL: "https://s3.max5800.com"
-    credentialsSecret: comdirect-firefly-sync-postgres-backup-s3
+    credentialsSecret: k-fin-postgres-backup-s3
   externalSecret:
     enabled: true
     refreshInterval: 1h

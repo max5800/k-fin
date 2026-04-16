@@ -105,6 +105,9 @@ tilt up --stream
 
 # Local dev (legacy, Rancher Desktop)
 tilt up --stream -- --profile=local
+
+# Direct Helm alternative for remote dev
+helm upgrade --install k-fin-dev ./chart -f dev/values.remote.yaml
 ```
 
 The remote dev stage deploys to `k-fin-dev.max5800.com` with Swagger UI at `/docs`. Tilt links in the dashboard point directly to Swagger, ReDoc, and the health endpoint.

@@ -15,11 +15,22 @@ The canonical deployment method is the **Helm chart** in `chart/` (and **Tilt** 
 tilt up --stream -- --profile=local
 ```
 
-### Remote deployment
+### Remote deployment (dev stage)
 
 ```bash
-helm upgrade --install comdirect-sync ./chart -f dev/values.remote.yaml
+helm upgrade --install k-fin-dev ./chart -f dev/values.remote.yaml
 ```
+
+### Accessing Swagger UI
+
+After deploying the dev stage, the FastAPI Swagger UI is available at:
+
+```
+https://k-fin-dev.max5800.com/docs
+```
+
+The OpenAPI JSON schema is at `/openapi.json`. No additional Ingress path
+configuration is needed — FastAPI serves `/docs` by default on the API port.
 
 ## Architecture — Two-Service Model
 
