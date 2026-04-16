@@ -11,10 +11,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from datetime import date
 from decimal import Decimal
 from typing import Any
-
 
 CANONICAL_FIELDS_FOR_HASH = (
     "comdirect_id",
@@ -53,13 +53,31 @@ def canonicalize(raw: dict[str, Any]) -> dict[str, Any]:
 
     booking_date = raw.get("bookingDate") or raw.get("booking_date") or ""
     valuation_date = (
-        raw.get("valutaDate") or raw.get("value_date") or raw.get("valuation_date") or booking_date
+        raw.get("valutaDate")
+        or raw.get("value_date")
+        or raw.get("valuation_date")
+        or booking_date
     )
 
-    creditor_name = creditor.get("holderName") if creditor else raw.get("creditor_name", "")
-    creditor_iban = creditor.get("iban") if creditor else raw.get("creditor_iban", "")
-    debtor_name = debtor.get("holderName") if debtor else raw.get("debtor_name", "")
-    debtor_iban = debtor.get("iban") if debtor else raw.get("debtor_iban", "")
+    # Nested API shape has creditor/debtor dicts with holderName/iban;
+    # flat model_dump() shape has creditor_name/creditor_iban directly.
+    # An empty dict is truthy, so we must check for actual content.
+    creditor_name = (
+        creditor.get("holderName")
+        if creditor.get("holderName")
+        else raw.get("creditor_name", "")
+    )
+    creditor_iban = (
+        creditor.get("iban") if creditor.get("iban") else raw.get("creditor_iban", "")
+    )
+    debtor_name = (
+        debtor.get("holderName")
+        if debtor.get("holderName")
+        else raw.get("debtor_name", "")
+    )
+    debtor_iban = (
+        debtor.get("iban") if debtor.get("iban") else raw.get("debtor_iban", "")
+    )
 
     # debit (negative amount): money flows to creditor → recipient=creditor
     # credit (positive amount): money comes from debtor → sender=debtor
@@ -74,7 +92,7 @@ def canonicalize(raw: dict[str, Any]) -> dict[str, Any]:
         recipient = None
         recipient_iban = None
 
-    description = (
+    description = _clean_remittance_info(
         raw.get("remittanceInfo")
         or raw.get("remittance_info")
         or raw.get("description")
@@ -84,7 +102,7 @@ def canonicalize(raw: dict[str, Any]) -> dict[str, Any]:
     )
 
     return {
-        "comdirect_id": raw.get("transactionId") or raw.get("transaction_id") or "",
+        "comdirect_id": raw.get("transactionId") or raw.get("transaction_id") or None,
         "booking_date": _parse_date(booking_date),
         "valuation_date": _parse_date(valuation_date),
         "amount": amount,
@@ -107,6 +125,27 @@ def content_hash(canonical: dict[str, Any]) -> str:
     payload = {k: _json_default(canonical.get(k)) for k in CANONICAL_FIELDS_FOR_HASH}
     blob = json.dumps(payload, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(blob.encode("utf-8")).hexdigest()
+
+
+def _clean_remittance_info(raw_text: str) -> str:
+    """Strip SWIFT/MT940 numbered field prefixes from remittance info.
+
+    Comdirect sometimes returns structured remittance data with numbered
+    prefixes like ``01Aral Station...02Karte Nr...``.  This strips the
+    ``\\d{2}`` prefixes and joins the fragments with ``", "``.
+    """
+    if not raw_text:
+        return ""
+    # Detect numbered prefix pattern: two digits at start or preceded by
+    # whitespace/boundary, followed by non-digit content.
+    if re.match(r"^\d{2}\D", raw_text):
+        parts = re.split(r"(?:^|\s)(\d{2})(?=\D)", raw_text)
+        # split produces: ['', '01', 'content', '02', 'content', ...]
+        cleaned = [
+            p.strip() for p in parts if p.strip() and not re.fullmatch(r"\d{2}", p)
+        ]
+        return ", ".join(cleaned) if cleaned else raw_text.strip()
+    return raw_text.strip()
 
 
 def _to_decimal(value: Any) -> Decimal:

@@ -40,6 +40,10 @@ def resolve_booking_date(value: str | None) -> str | None:
     m = _RELATIVE_DATE_RE.match(value)
     if m:
         days = int(m.group(1))
+        if days > 3650:
+            raise ValueError(
+                f"Relative booking date exceeds maximum of 3650 days: {days}"
+            )
         return (date.today() - timedelta(days=days)).isoformat()
     return value
 
@@ -362,7 +366,9 @@ class ComdirectClient:
             )
             response.raise_for_status()
             data = response.json()
-            logger.info(f"get_depot_positions({depot_id}): {len(data.get('values', []))} positions")
+            logger.info(
+                f"get_depot_positions({depot_id}): {len(data.get('values', []))} positions"
+            )
             return data.get("values", [])
 
     async def get_depot_transactions(
@@ -439,7 +445,9 @@ class ComdirectClient:
 
         transactions: dict[str, list[dict]] = {}
         for account in accounts:
-            account_id = account.get("account", {}).get("accountId") or account.get("accountId")
+            account_id = account.get("account", {}).get("accountId") or account.get(
+                "accountId"
+            )
             if account_id:
                 logger.info(
                     "get_all_data: fetching transactions for account %s "

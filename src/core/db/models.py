@@ -85,7 +85,7 @@ class Category(Base):
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
     name: Mapped[str] = mapped_column(String, nullable=False, unique=True)
-    type: Mapped[TypeEnum] = mapped_column(SQLEnum(TypeEnum), nullable=False)
+    type: Mapped[TypeEnum] = mapped_column(SQLEnum(TypeEnum, values_callable=lambda e: [m.value for m in e]), nullable=False)
 
 
 class Budget(Base):
@@ -220,10 +220,10 @@ class AgentRun(Base):
     id: Mapped[str] = mapped_column(String, primary_key=True)
     agent_name: Mapped[str] = mapped_column(String, nullable=False, index=True)
     status: Mapped[RunStatus] = mapped_column(
-        SQLEnum(RunStatus), nullable=False, default=RunStatus.PENDING
+        SQLEnum(RunStatus, values_callable=lambda e: [m.value for m in e]), nullable=False, default=RunStatus.PENDING
     )
     trigger: Mapped[RunTrigger] = mapped_column(
-        SQLEnum(RunTrigger), nullable=False, default=RunTrigger.MANUAL
+        SQLEnum(RunTrigger, values_callable=lambda e: [m.value for m in e]), nullable=False, default=RunTrigger.MANUAL
     )
     result: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
     error: Mapped[Optional[str]] = mapped_column(String, nullable=True)
@@ -249,16 +249,14 @@ class Report(Base):
     __tablename__ = "reports"
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
-    report_type: Mapped[str] = mapped_column(String, nullable=False, index=True)
     title: Mapped[str] = mapped_column(String, nullable=False)
-    content: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
     period_start: Mapped[date] = mapped_column(Date, nullable=False, index=True)
     period_end: Mapped[date] = mapped_column(Date, nullable=False)
     format: Mapped[str] = mapped_column(String(10), nullable=False)  # pdf, md, html
     file_path: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     size_bytes: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     status: Mapped[ReportStatus] = mapped_column(
-        SQLEnum(ReportStatus), nullable=False, default=ReportStatus.PENDING
+        SQLEnum(ReportStatus, values_callable=lambda e: [m.value for m in e]), nullable=False, default=ReportStatus.PENDING
     )
     error: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
@@ -282,9 +280,12 @@ class SyncRun(Base):
     __tablename__ = "sync_runs"
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
-    source: Mapped[SyncSource] = mapped_column(SQLEnum(SyncSource), nullable=False)
+    source: Mapped[SyncSource] = mapped_column(
+        SQLEnum(SyncSource, values_callable=lambda e: [m.value for m in e]),
+        nullable=False,
+    )
     status: Mapped[SyncStatus] = mapped_column(
-        SQLEnum(SyncStatus), nullable=False, default=SyncStatus.RUNNING
+        SQLEnum(SyncStatus, values_callable=lambda e: [m.value for m in e]), nullable=False, default=SyncStatus.RUNNING
     )
     started_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False

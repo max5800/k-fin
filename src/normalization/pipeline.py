@@ -107,7 +107,11 @@ class NormalizationPipeline:
     def process_and_normalize(self) -> pd.DataFrame:
         run_id = str(uuid.uuid4())
         with Session(self.engine) as session:
-            session.add(SyncRun(id=run_id, source=SyncSource.NORMALIZE, status=SyncStatus.RUNNING))
+            session.add(
+                SyncRun(
+                    id=run_id, source=SyncSource.NORMALIZE, status=SyncStatus.RUNNING
+                )
+            )
             session.commit()
 
             try:
@@ -135,7 +139,9 @@ class NormalizationPipeline:
 
     def _build_dataframe(self, session: Session) -> pd.DataFrame:
         active_rows = (
-            session.execute(select(RawTransaction).where(RawTransaction.superseded_by.is_(None)))
+            session.execute(
+                select(RawTransaction).where(RawTransaction.superseded_by.is_(None))
+            )
             .scalars()
             .all()
         )
@@ -151,7 +157,8 @@ class NormalizationPipeline:
                     "raw_content_hash": raw.content_hash,
                     "comdirect_id": canonical["comdirect_id"] or raw.comdirect_id,
                     "booking_date": canonical["booking_date"],
-                    "valuation_date": canonical["valuation_date"] or canonical["booking_date"],
+                    "valuation_date": canonical["valuation_date"]
+                    or canonical["booking_date"],
                     "amount": canonical["amount"],
                     "currency": canonical["currency"],
                     "sender": canonical["sender"],
@@ -219,7 +226,10 @@ class NormalizationPipeline:
                 for neg in negatives:
                     if neg["id"] in used:
                         continue
-                    if abs((pos["_bdate"] - neg["_bdate"]).days) > INTERNAL_TRANSFER_DAY_WINDOW:
+                    if (
+                        abs((pos["_bdate"] - neg["_bdate"]).days)
+                        > INTERNAL_TRANSFER_DAY_WINDOW
+                    ):
                         continue
                     if own and not _both_ibans_in(pos, neg, own):
                         continue
@@ -336,24 +346,26 @@ class NormalizationPipeline:
             )
             session.add(record)
             session.flush()
-            df.loc[df["id"].isin(pattern["transaction_ids"]), "recurring_pattern_id"] = record.id
+            df.loc[
+                df["id"].isin(pattern["transaction_ids"]), "recurring_pattern_id"
+            ] = record.id
 
     def _upsert_normalized(self, session: Session, df: pd.DataFrame) -> None:
         for _, row in df.iterrows():
             stmt = pg_insert(NormalizedTransaction).values(
                 id=row["id"],
                 raw_content_hash=row["raw_content_hash"],
-                comdirect_id=row.get("comdirect_id"),
+                comdirect_id=_nan_to_none(row.get("comdirect_id")),
                 booking_date=row["booking_date"],
                 valuation_date=row["valuation_date"],
                 amount=row["amount"],
-                currency=row.get("currency") or "EUR",
-                sender=row.get("sender"),
-                recipient=row.get("recipient"),
-                sender_iban=row.get("sender_iban"),
-                recipient_iban=row.get("recipient_iban"),
-                description=row.get("description"),
-                category_id=row.get("category_id"),
+                currency=_nan_to_none(row.get("currency")) or "EUR",
+                sender=_nan_to_none(row.get("sender")),
+                recipient=_nan_to_none(row.get("recipient")),
+                sender_iban=_nan_to_none(row.get("sender_iban")),
+                recipient_iban=_nan_to_none(row.get("recipient_iban")),
+                description=_nan_to_none(row.get("description")),
+                category_id=_nan_to_none(row.get("category_id")),
                 is_recurring=bool(row["is_recurring"]),
                 is_outlier=bool(row["is_outlier"]),
                 internal_transfer=bool(row["internal_transfer"]),
@@ -409,3 +421,17 @@ def _consecutive_runs(months: list[pd.Period]) -> list[list[pd.Period]]:
         else:
             runs.append([m])
     return runs
+
+
+def _nan_to_none(value: Any) -> Any:
+    """Convert pandas NaN / NaT to Python None for DB insertion."""
+    if value is None:
+        return None
+    if isinstance(value, float) and pd.isna(value):
+        return None
+    try:
+        if pd.isna(value):
+            return None
+    except (TypeError, ValueError):
+        pass
+    return value
