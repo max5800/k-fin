@@ -1,3 +1,10 @@
+## [1.15.1](https://github.com/max5800/k-fin/compare/v1.15.0...v1.15.1) (2026-04-16)
+
+
+### Bug Fixes
+
+* **connector:** resolve nested currentPrice structure from Comdirect API ([16b6daf](https://github.com/max5800/k-fin/commit/16b6daf8777ff606e4e1e980ad01be8b12fe7a43))
+
 # [1.15.0](https://github.com/max5800/k-fin/compare/v1.14.1...v1.15.0) (2026-04-16)
 
 
