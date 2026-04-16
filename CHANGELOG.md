@@ -1,3 +1,30 @@
+# [1.15.0](https://github.com/max5800/k-fin/compare/v1.14.1...v1.15.0) (2026-04-16)
+
+
+### Bug Fixes
+
+* **ci:** align image and chart names with k-fin branding ([05d56d1](https://github.com/max5800/k-fin/commit/05d56d1dc9969d60f7586ab70af958213b1f6e39))
+* **ci:** disable husky hooks in semantic-release step ([cb47ceb](https://github.com/max5800/k-fin/commit/cb47cebe9e9a367c2f40e9f4fabf2666d9ed3180))
+* **dev:** remote Tilt dev environment for k3s-app cluster ([9b24a84](https://github.com/max5800/k-fin/commit/9b24a846fa0d336c0077de519d235af5d3244fb1))
+* **m7:** resolve crash bugs — Report model, agent names, tags router ([8224c42](https://github.com/max5800/k-fin/commit/8224c4256047d46a3cdf1cc3fd2fddd37cef9355))
+* **normalization:** handle SWIFT fields starting with digits in description ([8499cd5](https://github.com/max5800/k-fin/commit/8499cd518f9d5ee62df66ba5ea30aaf4bfc98cae))
+* **normalization:** use fixed-width 37-char SWIFT blocks for description parsing ([26d4103](https://github.com/max5800/k-fin/commit/26d41034317e5c269ff3975c24d59bada4f7fd57))
+* resolve 9 API bugs found during dev endpoint testing ([1a3e00e](https://github.com/max5800/k-fin/commit/1a3e00e7b20a1526a023e30e3e10448b7e82d593))
+
+
+### Features
+
+* **api:** add POST /sync/normalize endpoint for re-normalization ([2bf9005](https://github.com/max5800/k-fin/commit/2bf900503193cd75522858b611054e85253a1f1e))
+* **api:** add sync proxy router to public API with input validation ([5813f27](https://github.com/max5800/k-fin/commit/5813f277808770dfe9a73d3dcf02dff7d68b3077))
+* **dev:** prepare helm and ingress for k-fin dev stage ([958f218](https://github.com/max5800/k-fin/commit/958f218348f49def61066b0eaff8e82c4dab5b24))
+* **dev:** target remote k-fin dev stage with Tilt ([#16](https://github.com/max5800/k-fin/issues/16)) ([460e110](https://github.com/max5800/k-fin/commit/460e110643d0322b6eb2021670a79f2547012950))
+* **m6:** add agent runs API with DB migration ([#12](https://github.com/max5800/k-fin/issues/12)) ([25892f7](https://github.com/max5800/k-fin/commit/25892f7e12532a40a8bbdd59237aaf1e77569253))
+* **m6:** add aggregates API for financial dashboards ([#13](https://github.com/max5800/k-fin/issues/13)) ([7f869e8](https://github.com/max5800/k-fin/commit/7f869e8bd16d1e419c0bb534cf9b2e7ae11ee5e6))
+* **m6:** add categories and budgets API ([#11](https://github.com/max5800/k-fin/issues/11)) ([a57d382](https://github.com/max5800/k-fin/commit/a57d382ca80fb5924de1cf679cb3fe75b7eaa6a6))
+* **m6:** add reports API endpoints ([#15](https://github.com/max5800/k-fin/issues/15)) ([7dae698](https://github.com/max5800/k-fin/commit/7dae698c5c0d852a119a3033efef5775aaa5e065))
+* **m7:** complete agent pipeline — worker integration + tests ([70a5c88](https://github.com/max5800/k-fin/commit/70a5c88447430df8b1b84b4a244f63cc7115bc4e))
+* **m7:** wire runs API to agent orchestrator, persist reports ([38d5bdb](https://github.com/max5800/k-fin/commit/38d5bdb950848465c484f3ab0ad03259d0856b10))
+
 ## [1.14.1](https://github.com/max5800/k-fin/compare/v1.14.0...v1.14.1) (2026-04-16)
 
 
