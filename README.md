@@ -104,7 +104,7 @@ Deploy via the **Helm chart** in `chart/` (or **Tilt** for local development):
 tilt up --stream -- --profile=local
 
 # Remote
-helm upgrade --install comdirect-sync ./chart -f dev/values.remote.yaml
+helm upgrade --install k-fin-dev ./chart -f dev/values.remote.yaml
 ```
 
 The chart deploys two microservices:

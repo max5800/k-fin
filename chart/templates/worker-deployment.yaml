@@ -1,20 +1,20 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "comdirect-firefly-sync.fullname" . }}-worker
+  name: {{ include "k-fin.fullname" . }}-worker
   labels:
-    {{- include "comdirect-firefly-sync.labels" . | nindent 4 }}
+    {{- include "k-fin.labels" . | nindent 4 }}
     app.kubernetes.io/component: worker
 spec:
   replicas: {{ .Values.worker.replicaCount }}
   selector:
     matchLabels:
-      {{- include "comdirect-firefly-sync.selectorLabels" . | nindent 6 }}
+      {{- include "k-fin.selectorLabels" . | nindent 6 }}
       app.kubernetes.io/component: worker
   template:
     metadata:
       labels:
-        {{- include "comdirect-firefly-sync.selectorLabels" . | nindent 8 }}
+        {{- include "k-fin.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: worker
     spec:
       {{- if .Values.imagePullSecrets }}
@@ -61,7 +61,7 @@ spec:
             {{- end }}
           envFrom:
             - secretRef:
-                name: {{ include "comdirect-firefly-sync.fullname" . }}-comdirect-secrets
+                name: {{ include "k-fin.fullname" . }}-comdirect-secrets
           volumeMounts:
             {{- if .Values.persistence.enabled }}
             - name: exports
@@ -85,5 +85,5 @@ spec:
         {{- if .Values.persistence.enabled }}
         - name: exports
           persistentVolumeClaim:
-            claimName: {{ include "comdirect-firefly-sync.fullname" . }}-exports
+            claimName: {{ include "k-fin.fullname" . }}-exports
         {{- end }}

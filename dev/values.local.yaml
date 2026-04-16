@@ -32,7 +32,7 @@ worker:
 ingress:
   enabled: true
   className: traefik
-  host: comdirect-sync.local
+  host: k-fin.local
 
 externalSecret:
   enabled: false
@@ -42,7 +42,7 @@ postgres:
   instances: 1
   db: finance
   owner: finance
-  credentialsSecret: comdirect-firefly-sync-postgres-credentials
+  credentialsSecret: k-fin-postgres-credentials
   persistence:
     size: 2Gi
   backup:
@@ -51,5 +51,5 @@ postgres:
     enabled: false
   migrate:
     image:
-      repository: ghcr.io/max5800/comdirect-firefly-sync-migrate
+      repository: ghcr.io/max5800/k-fin-migrate
       pullPolicy: IfNotPresent
