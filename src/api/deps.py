@@ -2,6 +2,7 @@
 
 import hmac
 from collections.abc import Generator
+from typing import Annotated
 
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -39,3 +40,7 @@ def require_token(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid or missing token",
         )
+
+
+Db = Annotated[Session, Depends(get_db)]
+Auth = Depends(require_token)

@@ -16,17 +16,8 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Optional
 
-from sqlalchemy import (
-    Boolean,
-    Date,
-    DateTime,
-    Enum as SQLEnum,
-    ForeignKey,
-    Integer,
-    JSON,
-    Numeric,
-    String,
-)
+from sqlalchemy import JSON, Boolean, Date, DateTime, ForeignKey, Integer, Numeric, String
+from sqlalchemy import Enum as SQLEnum
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from sqlalchemy.sql import func
 
@@ -258,11 +249,13 @@ class Report(Base):
     __tablename__ = "reports"
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
+    report_type: Mapped[str] = mapped_column(String, nullable=False, index=True)
     title: Mapped[str] = mapped_column(String, nullable=False)
+    content: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
     period_start: Mapped[date] = mapped_column(Date, nullable=False, index=True)
     period_end: Mapped[date] = mapped_column(Date, nullable=False)
     format: Mapped[str] = mapped_column(String(10), nullable=False)  # pdf, md, html
-    file_path: Mapped[str] = mapped_column(String, nullable=False)
+    file_path: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     size_bytes: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     status: Mapped[ReportStatus] = mapped_column(
         SQLEnum(ReportStatus), nullable=False, default=ReportStatus.PENDING

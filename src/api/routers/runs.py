@@ -18,10 +18,11 @@ router = APIRouter(
 )
 
 KNOWN_AGENTS = {
-    "weekly_report",
-    "anomaly_scan",
-    "recurring_detector",
-    "category_suggester",
+    "categorization",
+    "weekly_analysis",
+    "monthly_analysis",
+    "anomaly",
+    "synthesis",
 }
 
 

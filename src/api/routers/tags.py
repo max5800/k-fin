@@ -4,19 +4,19 @@ from fastapi import APIRouter, HTTPException
 from sqlalchemy import select
 
 from src.api.deps import Auth, Db
-from src.api.schemas.tags import TagCreate, TagResponse
+from src.api.schemas import TagCreate, TagOut
 from src.core.db.models import Tag, TransactionTag
 
 router = APIRouter(prefix="/tags", tags=["tags"])
 
 
-@router.get("", response_model=list[TagResponse])
+@router.get("", response_model=list[TagOut])
 def list_tags(db: Db, _auth: None = Auth):
     tags = db.scalars(select(Tag).order_by(Tag.name)).all()
-    return [TagResponse.model_validate(t) for t in tags]
+    return [TagOut.model_validate(t) for t in tags]
 
 
-@router.post("", response_model=TagResponse, status_code=201)
+@router.post("", response_model=TagOut, status_code=201)
 def create_tag(body: TagCreate, db: Db, _auth: None = Auth):
     existing = db.get(Tag, body.id)
     if existing:
@@ -25,7 +25,7 @@ def create_tag(body: TagCreate, db: Db, _auth: None = Auth):
     db.add(tag)
     db.commit()
     db.refresh(tag)
-    return TagResponse.model_validate(tag)
+    return TagOut.model_validate(tag)
 
 
 @router.delete("/{tag_id}", status_code=204)

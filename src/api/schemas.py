@@ -41,6 +41,11 @@ class TagOut(BaseModel):
     name: str
 
 
+class TagCreate(BaseModel):
+    id: str
+    name: str
+
+
 class TransactionOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -145,10 +150,13 @@ class ReportOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: str
+    report_type: str
     title: str
+    content: dict | None = None
     period_start: date
     period_end: date
     format: str
+    file_path: str | None
     size_bytes: int | None
     status: str
     error: str | None
