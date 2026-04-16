@@ -67,6 +67,19 @@ def health():
     return {"status": "ok", "service": "comdirect-worker"}
 
 
+@app.post("/internal/normalize")
+def internal_normalize():
+    """Re-run normalization pipeline over existing raw_transactions."""
+    from src.normalization.pipeline import NormalizationPipeline
+
+    pipeline = NormalizationPipeline(
+        database_url=settings.database_url,
+        own_ibans=settings.get_own_ibans(),
+    )
+    df = pipeline.process_and_normalize()
+    return {"status": "done", "normalized": len(df)}
+
+
 @app.post("/internal/sync/start")
 async def internal_sync_start(payload: SyncStartRequest | None = None):
     """Step 1: Begin auth flow and trigger TAN challenge."""
