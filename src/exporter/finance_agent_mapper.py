@@ -105,9 +105,7 @@ def _depot_summary(positions: list[dict]) -> dict:
     total_value = sum(p["current_value"] for p in positions)
     total_purchase = sum(p["purchase_value"] for p in positions)
     total_gains = round(total_value - total_purchase, 2)
-    total_gains_pct = round(
-        (total_gains / total_purchase * 100) if total_purchase else 0, 4
-    )
+    total_gains_pct = round((total_gains / total_purchase * 100) if total_purchase else 0, 4)
     return {
         "total_value": round(total_value, 2),
         "total_purchase_value": round(total_purchase, 2),
@@ -146,9 +144,7 @@ def map_to_finance_agent(raw: dict) -> dict:
         if canonical in result:
             # Merge if same type appears twice (edge case)
             result[canonical]["transactions"].extend(entry["transactions"])
-            result[canonical]["summary"] = _compute_summary(
-                result[canonical]["transactions"]
-            )
+            result[canonical]["summary"] = _compute_summary(result[canonical]["transactions"])
         else:
             result[canonical] = entry
 
@@ -156,13 +152,9 @@ def map_to_finance_agent(raw: dict) -> dict:
     if data.depots:
         depot = data.depots[0]
         depot_id = depot.get("depotId") or ""
-        positions = [
-            _map_depot_position(p)
-            for p in (data.depot_positions.get(depot_id) or [])
-        ]
+        positions = [_map_depot_position(p) for p in (data.depot_positions.get(depot_id) or [])]
         dep_txs = [
-            _map_depot_transaction(tx)
-            for tx in (data.depot_transactions.get(depot_id) or [])
+            _map_depot_transaction(tx) for tx in (data.depot_transactions.get(depot_id) or [])
         ]
         total_tx_count += len(dep_txs)
 

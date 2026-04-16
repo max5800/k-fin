@@ -49,9 +49,7 @@ async def run_sync(comdirect: ComdirectClient | None = None):
         # Find matching Firefly account
         firefly_account = await firefly.find_account_by_iban(iban)
         if not firefly_account:
-            logger.warning(
-                f"No Firefly account found for IBAN {iban[:8]}*** — skipping"
-            )
+            logger.warning(f"No Firefly account found for IBAN {iban[:8]}*** — skipping")
             continue
 
         firefly_account_id = firefly_account["id"]

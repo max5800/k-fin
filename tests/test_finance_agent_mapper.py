@@ -73,7 +73,11 @@ def test_depot_position_mapped_correctly():
         "depot_positions": {
             "DEP001": [
                 {
-                    "instrument": {"isin": "DE0005140008", "wkn": "514000", "name": "Deutsche Bank AG"},
+                    "instrument": {
+                        "isin": "DE0005140008",
+                        "wkn": "514000",
+                        "name": "Deutsche Bank AG",
+                    },
                     "quantity": {"value": 100.0},
                     "currentPrice": {"value": 12.50},
                     "currentValue": {"value": 1250.0, "unit": "EUR"},

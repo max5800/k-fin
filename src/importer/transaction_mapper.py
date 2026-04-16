@@ -20,9 +20,7 @@ def map_transaction(comdirect_tx: dict, firefly_account_id: str) -> dict:
     currency = comdirect_tx.get("transactionValue", {}).get("unit", "EUR")
     booking_date = comdirect_tx.get("bookingDate", datetime.now(timezone.utc).strftime("%Y-%m-%d"))
     description = (
-        comdirect_tx.get("remittanceInfo", "")
-        or comdirect_tx.get("typeText", "Umsatz")
-        or "Umsatz"
+        comdirect_tx.get("remittanceInfo", "") or comdirect_tx.get("typeText", "Umsatz") or "Umsatz"
     )[:255]
     external_id = comdirect_tx.get("transactionId", "")
     counterpart = comdirect_tx.get("creditor" if is_debit else "debtor", {})

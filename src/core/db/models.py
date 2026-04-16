@@ -89,9 +89,7 @@ class Rule(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     regex_pattern: Mapped[str] = mapped_column(String, nullable=False)
-    target_category_id: Mapped[str] = mapped_column(
-        ForeignKey("categories.id"), nullable=False
-    )
+    target_category_id: Mapped[str] = mapped_column(ForeignKey("categories.id"), nullable=False)
     priority: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
 
@@ -122,9 +120,7 @@ class NormalizedTransaction(Base):
     recipient_iban: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     description: Mapped[Optional[str]] = mapped_column(String, nullable=True)
 
-    category_id: Mapped[Optional[str]] = mapped_column(
-        ForeignKey("categories.id"), nullable=True
-    )
+    category_id: Mapped[Optional[str]] = mapped_column(ForeignKey("categories.id"), nullable=True)
 
     is_recurring: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     is_outlier: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
@@ -206,8 +202,6 @@ class SyncRun(Base):
     started_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
-    finished_at: Mapped[Optional[datetime]] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
+    finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     rows_processed: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     error: Mapped[Optional[str]] = mapped_column(String, nullable=True)

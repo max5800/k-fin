@@ -67,15 +67,11 @@ async def main() -> None:
     print(f"  {len(accounts)} Konto(en) gefunden:\n")
     account_ids = []
     for acc in accounts:
-        account_id = acc.get("account", {}).get("accountId") or acc.get(
-            "accountId", "?"
-        )
+        account_id = acc.get("account", {}).get("accountId") or acc.get("accountId", "?")
         iban = acc.get("account", {}).get("iban") or acc.get("iban", "—")
         account_type = acc.get("account", {}).get("accountType", {})
         type_text = (
-            account_type.get("text", "")
-            if isinstance(account_type, dict)
-            else str(account_type)
+            account_type.get("text", "") if isinstance(account_type, dict) else str(account_type)
         )
         # Mask IBAN for display (show first 8 + last 4)
         iban_display = f"{iban[:8]}…{iban[-4:]}" if len(iban) > 12 else iban
@@ -105,24 +101,14 @@ async def main() -> None:
         for tx in transactions:
             booking_date = tx.get("bookingDate", "?")
             tx_type = tx.get("transactionType", {})
-            tx_type_text = (
-                tx_type.get("text", "?") if isinstance(tx_type, dict) else str(tx_type)
-            )
+            tx_type_text = tx_type.get("text", "?") if isinstance(tx_type, dict) else str(tx_type)
             amount = tx.get("amount", {})
-            amount_val = (
-                amount.get("value", "?") if isinstance(amount, dict) else amount
-            )
+            amount_val = amount.get("value", "?") if isinstance(amount, dict) else amount
             currency = amount.get("unit", "EUR") if isinstance(amount, dict) else "EUR"
             remittance = tx.get("remittanceInfo", "")[:60]
 
-            sign = (
-                "+"
-                if str(amount_val).startswith("-") is False and amount_val != "?"
-                else ""
-            )
-            print(
-                f"    {booking_date}  {sign}{amount_val} {currency}  [{tx_type_text}]"
-            )
+            sign = "+" if str(amount_val).startswith("-") is False and amount_val != "?" else ""
+            print(f"    {booking_date}  {sign}{amount_val} {currency}  [{tx_type_text}]")
             if remittance:
                 print(f"              {remittance}")
 
