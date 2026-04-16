@@ -15,7 +15,7 @@ class CategoryOut(BaseModel):
 
 
 class CategoryCreate(BaseModel):
-    id: str
+    id: str | None = None
     name: str
     type: str
 
@@ -42,7 +42,7 @@ class TagOut(BaseModel):
 
 
 class TagCreate(BaseModel):
-    id: str
+    id: str | None = None
     name: str
 
 
@@ -150,9 +150,7 @@ class ReportOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: str
-    report_type: str
     title: str
-    content: dict | None = None
     period_start: date
     period_end: date
     format: str

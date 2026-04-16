@@ -4,10 +4,11 @@ Runs on port 8001, never exposed to the internet.
 Receives sync requests from the public comdirect-api service.
 """
 
+import re
 import uuid
 
 from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from src.api.routers import aggregates, categories, reports, runs, transactions
 from src.connector.comdirect_client import ComdirectClient
@@ -46,6 +47,19 @@ class SyncStartRequest(BaseModel):
     depot_transaction_min_booking_date: str | None = Field(
         default=None, pattern=r"^\d{4}-\d{2}-\d{2}$|^-\d+d$"
     )
+
+    @field_validator(
+        "account_transaction_min_booking_date",
+        "depot_transaction_min_booking_date",
+    )
+    @classmethod
+    def validate_relative_date(cls, v: str | None) -> str | None:
+        if v is None:
+            return v
+        m = re.match(r"^-(\d+)d$", v)
+        if m and int(m.group(1)) > 3650:
+            raise ValueError("Relative date must not exceed 3650 days (~10 years)")
+        return v
 
 
 @app.get("/health")

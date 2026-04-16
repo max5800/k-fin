@@ -13,10 +13,10 @@ from pathlib import Path
 
 import httpx
 from fastapi import Body, Depends, FastAPI, HTTPException
-from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from pydantic import BaseModel, field_validator
 
 EXPORTS_DIR = Path(os.getenv("EXPORTS_DIR", "/data/exports"))
 API_TOKEN = os.getenv("API_TOKEN", "")
@@ -32,7 +32,9 @@ app = FastAPI(
 
 _cors_origins = [
     o.strip()
-    for o in os.getenv("CORS_ORIGINS", "http://localhost:3000,http://localhost:8080").split(",")
+    for o in os.getenv(
+        "CORS_ORIGINS", "http://localhost:3000,http://localhost:8080"
+    ).split(",")
     if o.strip()
 ]
 app.add_middleware(
@@ -62,6 +64,19 @@ class SyncStartRequest(BaseModel):
     account_transaction_min_booking_date: str | None = None
     depot_transaction_limit: int | None = None
     depot_transaction_min_booking_date: str | None = None
+
+    @field_validator(
+        "account_transaction_min_booking_date",
+        "depot_transaction_min_booking_date",
+    )
+    @classmethod
+    def validate_relative_date(cls, v: str | None) -> str | None:
+        if v is None:
+            return v
+        m = re.match(r"^-(\d+)d$", v)
+        if m and int(m.group(1)) > 3650:
+            raise ValueError("Relative date must not exceed 3650 days (~10 years)")
+        return v
 
 
 def _check_token(
@@ -141,7 +156,9 @@ def latest_exports(_auth: None = Depends(_check_token)):
 def download_export(filename: str, _auth: None = Depends(_check_token)):
     """Download a specific CSV export file."""
     path = _safe_filename(filename)
-    media_type = "application/json" if path.suffix == ".json" else "text/csv; charset=utf-8-sig"
+    media_type = (
+        "application/json" if path.suffix == ".json" else "text/csv; charset=utf-8-sig"
+    )
     return FileResponse(
         path,
         media_type=media_type,

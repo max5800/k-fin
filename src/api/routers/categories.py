@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from src.api.deps import get_db, require_token
 from src.api.schemas import BudgetOut, BudgetUpdate, CategoryCreate, CategoryOut
-from src.core.db.models import Budget, Category
+from src.core.db.models import Budget, Category, NormalizedTransaction
 
 router = APIRouter(
     prefix="/categories",
@@ -46,6 +46,34 @@ def create_category(body: CategoryCreate, db: Session = Depends(get_db)):
     db.commit()
     db.refresh(category)
     return CategoryOut.model_validate(category)
+
+
+@router.delete("/{category_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_category(category_id: str, db: Session = Depends(get_db)):
+    category = db.get(Category, category_id)
+    if not category:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Category not found",
+        )
+    # Unlink normalized transactions referencing this category
+    txns = (
+        db.execute(
+            select(NormalizedTransaction).where(
+                NormalizedTransaction.category_id == category_id
+            )
+        )
+        .scalars()
+        .all()
+    )
+    for txn in txns:
+        txn.category_id = None
+    # Remove associated budget
+    budget = db.get(Budget, category_id)
+    if budget:
+        db.delete(budget)
+    db.delete(category)
+    db.commit()
 
 
 # ── Budgets ───────────────────────────────────────────────────────────

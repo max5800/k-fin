@@ -1,5 +1,7 @@
 """Tag endpoints — list, create, delete."""
 
+import uuid
+
 from fastapi import APIRouter, HTTPException
 from sqlalchemy import select
 
@@ -18,10 +20,11 @@ def list_tags(db: Db, _auth: None = Auth):
 
 @router.post("", response_model=TagOut, status_code=201)
 def create_tag(body: TagCreate, db: Db, _auth: None = Auth):
-    existing = db.get(Tag, body.id)
+    tag_id = body.id or str(uuid.uuid4())
+    existing = db.get(Tag, tag_id)
     if existing:
         raise HTTPException(status_code=409, detail="Tag with this ID already exists")
-    tag = Tag(id=body.id, name=body.name)
+    tag = Tag(id=tag_id, name=body.name)
     db.add(tag)
     db.commit()
     db.refresh(tag)
