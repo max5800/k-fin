@@ -1,20 +1,20 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "comdirect-firefly-sync.fullname" . }}-api
+  name: {{ include "k-fin.fullname" . }}-api
   labels:
-    {{- include "comdirect-firefly-sync.labels" . | nindent 4 }}
+    {{- include "k-fin.labels" . | nindent 4 }}
     app.kubernetes.io/component: api
 spec:
   replicas: {{ .Values.api.replicaCount }}
   selector:
     matchLabels:
-      {{- include "comdirect-firefly-sync.selectorLabels" . | nindent 6 }}
+      {{- include "k-fin.selectorLabels" . | nindent 6 }}
       app.kubernetes.io/component: api
   template:
     metadata:
       labels:
-        {{- include "comdirect-firefly-sync.selectorLabels" . | nindent 8 }}
+        {{- include "k-fin.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: api
     spec:
       {{- if .Values.imagePullSecrets }}
@@ -36,11 +36,11 @@ spec:
               protocol: TCP
           env:
             - name: WORKER_URL
-              value: "http://{{ include "comdirect-firefly-sync.fullname" . }}-worker:8001"
+              value: "http://{{ include "k-fin.fullname" . }}-worker:8001"
             - name: API_TOKEN
               valueFrom:
                 secretKeyRef:
-                  name: {{ include "comdirect-firefly-sync.fullname" . }}-comdirect-secrets
+                  name: {{ include "k-fin.fullname" . }}-comdirect-secrets
                   key: API_TOKEN
                   optional: true
             {{- if .Values.postgres.enabled }}
@@ -78,5 +78,5 @@ spec:
         {{- if .Values.persistence.enabled }}
         - name: exports
           persistentVolumeClaim:
-            claimName: {{ include "comdirect-firefly-sync.fullname" . }}-exports
+            claimName: {{ include "k-fin.fullname" . }}-exports
         {{- end }}

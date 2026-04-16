@@ -61,7 +61,7 @@ postgres:
   instances: 1
   db: finance
   owner: finance
-  credentialsSecret: comdirect-firefly-sync-postgres-credentials
+  credentialsSecret: k-fin-postgres-credentials
   persistence:
     size: 10Gi
   backup:
@@ -70,7 +70,7 @@ postgres:
     schedule: "0 0 2 * * *"
     destinationPath: "s3://postgres-backups/finance"
     endpointURL: "https://s3.max5800.com"
-    credentialsSecret: comdirect-firefly-sync-postgres-backup-s3
+    credentialsSecret: k-fin-postgres-backup-s3
   externalSecret:
     enabled: true
     refreshInterval: 1h

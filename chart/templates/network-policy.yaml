@@ -1,14 +1,14 @@
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: {{ include "comdirect-firefly-sync.fullname" . }}-worker
+  name: {{ include "k-fin.fullname" . }}-worker
   labels:
-    {{- include "comdirect-firefly-sync.labels" . | nindent 4 }}
+    {{- include "k-fin.labels" . | nindent 4 }}
     app.kubernetes.io/component: worker
 spec:
   podSelector:
     matchLabels:
-      {{- include "comdirect-firefly-sync.selectorLabels" . | nindent 6 }}
+      {{- include "k-fin.selectorLabels" . | nindent 6 }}
       app.kubernetes.io/component: worker
   policyTypes:
     - Ingress

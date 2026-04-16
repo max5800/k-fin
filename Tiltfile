@@ -35,9 +35,9 @@ else:
     )
 
 # Registry
-REGISTRY_API = "ghcr.io/max5800/comdirect-firefly-sync-api"
-REGISTRY_WORKER = "ghcr.io/max5800/comdirect-firefly-sync"
-REGISTRY_MIGRATE = "ghcr.io/max5800/comdirect-firefly-sync-migrate"
+REGISTRY_API = "ghcr.io/max5800/k-fin-api"
+REGISTRY_WORKER = "ghcr.io/max5800/k-fin-worker"
+REGISTRY_MIGRATE = "ghcr.io/max5800/k-fin-migrate"
 
 # Build API image (lean, no bank secrets)
 docker_build(

@@ -1,14 +1,14 @@
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ include "comdirect-firefly-sync.fullname" . }}-worker
+  name: {{ include "k-fin.fullname" . }}-worker
   labels:
-    {{- include "comdirect-firefly-sync.labels" . | nindent 4 }}
+    {{- include "k-fin.labels" . | nindent 4 }}
     app.kubernetes.io/component: worker
 spec:
   type: ClusterIP
   selector:
-    {{- include "comdirect-firefly-sync.selectorLabels" . | nindent 4 }}
+    {{- include "k-fin.selectorLabels" . | nindent 4 }}
     app.kubernetes.io/component: worker
   ports:
     - port: 8001

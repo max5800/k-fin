@@ -2,9 +2,9 @@
 apiVersion: postgresql.cnpg.io/v1
 kind: Cluster
 metadata:
-  name: {{ include "comdirect-firefly-sync.fullname" . }}-postgres
+  name: {{ include "k-fin.fullname" . }}-postgres
   labels:
-    {{- include "comdirect-firefly-sync.labels" . | nindent 4 }}
+    {{- include "k-fin.labels" . | nindent 4 }}
     app.kubernetes.io/component: postgres
 spec:
   instances: {{ .Values.postgres.instances | default 1 }}
