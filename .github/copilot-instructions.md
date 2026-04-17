@@ -1,8 +1,12 @@
-# Copilot Instructions — K-Fin
+# Copilot Instructions — k-fin
 
 ## Project
 
-K-Fin — Personal Finance Intelligence Platform. Read-only financial data export from the Comdirect REST API — as CSV, Finance API, and normalization pipeline into Postgres.
+k-fin — Personal Finance Intelligence Platform. Read-only financial data export from the Comdirect REST API — as CSV, Finance API, and normalization pipeline into Postgres.
+
+## Identity
+
+`k-fin` resolves internally to "Klaus Fin" (fish-fin). Klaus is the user's OpenClaw AI assistant — a talking goldfish, former GDR figure-skating champion. k-fin is his finance workbench. **Always write the product as `k-fin`** (lowercase, hyphenated) — never spell out "Klaus Finanzen" or "Klaus Finance" in code, UI, logs, commits, or docs. Banking code stays serious; identity stays subtle.
 
 ## Architecture
 

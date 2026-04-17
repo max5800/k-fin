@@ -1,8 +1,12 @@
-# CLAUDE.md — K-Fin
+# CLAUDE.md — k-fin
 
 ## Project
 
-K-Fin — Personal Finance Intelligence Platform. Read-only financial data export from the Comdirect REST API — as CSV, Finance API, and normalization pipeline into Postgres. This is a personal banking application handling highly sensitive financial data.
+k-fin — Personal Finance Intelligence Platform. Read-only financial data export from the Comdirect REST API — as CSV, Finance API, and normalization pipeline into Postgres. This is a personal banking application handling highly sensitive financial data.
+
+## Identity
+
+`k-fin` resolves internally to "Klaus Fin" (fish-fin). Klaus is the user's OpenClaw AI assistant — a talking goldfish, former GDR figure-skating champion, living on the home network. k-fin is his finance workbench. **Always write the product as `k-fin`** (lowercase, hyphenated) — never spell out "Klaus Finanzen" or "Klaus Finance" in code, UI, logs, commits, or docs. Keep banking code serious; identity stays subtle. Full lore: user's Obsidian vault at `Tech/Firefly & Finanz Sync/IDENTITY.md`.
 
 ## Commands
 

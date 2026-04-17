@@ -19,7 +19,7 @@ setup_logging()
 logger = get_logger("worker")
 
 app = FastAPI(
-    title="K-Fin Worker",
+    title="k-fin Worker",
     description="Internal sync worker — not publicly accessible",
     version="0.2.0",
 )
@@ -64,7 +64,7 @@ class SyncStartRequest(BaseModel):
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "service": "comdirect-worker"}
+    return {"status": "ok", "service": "comdirect-worker", "platform": "k-fin"}
 
 
 @app.post("/internal/normalize")
