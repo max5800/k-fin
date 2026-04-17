@@ -19,7 +19,14 @@ from src.agents.categorization import run_categorization
 from src.agents.monthly_analysis import run_monthly_analysis
 from src.agents.synthesizer import run_synthesizer
 from src.agents.weekly_analysis import run_weekly_analysis
-from src.core.db.models import AgentRun, Report, ReportStatus, RunStatus, RunTrigger
+from src.core.db.models import (
+    AgentRun,
+    NormalizedTransaction,
+    Report,
+    ReportStatus,
+    RunStatus,
+    RunTrigger,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +39,8 @@ VALID_AGENT_TYPES = frozenset(
         "synthesis",
     }
 )
+
+AUTO_APPLY_CONFIDENCE = 0.8
 
 
 class AgentOrchestrator:
@@ -51,6 +60,8 @@ class AgentOrchestrator:
             results = {agent_type: result}
             self._finish_run(run_id, results=results)
             self._persist_report(agent_type, result)
+            if agent_type == "categorization":
+                self._apply_categorization(result)
         except Exception as exc:
             logger.error("Agent %s failed: %s", agent_type, exc)
             self._finish_run(
@@ -121,6 +132,8 @@ class AgentOrchestrator:
                 result = runner()
                 results[agent_type] = result
                 self._persist_report(agent_type, result)
+                if agent_type == "categorization":
+                    self._apply_categorization(result)
             except Exception as exc:
                 logger.error("%s agent failed: %s", agent_type, exc)
                 errors.append(f"{agent_type}: {exc}")
@@ -226,3 +239,33 @@ class AgentOrchestrator:
                 )
             )
             session.commit()
+
+    def _apply_categorization(self, result: Any) -> None:
+        """Auto-apply high-confidence category suggestions to transactions."""
+        if not hasattr(result, "suggestions"):
+            return
+
+        to_apply = [
+            s for s in result.suggestions if s.confidence >= AUTO_APPLY_CONFIDENCE
+        ]
+        if not to_apply:
+            logger.info("No high-confidence suggestions to auto-apply")
+            return
+
+        with Session(self.engine) as session:
+            applied = 0
+            for s in to_apply:
+                rows = session.execute(
+                    update(NormalizedTransaction)
+                    .where(NormalizedTransaction.id == s.transaction_id)
+                    .where(NormalizedTransaction.category_id.is_(None))
+                    .values(category_id=s.suggested_category_id)
+                ).rowcount
+                applied += rows
+            session.commit()
+
+        logger.info(
+            "Auto-applied %d/%d high-confidence categorizations",
+            applied,
+            len(to_apply),
+        )
