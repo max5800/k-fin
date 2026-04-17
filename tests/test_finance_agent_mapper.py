@@ -79,7 +79,7 @@ def test_depot_position_mapped_correctly():
                         "name": "Deutsche Bank AG",
                     },
                     "quantity": {"value": 100.0},
-                    "currentPrice": {"value": 12.50},
+                    "currentPrice": {"price": {"value": 12.50}},
                     "currentValue": {"value": 1250.0, "unit": "EUR"},
                     "purchaseValue": {"value": 1100.0, "unit": "EUR"},
                 }
