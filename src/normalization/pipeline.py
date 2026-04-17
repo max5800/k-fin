@@ -38,7 +38,10 @@ logger = logging.getLogger(__name__)
 INTERNAL_TRANSFER_DAY_WINDOW = 2
 RECURRING_MIN_MONTHS = 3
 RECURRING_AMOUNT_TOLERANCE = Decimal("0.10")  # ±10 %
-OUTLIER_ZSCORE_THRESHOLD = 2.0
+# Modified z-score threshold (Iglewicz & Hoaglin, 1993). Robust against
+# masking by extreme values — a property mean/stddev-based z-scores lack
+# at small sample sizes.
+OUTLIER_MODIFIED_Z_THRESHOLD = 3.5
 
 
 class NormalizationPipeline:
@@ -311,7 +314,18 @@ class NormalizationPipeline:
 
     @staticmethod
     def _flag_outliers(df: pd.DataFrame) -> pd.DataFrame:
-        """Flag |z-score| > threshold within each category bucket."""
+        """Flag category-local outliers using the modified z-score (MAD).
+
+        Mean/stddev-based z-scores suffer from masking: a single extreme
+        value inflates both statistics and pulls its own z-score below
+        the threshold, especially at small n. Median + MAD is robust
+        because the median barely moves and the MAD ignores the outlier
+        entirely.
+
+        When the MAD collapses to zero (more than half the values are
+        identical), fall back to the mean absolute deviation scaled to
+        be a consistent estimator of stddev under normality.
+        """
         if df.empty:
             df["is_outlier"] = False
             return df
@@ -319,16 +333,25 @@ class NormalizationPipeline:
         df["is_outlier"] = False
         amount_float = df["amount"].apply(lambda a: float(Decimal(str(a))))
 
-        for cat_id, group in df.groupby("category_id", dropna=False):
+        for _cat_id, group in df.groupby("category_id", dropna=False):
             if len(group) < 3:
                 continue
             local = amount_float.loc[group.index]
-            std = local.std()
-            mean = local.mean()
-            if not std or pd.isna(std):
-                continue
-            z = ((local - mean) / std).abs()
-            df.loc[group.index[z > OUTLIER_ZSCORE_THRESHOLD], "is_outlier"] = True
+            median = local.median()
+            deviations = (local - median).abs()
+            mad = deviations.median()
+            if mad and not pd.isna(mad):
+                # 0.6745 makes MAD a consistent estimator of σ for normal data.
+                modified_z = 0.6745 * (local - median) / mad
+            else:
+                mean_ad = deviations.mean()
+                if not mean_ad or pd.isna(mean_ad):
+                    continue
+                modified_z = (local - median) / (1.253314 * mean_ad)
+            df.loc[
+                group.index[modified_z.abs() > OUTLIER_MODIFIED_Z_THRESHOLD],
+                "is_outlier",
+            ] = True
         return df
 
     # ------------------------------------------------------------------
