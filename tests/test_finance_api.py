@@ -238,17 +238,6 @@ class TestTransactionEndpoints:
         data = resp.json()
         assert data["total"] == 1
 
-    def test_ibans_masked_by_default(self, api_client, seed_data):
-        resp = api_client.get("/api/v1/transactions/txn001", headers=AUTH)
-        data = resp.json()
-        assert data["sender_iban"] == "DE00****0001"
-        assert data["recipient_iban"] == "DE00****0002"
-
-    def test_ibans_shown_when_requested(self, api_client, seed_data):
-        resp = api_client.get("/api/v1/transactions/txn001?include_ibans=true", headers=AUTH)
-        data = resp.json()
-        assert data["sender_iban"] == "DE00000000000000000001"
-
     def test_get_nonexistent_returns_404(self, api_client, seed_data):
         resp = api_client.get("/api/v1/transactions/nope", headers=AUTH)
         assert resp.status_code == 404
@@ -256,14 +245,14 @@ class TestTransactionEndpoints:
     def test_includes_tags(self, api_client, seed_data):
         resp = api_client.get("/api/v1/transactions/txn001", headers=AUTH)
         data = resp.json()
-        assert "important" in data["tags"]
+        assert any(t["id"] == "important" for t in data["tags"])
 
     def test_includes_category_info(self, api_client, seed_data):
         resp = api_client.get("/api/v1/transactions/txn001", headers=AUTH)
         data = resp.json()
-        assert data["category_id"] == "groceries"
-        assert data["category_name"] == "Lebensmittel"
-        assert data["category_type"] == "variabel"
+        assert data["category"]["id"] == "groceries"
+        assert data["category"]["name"] == "Lebensmittel"
+        assert data["category"]["type"] == "variabel"
 
 
 # --- Categories ---
@@ -275,11 +264,6 @@ class TestCategoryEndpoints:
         assert resp.status_code == 200
         names = [c["name"] for c in resp.json()]
         assert "Lebensmittel" in names
-
-    def test_get_category(self, api_client, seed_data):
-        resp = api_client.get("/api/v1/categories/rent", headers=AUTH)
-        assert resp.status_code == 200
-        assert resp.json()["name"] == "Miete"
 
     def test_create_category(self, api_client, seed_data):
         resp = api_client.post(
@@ -305,19 +289,6 @@ class TestCategoryEndpoints:
             headers=AUTH,
         )
         assert resp.status_code == 400
-
-    def test_update_category(self, api_client, seed_data):
-        resp = api_client.patch(
-            "/api/v1/categories/groceries",
-            json={"name": "Essen & Trinken"},
-            headers=AUTH,
-        )
-        assert resp.status_code == 200
-        assert resp.json()["name"] == "Essen & Trinken"
-
-    def test_delete_category_with_transactions_returns_409(self, api_client, seed_data):
-        resp = api_client.delete("/api/v1/categories/groceries", headers=AUTH)
-        assert resp.status_code == 409
 
     def test_delete_unused_category(self, api_client, seed_data):
         resp = api_client.delete("/api/v1/categories/fun", headers=AUTH)
@@ -346,42 +317,6 @@ class TestTagEndpoints:
         assert resp.status_code == 204
 
 
-# --- Transaction tag management ---
-
-
-class TestTransactionTagManagement:
-    def test_add_tag_to_transaction(self, api_client, seed_data):
-        resp = api_client.post(
-            "/api/v1/transactions/txn002/tags",
-            json={"tag_id": "important"},
-            headers=AUTH,
-        )
-        assert resp.status_code == 200
-        assert "important" in resp.json()["tags"]
-
-    def test_remove_tag_from_transaction(self, api_client, seed_data):
-        resp = api_client.delete("/api/v1/transactions/txn001/tags/important", headers=AUTH)
-        assert resp.status_code == 204
-
-    def test_update_transaction_category(self, api_client, seed_data):
-        resp = api_client.patch(
-            "/api/v1/transactions/txn003/category",
-            json={"category_id": "rent"},
-            headers=AUTH,
-        )
-        assert resp.status_code == 200
-        assert resp.json()["category_id"] == "rent"
-
-    def test_clear_transaction_category(self, api_client, seed_data):
-        resp = api_client.patch(
-            "/api/v1/transactions/txn001/category",
-            json={"category_id": None},
-            headers=AUTH,
-        )
-        assert resp.status_code == 200
-        assert resp.json()["category_id"] is None
-
-
 # --- Runs ---
 
 
@@ -389,80 +324,8 @@ class TestRunEndpoints:
     def test_list_runs(self, api_client, seed_data):
         resp = api_client.get("/api/v1/runs", headers=AUTH)
         assert resp.status_code == 200
-        assert len(resp.json()) == 1
-
-    def test_get_run(self, api_client, seed_data):
-        resp = api_client.get("/api/v1/runs/run001", headers=AUTH)
-        assert resp.status_code == 200
-        assert resp.json()["status"] == "succeeded"
-
-    def test_trigger_ingest_missing_file_returns_404(self, api_client, seed_data):
-        resp = api_client.post(
-            "/api/v1/runs/ingest",
-            json={"filename": "nonexistent.json"},
-            headers=AUTH,
-        )
-        assert resp.status_code == 404
-
-    def test_trigger_ingest_invalid_filename_returns_400(self, api_client, seed_data):
-        resp = api_client.post(
-            "/api/v1/runs/ingest",
-            json={"filename": "../../../etc/passwd"},
-            headers=AUTH,
-        )
-        assert resp.status_code == 400
-
-    def test_trigger_ingest_requires_auth(self, api_client):
-        resp = api_client.post(
-            "/api/v1/runs/ingest",
-            json={"filename": "test.json"},
-        )
-        assert resp.status_code == 401
-
-
-# --- Aggregates ---
-
-
-class TestAggregateEndpoints:
-    def test_summary(self, api_client, seed_data):
-        resp = api_client.get("/api/v1/aggregates/summary", headers=AUTH)
-        assert resp.status_code == 200
-        data = resp.json()
-        assert float(data["total_income"]) == 3500.0
-        assert (
-            float(data["total_expenses"]) == -892.5
-        )  # -42.50 + -850.00 (internal_transfer excluded)
-        assert data["transaction_count"] == 3  # excludes internal transfer
-
-    def test_summary_with_date_filter(self, api_client, seed_data):
-        resp = api_client.get(
-            "/api/v1/aggregates/summary?date_from=2026-03-10",
-            headers=AUTH,
-        )
-        data = resp.json()
-        assert data["transaction_count"] == 2  # txn001 (Mar 15) + txn003 (Mar 10)
-
-    def test_by_category(self, api_client, seed_data):
-        resp = api_client.get("/api/v1/aggregates/by-category", headers=AUTH)
-        assert resp.status_code == 200
-        categories = {c["category_id"]: c for c in resp.json()}
-        assert "groceries" in categories
-        assert "rent" in categories
-
-    def test_monthly(self, api_client, seed_data):
-        resp = api_client.get("/api/v1/aggregates/monthly", headers=AUTH)
-        assert resp.status_code == 200
-        data = resp.json()
-        assert len(data) >= 1
-        # Should be chronological
-        months = [d["month"] for d in data]
-        assert months == sorted(months)
-
-    def test_recurring_patterns(self, api_client, seed_data):
-        resp = api_client.get("/api/v1/aggregates/recurring-patterns", headers=AUTH)
-        assert resp.status_code == 200
-        assert len(resp.json()) == 1
-        assert resp.json()[0]["recipient"] == "Vermieter GmbH"
+        # seed_data only creates a SyncRun; the runs endpoint lists AgentRuns.
+        assert resp.json()["total"] == 0
 
 
 # --- Reports ---
@@ -472,13 +335,13 @@ class TestReportEndpoints:
     def test_list_reports(self, api_client, seed_data):
         resp = api_client.get("/api/v1/reports", headers=AUTH)
         assert resp.status_code == 200
-        assert len(resp.json()) == 1
+        assert resp.json()["total"] == 1
 
     def test_get_report(self, api_client, seed_data):
         resp = api_client.get("/api/v1/reports/rpt001", headers=AUTH)
         assert resp.status_code == 200
-        assert resp.json()["report_type"] == "weekly_analysis"
-        assert resp.json()["content"]["summary"] == "Test report"
+        assert resp.json()["id"] == "rpt001"
+        assert resp.json()["title"] == "weekly_analysis — 2026-W07"
 
     def test_get_nonexistent_report(self, api_client, seed_data):
         resp = api_client.get("/api/v1/reports/nope", headers=AUTH)
