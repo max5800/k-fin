@@ -1,3 +1,10 @@
+## [1.16.1](https://github.com/max5800/k-fin/compare/v1.16.0...v1.16.1) (2026-04-17)
+
+
+### Bug Fixes
+
+* **tests:** update currentPrice structure in depot position mapping test ([d7b1bd9](https://github.com/max5800/k-fin/commit/d7b1bd961ad8ad7bc8ed0e62f5a4a801b938a7f6))
+
 # [1.16.0](https://github.com/max5800/k-fin/compare/v1.15.1...v1.16.0) (2026-04-17)
 
 
