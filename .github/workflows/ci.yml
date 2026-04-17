@@ -29,6 +29,10 @@ jobs:
         run: uv run ruff check .
 
       - name: Test
+        env:
+          # Dummy key — pydantic-ai validates presence at import time, but no
+          # real LLM calls happen in tests (agents are overridden with TestModel).
+          ANTHROPIC_API_KEY: dummy-for-tests
         run: uv run pytest --tb=short
 
   docker-build:
