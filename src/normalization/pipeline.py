@@ -325,6 +325,11 @@ class NormalizationPipeline:
         When the MAD collapses to zero (more than half the values are
         identical), fall back to the mean absolute deviation scaled to
         be a consistent estimator of stddev under normality.
+
+        Internal transfers are excluded from detection — moving money
+        between own accounts is not anomalous spending, and their
+        amounts would otherwise distort the stats for the uncategorized
+        bucket they often land in.
         """
         if df.empty:
             df["is_outlier"] = False
@@ -333,7 +338,8 @@ class NormalizationPipeline:
         df["is_outlier"] = False
         amount_float = df["amount"].apply(lambda a: float(Decimal(str(a))))
 
-        for _cat_id, group in df.groupby("category_id", dropna=False):
+        candidates = df[~df["internal_transfer"]]
+        for _cat_id, group in candidates.groupby("category_id", dropna=False):
             if len(group) < 3:
                 continue
             local = amount_float.loc[group.index]
