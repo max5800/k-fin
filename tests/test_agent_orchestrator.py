@@ -447,7 +447,10 @@ def agent_api_client(db_engine):
         with Session(db_engine) as session:
             yield session
 
-    with patch.dict(os.environ, {"API_TOKEN": "test-secret"}):
+    # The runs router spawns background tasks that build their own engine
+    # from settings.database_url, so the patched env also needs the URL.
+    db_url = db_engine.url.render_as_string(hide_password=False)
+    with patch.dict(os.environ, {"API_TOKEN": "test-secret", "DATABASE_URL": db_url}):
         from src.api.app import create_app
 
         app = create_app()

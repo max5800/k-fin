@@ -56,7 +56,7 @@ def test_ground_truth_end_to_end(postgres_url, db_engine):
     )
     assert inserted == len(transactions)
 
-    df, _run_id = pipeline.process_and_normalize()
+    df = pipeline.process_and_normalize()
     assert len(df) == len(transactions)
 
     with Session(db_engine) as session:
