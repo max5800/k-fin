@@ -177,8 +177,11 @@ def seed_data(db_engine):
         s.add(
             Report(
                 id="rpt001",
-                run_id="run001",
                 report_type="weekly_analysis",
+                title="weekly_analysis — 2026-W07",
+                period_start=date(2026, 2, 9),
+                period_end=date(2026, 2, 15),
+                format="json",
                 content={"summary": "Test report"},
             )
         )
