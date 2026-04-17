@@ -1,3 +1,10 @@
+## [1.18.3](https://github.com/max5800/k-fin/compare/v1.18.2...v1.18.3) (2026-04-17)
+
+
+### Bug Fixes
+
+* **normalization:** switch outlier detection from z-score to MAD ([2b24da0](https://github.com/max5800/k-fin/commit/2b24da0fbe41d4c6fba226c95508b13a3e1f4d8c))
+
 ## [1.18.2](https://github.com/max5800/k-fin/compare/v1.18.1...v1.18.2) (2026-04-17)
 
 
