@@ -20,14 +20,14 @@ def create_app() -> FastAPI:
         setattr(settings, key, value)
 
     app = FastAPI(
-        title="K-Fin API",
-        description="K-Fin — Personal Finance Intelligence Platform",
+        title="k-fin API",
+        description="k-fin — Personal Finance Intelligence Platform",
         version="0.1.0",
     )
 
     @app.get("/health")
     def health():
-        return {"status": "ok", "service": "finance-api"}
+        return {"status": "ok", "service": "finance-api", "platform": "k-fin"}
 
     app.include_router(transactions.router, prefix="/api/v1")
     app.include_router(categories.router, prefix="/api/v1")
