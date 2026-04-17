@@ -11,3 +11,4 @@ secrets/
 exports/
 data/
 node_modules/
+.claude/scheduled_tasks.lock
