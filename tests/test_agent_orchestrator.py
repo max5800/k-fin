@@ -441,7 +441,6 @@ def agent_api_client(db_engine):
     """TestClient for agent API endpoints."""
     from fastapi.testclient import TestClient
 
-    from src.api.app import app
     from src.api.deps import get_db
 
     def _override_get_db():
@@ -449,6 +448,9 @@ def agent_api_client(db_engine):
             yield session
 
     with patch.dict(os.environ, {"API_TOKEN": "test-secret"}):
+        from src.api.app import create_app
+
+        app = create_app()
         app.dependency_overrides[get_db] = _override_get_db
         client = TestClient(app)
         yield client
