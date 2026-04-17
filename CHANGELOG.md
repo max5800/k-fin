@@ -1,3 +1,10 @@
+# [1.19.0](https://github.com/max5800/k-fin/compare/v1.18.3...v1.19.0) (2026-04-17)
+
+
+### Features
+
+* **normalization:** return run_id from process_and_normalize ([004478a](https://github.com/max5800/k-fin/commit/004478a16573106ed20597cf4c8054007e03543b))
+
 ## [1.18.3](https://github.com/max5800/k-fin/compare/v1.18.2...v1.18.3) (2026-04-17)
 
 
