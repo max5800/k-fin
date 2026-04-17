@@ -1,3 +1,10 @@
+## [1.19.2](https://github.com/max5800/k-fin/compare/v1.19.1...v1.19.2) (2026-04-17)
+
+
+### Bug Fixes
+
+* **normalization:** exclude internal transfers from outlier detection ([eaaff0b](https://github.com/max5800/k-fin/commit/eaaff0b7ae8bdb815b2fdf78ab84587b98adfd3d))
+
 ## [1.19.1](https://github.com/max5800/k-fin/compare/v1.19.0...v1.19.1) (2026-04-17)
 
 
