@@ -51,7 +51,7 @@ A Kubernetes NetworkPolicy ensures only `comdirect-api` can reach `comdirect-wor
 | HTTP client | httpx (async) |
 | API | FastAPI + uvicorn |
 | Config | pydantic-settings, .env |
-| Containers | Docker, docker-compose |
+| Containers | Docker, Helm, Tilt |
 | Releases | semantic-release |
 
 ## Prerequisites
@@ -88,12 +88,6 @@ uv run uvicorn main:app --reload
 ```
 
 The API serves the exported CSVs at `http://localhost:8000`.
-
-### Docker
-
-```bash
-docker-compose up
-```
 
 ## Kubernetes
 
