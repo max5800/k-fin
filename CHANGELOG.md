@@ -1,3 +1,10 @@
+## [1.18.1](https://github.com/max5800/k-fin/compare/v1.18.0...v1.18.1) (2026-04-17)
+
+
+### Bug Fixes
+
+* **normalization:** insert new raw row before updating superseded_by FK ([1ffb77f](https://github.com/max5800/k-fin/commit/1ffb77ff560a103a2a7267fe3d31433dfa311eff))
+
 # [1.18.0](https://github.com/max5800/k-fin/compare/v1.17.0...v1.18.0) (2026-04-17)
 
 
