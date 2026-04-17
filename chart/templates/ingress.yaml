@@ -2,10 +2,9 @@
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: {{ include "k-fin.fullname" . }}-api
+  name: {{ include "k-fin.fullname" . }}
   labels:
     {{- include "k-fin.labels" . | nindent 4 }}
-    app.kubernetes.io/component: api
   {{- with .Values.ingress.annotations }}
   annotations:
     {{- toYaml . | nindent 4 }}
@@ -22,6 +21,51 @@ spec:
     - host: {{ .Values.ingress.host }}
       http:
         paths:
+          {{- /* API paths: handled before "/" via longest-prefix match. */}}
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "k-fin.fullname" . }}-api
+                port:
+                  number: {{ .Values.service.port }}
+          - path: /docs
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "k-fin.fullname" . }}-api
+                port:
+                  number: {{ .Values.service.port }}
+          - path: /redoc
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "k-fin.fullname" . }}-api
+                port:
+                  number: {{ .Values.service.port }}
+          - path: /openapi.json
+            pathType: Exact
+            backend:
+              service:
+                name: {{ include "k-fin.fullname" . }}-api
+                port:
+                  number: {{ .Values.service.port }}
+          - path: /health
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "k-fin.fullname" . }}-api
+                port:
+                  number: {{ .Values.service.port }}
+          {{- if .Values.ui.enabled }}
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "k-fin.fullname" . }}-ui
+                port:
+                  number: {{ .Values.ui.service.port }}
+          {{- else }}
           - path: /
             pathType: Prefix
             backend:
@@ -29,4 +73,5 @@ spec:
                 name: {{ include "k-fin.fullname" . }}-api
                 port:
                   number: {{ .Values.service.port }}
+          {{- end }}
 {{- end }}

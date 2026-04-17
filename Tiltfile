@@ -12,6 +12,9 @@ RELEASE_NAME = "k-fin-dev"
 FULLNAME = RELEASE_NAME + "-k-fin"
 SECRET_NAME = FULLNAME + "-comdirect-secrets"
 
+# UI lives in a sibling repo — Tilt resolves the path relative to this Tiltfile.
+UI_CONTEXT = "../k-fin-ui"
+
 # Select K8s context and values based on profile
 if profile == "remote":
     allow_k8s_contexts("k3s-app")
@@ -39,6 +42,7 @@ else:
 REGISTRY_API = "ghcr.io/max5800/k-fin-api"
 REGISTRY_WORKER = "ghcr.io/max5800/k-fin-worker"
 REGISTRY_MIGRATE = "ghcr.io/max5800/k-fin-migrate"
+REGISTRY_UI = "ghcr.io/max5800/k-fin-ui"
 
 # Build API image (lean, no bank secrets)
 docker_build(
@@ -73,6 +77,25 @@ docker_build(
     dockerfile="./Dockerfile",
 )
 
+# Build UI image (Vite dev-server with HMR via live_update)
+# package.json / package-lock changes fall outside the sync paths and trigger
+# a full rebuild so `npm ci` re-runs.
+docker_build(
+    REGISTRY_UI,
+    context=UI_CONTEXT,
+    dockerfile=UI_CONTEXT + "/Dockerfile.dev",
+    live_update=[
+        sync(UI_CONTEXT + "/src", "/app/src"),
+        sync(UI_CONTEXT + "/index.html", "/app/index.html"),
+        sync(UI_CONTEXT + "/vite.config.ts", "/app/vite.config.ts"),
+    ],
+    ignore=[
+        UI_CONTEXT + "/node_modules",
+        UI_CONTEXT + "/dist",
+        UI_CONTEXT + "/.env.local",
+    ],
+)
+
 # Deploy Helm chart
 k8s_yaml(helm(
     "./chart",
@@ -83,6 +106,7 @@ k8s_yaml(helm(
         "api.image.repository=" + REGISTRY_API,
         "worker.image.repository=" + REGISTRY_WORKER,
         "postgres.migrate.image.repository=" + REGISTRY_MIGRATE,
+        "ui.image.repository=" + REGISTRY_UI,
         "ingress.host=" + ingress_host,
     ],
 ))
@@ -105,4 +129,13 @@ k8s_resource(
     FULLNAME + "-worker",
     labels=["k-fin"],
     resource_deps=["create-secrets"] if profile == "local" else [],
+)
+
+# UI resource: port-forwarded locally so Vite HMR works over the same origin.
+ui_link = "http://localhost:3000" if profile == "local" else docs_base
+k8s_resource(
+    FULLNAME + "-ui",
+    port_forwards=["3000:3000"] if profile == "local" else [],
+    labels=["k-fin"],
+    links=[link(ui_link, "k-fin UI")],
 )

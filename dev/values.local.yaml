@@ -29,6 +29,22 @@ worker:
     EXPORTS_DIR: "/data/exports"
     SYNC_INTERVAL_MINUTES: "5"
 
+ui:
+  enabled: true
+  image:
+    pullPolicy: Always
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 1Gi
+  env:
+    VITE_API_BASE_URL: "/api/v1"
+    # Port-forwarded local dev: browser is at localhost:3000, so HMR
+    # connects straight back to 3000 (Vite default) — no override needed.
+
 ingress:
   enabled: true
   className: traefik
