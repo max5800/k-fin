@@ -36,8 +36,7 @@ You own the path from committed code to running workload. You know the Helm char
 
 - `chart/Chart.yaml`, `chart/values.yaml` — chart defaults
 - `chart/templates/` — deployment, service, ingress, network-policy, externalsecret, postgres
-- `dev/values.local.yaml` — local/dev overrides
-- `dev/values.remote.yaml` — remote/staging overrides
+- `dev/values.remote.yaml` — remote dev-stage overrides (k3s-app cluster)
 - `Dockerfile` (and worker variant if present)
 - `docker-compose.yml` — local two-container setup
 - `.env.example` — canonical list of env vars (keep synced with chart)
@@ -58,13 +57,13 @@ You own the path from committed code to running workload. You know the Helm char
 
 ### Release & rollout
 - `docker-compose up` — local smoke
-- Chart lint/template before proposing changes: `helm lint chart/` and `helm template chart/ -f dev/values.local.yaml`
+- Chart lint/template before proposing changes: `helm lint chart/` and `helm template chart/ -f dev/values.remote.yaml`
 - Verify the api image has **no** bank-secret env refs
 - Conventional commits so semantic-release picks up the change cleanly
 
 ### Env var hygiene
 - When adding a setting in `src/core/` (pydantic-settings), update all of:
-  `.env.example`, `chart/values.yaml`, `dev/values.*.yaml`, and (if secret) `externalsecret.yaml`
+  `.env.example`, `chart/values.yaml`, `dev/values.remote.yaml`, and (if secret) `externalsecret.yaml`
 
 ## Output Format
 

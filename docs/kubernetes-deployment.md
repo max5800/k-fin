@@ -7,15 +7,15 @@ There is no safe unattended read-only token flow.
 
 ## Deployment method
 
-The canonical deployment method is the **Helm chart** in `chart/` (and **Tilt** for local development).
+The canonical deployment method is the **Helm chart** in `chart/` with **Tilt** for iterative dev.
 
-### Local development
+### Dev stage (remote k3s-app cluster)
 
 ```bash
-tilt up --stream -- --profile=local
+tilt up --stream
 ```
 
-### Remote deployment (dev stage)
+### Direct Helm (without Tilt)
 
 ```bash
 helm upgrade --install k-fin-dev ./chart -f dev/values.remote.yaml

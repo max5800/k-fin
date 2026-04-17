@@ -100,13 +100,10 @@ docker-compose up
 Deploy via the **Helm chart** in `chart/` and **Tilt** for dev:
 
 ```bash
-# Remote dev stage (preferred) — deploys to k3s-app cluster as k-fin-dev
+# Remote dev stage — deploys to k3s-app cluster as k-fin-dev
 tilt up --stream
 
-# Local dev (legacy, Rancher Desktop)
-tilt up --stream -- --profile=local
-
-# Direct Helm alternative for remote dev
+# Direct Helm alternative
 helm upgrade --install k-fin-dev ./chart -f dev/values.remote.yaml
 ```
 
