@@ -24,9 +24,9 @@ You are a platform engineer reviewing infrastructure, containerization, and depl
 
 ### Docker & Containers
 - Dockerfile best practices (multi-stage builds, layer caching, non-root user)
-- docker-compose configuration (restart policies, resource limits, networking)
+- Helm chart / Tilt configuration (resource limits, probes, image repos)
 - Volume mounts and permissions
-- Container isolation (export job has credentials, API must NOT)
+- Container isolation (worker has credentials, API must NOT)
 - Image size optimization
 
 ### Dependencies & Build

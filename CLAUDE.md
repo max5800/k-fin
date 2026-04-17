@@ -11,7 +11,7 @@ K-Fin — Personal Finance Intelligence Platform. Read-only financial data expor
 - `uv run uvicorn main:app --reload` — Start dev server
 - `uv run pytest` — Run tests
 - `uv run ruff check .` — Lint
-- `docker-compose up` — Start both containers
+- `tilt up --stream` — Deploy the full stack to the k3s-app dev cluster
 
 ## Architecture
 

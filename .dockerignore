@@ -25,7 +25,6 @@ tests/
 chart/
 dev/
 Tiltfile
-docker-compose.yml
 
 # IDE
 .vscode/
