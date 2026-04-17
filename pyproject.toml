@@ -16,7 +16,11 @@ dependencies = [
     "psycopg[binary]>=3.2.0",
     "pandas>=2.2.0",
     "pydantic-ai-slim[anthropic]>=0.1.80",
+    "mcp>=1.2.0",
 ]
+
+[project.scripts]
+k-fin-mcp = "src.mcp_server.__main__:cli"
 
 [dependency-groups]
 dev = [
