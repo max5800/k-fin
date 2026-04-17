@@ -1,3 +1,10 @@
+## [1.19.1](https://github.com/max5800/k-fin/compare/v1.19.0...v1.19.1) (2026-04-17)
+
+
+### Bug Fixes
+
+* **chart:** set VITE_ALLOWED_HOSTS for the UI deployment ([0c23869](https://github.com/max5800/k-fin/commit/0c238693bb6f1a9dfb2974ee8c83c0460dae44df))
+
 # [1.19.0](https://github.com/max5800/k-fin/compare/v1.18.3...v1.19.0) (2026-04-17)
 
 
