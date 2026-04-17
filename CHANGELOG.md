@@ -1,3 +1,10 @@
+## [1.18.2](https://github.com/max5800/k-fin/compare/v1.18.1...v1.18.2) (2026-04-17)
+
+
+### Bug Fixes
+
+* **api:** return 400/409 for invalid or duplicate category creation ([c15cfa6](https://github.com/max5800/k-fin/commit/c15cfa6f2e5448e4266cea40fda3ebc2186652d4))
+
 ## [1.18.1](https://github.com/max5800/k-fin/compare/v1.18.0...v1.18.1) (2026-04-17)
 
 
