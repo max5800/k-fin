@@ -113,7 +113,7 @@ class NormalizationPipeline:
     # Normalization
     # ------------------------------------------------------------------
 
-    def process_and_normalize(self) -> pd.DataFrame:
+    def process_and_normalize(self) -> tuple[pd.DataFrame, str]:
         run_id = str(uuid.uuid4())
         with Session(self.engine) as session:
             session.add(
@@ -127,7 +127,7 @@ class NormalizationPipeline:
                 df = self._build_dataframe(session)
                 if df.empty:
                     self._finish_run(session, run_id, rows=0)
-                    return df
+                    return df, run_id
 
                 df = self._apply_rules(df, session)
                 df = self._flag_internal_transfers(df, self.own_ibans)
@@ -137,7 +137,7 @@ class NormalizationPipeline:
                 self._upsert_recurring_patterns(session, patterns, df)
                 self._upsert_normalized(session, df)
                 self._finish_run(session, run_id, rows=len(df))
-                return df
+                return df, run_id
             except Exception as exc:  # surface the failure in sync_runs
                 self._finish_run(session, run_id, rows=0, error=str(exc))
                 raise
