@@ -4,6 +4,9 @@
             "path": "."
         },
         {
+            "path": "../k-fin-ui"
+        },
+        {
             "path": "../home-lab"
         },
         {
