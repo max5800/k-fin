@@ -1,3 +1,10 @@
+# [1.17.0](https://github.com/max5800/k-fin/compare/v1.16.1...v1.17.0) (2026-04-17)
+
+
+### Features
+
+* **m8:** add stdio MCP server driven by OpenAPI ([9ba546e](https://github.com/max5800/k-fin/commit/9ba546e23e066faafe5d9fa3b9a605ac5cdc3eb1))
+
 ## [1.16.1](https://github.com/max5800/k-fin/compare/v1.16.0...v1.16.1) (2026-04-17)
 
 
