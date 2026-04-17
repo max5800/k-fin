@@ -226,7 +226,7 @@ class TestTransactionEndpoints:
         resp = api_client.get("/api/v1/transactions?category_id=rent", headers=AUTH)
         data = resp.json()
         assert data["total"] == 1
-        assert data["items"][0]["category_name"] == "Miete"
+        assert data["items"][0]["category"]["name"] == "Miete"
 
     def test_list_filter_recurring(self, api_client, seed_data):
         resp = api_client.get("/api/v1/transactions?is_recurring=true", headers=AUTH)
