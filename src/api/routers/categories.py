@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from src.api.deps import get_db, require_token
 from src.api.schemas import BudgetOut, BudgetUpdate, CategoryCreate, CategoryOut
-from src.core.db.models import Budget, Category, NormalizedTransaction
+from src.core.db.models import Budget, Category, NormalizedTransaction, TypeEnum
 
 router = APIRouter(
     prefix="/categories",
@@ -28,20 +28,27 @@ def list_categories(db: Session = Depends(get_db)):
 
 @router.post("", response_model=CategoryOut, status_code=status.HTTP_201_CREATED)
 def create_category(body: CategoryCreate, db: Session = Depends(get_db)):
-    existing = db.execute(
-        select(Category).where(Category.name == body.name)
-    ).scalar_one_or_none()
-    if existing:
+    valid_types = {t.value for t in TypeEnum}
+    if body.type not in valid_types:
         raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=f"Category with name '{body.name}' already exists",
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid type '{body.type}'. Valid: {sorted(valid_types)}",
         )
 
-    category = Category(
-        id=body.id or str(uuid.uuid4()),
-        name=body.name,
-        type=body.type,
-    )
+    category_id = body.id or str(uuid.uuid4())
+    clash = db.execute(
+        select(Category).where(
+            (Category.id == category_id) | (Category.name == body.name)
+        )
+    ).scalar_one_or_none()
+    if clash:
+        field = "id" if clash.id == category_id else "name"
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Category with {field} '{getattr(clash, field)}' already exists",
+        )
+
+    category = Category(id=category_id, name=body.name, type=body.type)
     db.add(category)
     db.commit()
     db.refresh(category)
