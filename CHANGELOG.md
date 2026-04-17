@@ -1,3 +1,11 @@
+# [1.16.0](https://github.com/max5800/k-fin/compare/v1.15.1...v1.16.0) (2026-04-17)
+
+
+### Features
+
+* **agents:** auto-apply high-confidence categorizations to transactions ([87f9eb1](https://github.com/max5800/k-fin/commit/87f9eb1fe6e3b814b27e061140b94361aa0b2cee))
+* **m7:** wire full sync pipeline, fix ESO secret split, seed categories ([2a57696](https://github.com/max5800/k-fin/commit/2a576960b3150951d8d84c6953f94240a07097d1))
+
 ## [1.15.1](https://github.com/max5800/k-fin/compare/v1.15.0...v1.15.1) (2026-04-16)
 
 
