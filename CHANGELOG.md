@@ -1,3 +1,15 @@
+# [1.18.0](https://github.com/max5800/k-fin/compare/v1.17.0...v1.18.0) (2026-04-17)
+
+
+### Bug Fixes
+
+* **api:** add create_app factory so tests can patch env before building the app ([9962b60](https://github.com/max5800/k-fin/commit/9962b60cbe01d0a4775342c761d41e0e3a742bcc))
+
+
+### Features
+
+* **chart:** integrate k-fin-ui into Tilt dev environment ([b0b6f23](https://github.com/max5800/k-fin/commit/b0b6f231857fbfd600d39d6ce473c9e8ccd26737))
+
 # [1.17.0](https://github.com/max5800/k-fin/compare/v1.16.1...v1.17.0) (2026-04-17)
 
 
