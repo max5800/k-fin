@@ -1,3 +1,10 @@
+# [1.20.0](https://github.com/max5800/k-fin/compare/v1.19.2...v1.20.0) (2026-04-17)
+
+
+### Features
+
+* **identity:** anchor k-fin product identity across backend ([e24f5a5](https://github.com/max5800/k-fin/commit/e24f5a5a7290fc55c8fa7dbde77f745acf1011b5))
+
 ## [1.19.2](https://github.com/max5800/k-fin/compare/v1.19.1...v1.19.2) (2026-04-17)
 
 
