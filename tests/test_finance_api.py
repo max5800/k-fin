@@ -38,7 +38,11 @@ def api_client(db_engine):
         with Session(db_engine) as session:
             yield session
 
-    with patch.dict(os.environ, {"API_TOKEN": "test-secret"}):
+    # Some endpoints build their own engine from settings.database_url
+    # (background tasks, agent orchestrator) — patch it too so create_app
+    # picks up a valid URL instead of the default empty string.
+    db_url = db_engine.url.render_as_string(hide_password=False)
+    with patch.dict(os.environ, {"API_TOKEN": "test-secret", "DATABASE_URL": db_url}):
         from src.api.app import create_app
 
         app = create_app()
