@@ -68,6 +68,7 @@ class NormalizationPipeline:
                     continue
 
                 version = 1
+                prev_hash: str | None = None
                 if comdirect_id:
                     active = (
                         session.execute(
@@ -81,11 +82,7 @@ class NormalizationPipeline:
                     if active:
                         prev = max(active, key=lambda r: r.version)
                         version = prev.version + 1
-                        session.execute(
-                            update(RawTransaction)
-                            .where(RawTransaction.content_hash == prev.content_hash)
-                            .values(superseded_by=content_hash)
-                        )
+                        prev_hash = prev.content_hash
 
                 session.add(
                     RawTransaction(
@@ -96,6 +93,15 @@ class NormalizationPipeline:
                         batch_id=item.get("batch_id"),
                     )
                 )
+                if prev_hash is not None:
+                    # FK superseded_by → content_hash requires the new row to
+                    # exist before the old row points at it.
+                    session.flush()
+                    session.execute(
+                        update(RawTransaction)
+                        .where(RawTransaction.content_hash == prev_hash)
+                        .values(superseded_by=content_hash)
+                    )
                 inserted += 1
             session.commit()
         return inserted
