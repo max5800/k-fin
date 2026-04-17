@@ -30,6 +30,29 @@ service:
   type: ClusterIP
   port: 8000
 
+# --- Frontend (Vite dev-server; read-only, no secrets) ---
+ui:
+  enabled: true
+  image:
+    repository: ghcr.io/max5800/k-fin-ui
+    # Defaults to v<Chart.Version> when empty
+    tag: ""
+    pullPolicy: IfNotPresent
+  replicaCount: 1
+  service:
+    port: 3000
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+  env:
+    # Relative path so the browser talks to the same origin;
+    # Ingress or Vite-proxy routes /api/* to the API service.
+    VITE_API_BASE_URL: "/api/v1"
+
 ingress:
   enabled: true
   className: traefik
