@@ -1,3 +1,10 @@
+# [1.22.0](https://github.com/max5800/k-fin/compare/v1.21.0...v1.22.0) (2026-04-18)
+
+
+### Features
+
+* **portfolio:** depot persistence, KPI API and UI backend ([55009cc](https://github.com/max5800/k-fin/commit/55009cc376171f6825dd44c6823e5a7b5bb42c3a))
+
 # [1.21.0](https://github.com/max5800/k-fin/compare/v1.20.0...v1.21.0) (2026-04-18)
 
 
