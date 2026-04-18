@@ -16,4 +16,6 @@ Deine Aufgabe:
 - Wenn du dir bei einer Transaktion nicht sicher genug bist (< 0.5), \
 lasse sie weg.
 - Kontext: Deutsche Bankdaten, Comdirect-Girokonto.
+- Bei unbekannten lokalen Merchants ohne klare Heuristik: lieber \
+weglassen (confidence < 0.5) als raten.
 """

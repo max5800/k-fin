@@ -9,6 +9,8 @@ from datetime import date, timedelta
 from pydantic_ai import Agent
 from sqlalchemy import Engine
 
+from src.agents._runner import run_in_fresh_loop
+from src.agents._usage import AgentUsage, extract_usage
 from src.agents.gather import (
     get_category_breakdown,
     get_monthly_summary,
@@ -22,8 +24,10 @@ from src.agents.types import AnalysisResult
 
 logger = logging.getLogger(__name__)
 
+MODEL = "anthropic:claude-sonnet-4-20250514"
+
 weekly_analysis_agent = Agent(
-    "anthropic:claude-sonnet-4-20250514",
+    MODEL,
     output_type=AnalysisResult,
     system_prompt=WEEKLY_ANALYSIS_SYSTEM_PROMPT,
     retries=2,
@@ -41,6 +45,8 @@ def _current_week_range(reference: date | None = None) -> tuple[date, date]:
 def run_weekly_analysis(
     engine: Engine,
     reference_date: date | None = None,
+    *,
+    usage: AgentUsage | None = None,
 ) -> AnalysisResult:
     """Gather weekly data and run the analysis agent."""
     monday, sunday = _current_week_range(reference_date)
@@ -81,5 +87,8 @@ def run_weekly_analysis(
         )
     prompt_parts.append("Erstelle die Wochenanalyse gemäß dem Schema.")
 
-    result = weekly_analysis_agent.run_sync("\n".join(prompt_parts))
+    result = run_in_fresh_loop(weekly_analysis_agent.run("\n".join(prompt_parts)))
+    if usage is not None:
+        in_t, out_t = extract_usage(result)
+        usage.add_call(MODEL, in_t, out_t)
     return result.output

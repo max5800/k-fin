@@ -60,6 +60,17 @@ def get_uncategorized_transactions(engine: Engine, limit: int = 200) -> list[dic
     ]
 
 
+def count_uncategorized_transactions(engine: Engine) -> int:
+    """COUNT(*) of categorizable transactions (cheap — for progress totals)."""
+    with Session(engine) as session:
+        return session.execute(
+            select(func.count())
+            .select_from(NormalizedTransaction)
+            .where(NormalizedTransaction.category_id.is_(None))
+            .where(NormalizedTransaction.internal_transfer == False)  # noqa: E712
+        ).scalar_one()
+
+
 def get_available_categories(engine: Engine) -> list[dict]:
     """All categories with id, name, type."""
     with Session(engine) as session:

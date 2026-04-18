@@ -30,6 +30,15 @@ class Settings(BaseSettings):
     api_token: str = ""
     worker_url: str = "http://comdirect-worker:8001"
 
+    # Bootstrap login (DEV ONLY — issues the static API_TOKEN after a fixed
+    # credential check). Hard-disabled when app_env == "production".
+    bootstrap_login_enabled: bool = False
+    bootstrap_email: str = ""
+    bootstrap_password: str = ""
+
+    # CORS — comma-separated origins, e.g. "http://localhost:3000,http://localhost:5173"
+    cors_origins: str = ""
+
     # Database / normalization
     database_url: str = ""
     own_ibans: str = ""
@@ -56,6 +65,10 @@ class Settings(BaseSettings):
     def get_own_ibans(self) -> list[str]:
         """Parse comma-separated OWN_IBANS into a list."""
         return [s.strip() for s in self.own_ibans.split(",") if s.strip()]
+
+    def get_cors_origins(self) -> list[str]:
+        """Parse comma-separated CORS_ORIGINS into a list."""
+        return [s.strip() for s in self.cors_origins.split(",") if s.strip()]
 
 
 settings = Settings()

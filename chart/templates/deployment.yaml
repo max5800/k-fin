@@ -53,6 +53,16 @@ spec:
                   name: {{ include "k-fin.fullname" . }}-infra-secrets
                   key: ANTHROPIC_API_KEY
                   optional: true
+            # DEV ONLY — bootstrap login password. Optional so the pod
+            # still rolls if the Vault key is missing; the auth router
+            # 500s gracefully in that case. APP_ENV must be "development"
+            # AND BOOTSTRAP_LOGIN_ENABLED=true for the endpoint to respond.
+            - name: BOOTSTRAP_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "k-fin.fullname" . }}-infra-secrets
+                  key: BOOTSTRAP_PASSWORD
+                  optional: true
             {{- if .Values.postgres.enabled }}
             - name: DATABASE_URL
               valueFrom:

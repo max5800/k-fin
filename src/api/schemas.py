@@ -97,6 +97,13 @@ class RunOut(BaseModel):
     error: str | None = None
     started_at: datetime
     finished_at: datetime | None = None
+    progress_current: int | None = None
+    progress_total: int | None = None
+    progress_message: str | None = None
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+    cost_usd: Decimal | None = None
+    usage_detail: dict | None = None
 
 
 class RunListOut(BaseModel):
