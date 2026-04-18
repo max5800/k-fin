@@ -232,6 +232,11 @@ async def internal_sync_confirm(session_id: str):
         # ----------------------------------------------------------
         ingest_result = None
         try:
+            from datetime import date as _date
+
+            from sqlalchemy.orm import Session
+
+            from src.normalization.depot_ingest import capture_snapshot, ingest_depots
             from src.normalization.ingest import ingest_json_export
             from src.normalization.pipeline import NormalizationPipeline
 
@@ -244,7 +249,21 @@ async def internal_sync_confirm(session_id: str):
 
             _df = pipeline.process_and_normalize()
             logger.info("Normalization completed (%d rows)", len(_df))
-            ingest_result = {"inserted": inserted, "normalized": len(_df)}
+
+            depot_stats: dict[str, int] | None = None
+            try:
+                with Session(pipeline.engine) as depot_session:
+                    depot_stats = ingest_depots(depot_session, data)
+                    capture_snapshot(depot_session, _date.today())
+                logger.info("Depot ingest: %s", depot_stats)
+            except Exception:
+                logger.exception("Depot ingest failed (transactions ingest still succeeded)")
+
+            ingest_result = {
+                "inserted": inserted,
+                "normalized": len(_df),
+                "depots": depot_stats,
+            }
         except Exception:
             logger.exception("Ingest/normalization failed (export still succeeded)")
 

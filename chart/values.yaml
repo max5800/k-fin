@@ -96,7 +96,10 @@ worker:
   env:
     EXPORTS_DIR: "/data/exports"
     ACCOUNT_TRANSACTION_LIMIT: "500"
-    DEPOT_TRANSACTION_LIMIT: "100"
+    # Depot: 2-year window + max paging so the trailing-12M dividend KPI has
+    # enough booking history to be accurate.
+    DEPOT_TRANSACTION_LIMIT: "1000"
+    DEPOT_TRANSACTION_MIN_BOOKING_DATE: "-730d"
     # Worker also mounts the auth router, so it needs the same APP_ENV
     # and bootstrap knobs as the api. Defaults are production-safe.
     APP_ENV: "production"
@@ -105,7 +108,6 @@ worker:
     CORS_ORIGINS: ""
     # Optional examples:
     # ACCOUNT_TRANSACTION_MIN_BOOKING_DATE: "-90d"
-    # DEPOT_TRANSACTION_MIN_BOOKING_DATE: "-180d"
 
 imagePullSecrets: []
 

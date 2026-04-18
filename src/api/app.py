@@ -17,6 +17,8 @@ from src.api.routers import (
     auth,
     categories,
     categorization,
+    depots,
+    portfolio,
     reports,
     runs,
     settings as settings_router,
@@ -102,6 +104,8 @@ def create_app() -> FastAPI:
     app.include_router(sync.router, prefix="/api/v1")
     app.include_router(settings_router.router, prefix="/api/v1")
     app.include_router(categorization.router, prefix="/api/v1")
+    app.include_router(depots.router, prefix="/api/v1")
+    app.include_router(portfolio.router, prefix="/api/v1")
 
     return app
 
