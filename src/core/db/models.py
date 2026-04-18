@@ -259,6 +259,13 @@ class AgentRun(Base):
     finished_at: Mapped[Optional[datetime]] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    progress_current: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    progress_total: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    progress_message: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    input_tokens: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    output_tokens: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    cost_usd: Mapped[Optional[Decimal]] = mapped_column(Numeric(10, 6), nullable=True)
+    usage_detail: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
 
 
 class ReportStatus(str, enum.Enum):
@@ -331,3 +338,44 @@ class SyncRun(Base):
     )
     rows_processed: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     error: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+
+
+class ReviewedSuggestion(Base):
+    """Tracks transactions whose low-confidence categorization was reviewed.
+
+    Currently only used to mark "rejected" suggestions so they stay out of
+    the pending-review list on subsequent runs (the actual category, when
+    accepted, ends up on `normalized_transactions.category_id` directly,
+    which already filters them out via `category_id IS NULL`).
+    """
+
+    __tablename__ = "reviewed_suggestions"
+
+    transaction_id: Mapped[str] = mapped_column(
+        ForeignKey("normalized_transactions.id"), primary_key=True
+    )
+    reason: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    decided_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class AppSettings(Base):
+    """User-tunable app settings (singleton row, id=1).
+
+    Currently exposes the auto-apply confidence threshold for categorization.
+    Add more knobs here when they need to be UI-editable rather than env-only.
+    """
+
+    __tablename__ = "app_settings"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
+    auto_apply_confidence: Mapped[Decimal] = mapped_column(
+        Numeric(3, 2), nullable=False, default=Decimal("0.60")
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )

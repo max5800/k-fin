@@ -12,9 +12,19 @@ api:
       cpu: 500m
       memory: 512Mi
   env:
-    APP_ENV: "production"
+    # Dev cluster runs in development mode so the bootstrap login endpoint
+    # is reachable. The auth router hard-disables itself when APP_ENV=production.
+    APP_ENV: "development"
     LOG_LEVEL: "INFO"
     EXPORTS_DIR: "/data/exports"
+    # Bootstrap login — DEV ONLY. Password is sourced from Vault
+    # (k8s/finance-api → BOOTSTRAP_PASSWORD) via infraSecrets ESO.
+    BOOTSTRAP_LOGIN_ENABLED: "true"
+    BOOTSTRAP_EMAIL: "dev@k-fin.local"
+    # Origins served by the dev Ingress + local Vite (when pointed at the
+    # cluster API). Same-origin requests through the Ingress don't strictly
+    # need CORS, but we list the host so cross-origin tooling works too.
+    CORS_ORIGINS: "http://k-fin-dev.max5800.com,http://localhost:3000,http://localhost:5173"
 
 worker:
   image:
@@ -29,6 +39,13 @@ worker:
   env:
     EXPORTS_DIR: "/data/exports"
     SYNC_INTERVAL_MINUTES: "60"
+    # Worker also mounts the auth router (main.py includes auth.router),
+    # so it needs the same dev settings as the api. BOOTSTRAP_PASSWORD
+    # is auto-injected via envFrom -> infra-secrets.
+    APP_ENV: "development"
+    BOOTSTRAP_LOGIN_ENABLED: "true"
+    BOOTSTRAP_EMAIL: "dev@k-fin.local"
+    CORS_ORIGINS: "http://k-fin-dev.max5800.com,http://localhost:3000,http://localhost:5173"
 
 ui:
   enabled: true
@@ -86,6 +103,15 @@ externalSecret:
       - path: k8s/finance-api
         vaultKey: ANTHROPIC_API_KEY
         envVar: ANTHROPIC_API_KEY
+      # DEV ONLY — bootstrap login password (unlocks API_TOKEN via
+      # /api/v1/auth/login). Write the value to Vault before the first
+      # `tilt up`, otherwise the endpoint will 500 with "misconfigured":
+      #   vault kv put secret/k8s/finance-api BOOTSTRAP_PASSWORD=<dev-password>
+      # (preserve the existing API_TOKEN / ANTHROPIC_API_KEY keys — use
+      # `vault kv patch` if your Vault version supports it.)
+      - path: k8s/finance-api
+        vaultKey: BOOTSTRAP_PASSWORD
+        envVar: BOOTSTRAP_PASSWORD
 
 postgres:
   enabled: true

@@ -25,6 +25,14 @@ api:
     APP_ENV: "production"
     LOG_LEVEL: "INFO"
     EXPORTS_DIR: "/data/exports"
+    # Bootstrap login — DEV ONLY. Hard-disabled when APP_ENV=production
+    # (the auth router 404s regardless of this flag), so leaving it false
+    # here is just defence-in-depth for the chart default.
+    BOOTSTRAP_LOGIN_ENABLED: "false"
+    BOOTSTRAP_EMAIL: ""
+    # CORS origins — comma-separated. Empty omits the middleware entirely.
+    # Override per-environment in dev/values.remote.yaml.
+    CORS_ORIGINS: ""
 
 service:
   type: ClusterIP
@@ -89,6 +97,12 @@ worker:
     EXPORTS_DIR: "/data/exports"
     ACCOUNT_TRANSACTION_LIMIT: "500"
     DEPOT_TRANSACTION_LIMIT: "100"
+    # Worker also mounts the auth router, so it needs the same APP_ENV
+    # and bootstrap knobs as the api. Defaults are production-safe.
+    APP_ENV: "production"
+    BOOTSTRAP_LOGIN_ENABLED: "false"
+    BOOTSTRAP_EMAIL: ""
+    CORS_ORIGINS: ""
     # Optional examples:
     # ACCOUNT_TRANSACTION_MIN_BOOKING_DATE: "-90d"
     # DEPOT_TRANSACTION_MIN_BOOKING_DATE: "-180d"
@@ -135,6 +149,14 @@ externalSecret:
       envVar: COMDIRECT_PIN
   # Infrastructure secrets — via ClusterSecretStore (k8s/* path)
   # API token, Anthropic API key, and any future infra keys
+  #
+  # BOOTSTRAP_PASSWORD lives here because it grants access to API_TOKEN
+  # (the bootstrap login endpoint returns it on success). Even though it's
+  # a DEV ONLY credential, it's not inert, so we keep it out of values.yaml
+  # and pull it from Vault next to the token it unlocks. The deployment
+  # makes this ref optional, so the pod still rolls if the Vault key is
+  # missing (the endpoint will then 500 with "misconfigured" until the
+  # operator writes the value to k8s/finance-api).
   infraSecrets:
     secretStore:
       name: vault-backend
@@ -146,6 +168,9 @@ externalSecret:
       - path: k8s/finance-api
         vaultKey: ANTHROPIC_API_KEY
         envVar: ANTHROPIC_API_KEY
+      - path: k8s/finance-api
+        vaultKey: BOOTSTRAP_PASSWORD
+        envVar: BOOTSTRAP_PASSWORD
 
 # --- Postgres (CloudNativePG) ---
 postgres:

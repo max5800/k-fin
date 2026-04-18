@@ -9,6 +9,8 @@ from datetime import date, timedelta
 from pydantic_ai import Agent
 from sqlalchemy import Engine
 
+from src.agents._runner import run_in_fresh_loop
+from src.agents._usage import AgentUsage, extract_usage
 from src.agents.gather import get_recent_reports
 from src.agents.prompts.synthesizer import SYNTHESIZER_SYSTEM_PROMPT
 from src.agents.types import (
@@ -20,8 +22,10 @@ from src.agents.types import (
 
 logger = logging.getLogger(__name__)
 
+MODEL = "anthropic:claude-sonnet-4-20250514"
+
 synthesizer_agent = Agent(
-    "anthropic:claude-sonnet-4-20250514",
+    MODEL,
     output_type=SynthesisResult,
     system_prompt=SYNTHESIZER_SYSTEM_PROMPT,
     retries=2,
@@ -35,6 +39,8 @@ def run_synthesizer(
     monthly: AnalysisResult | None = None,
     anomaly: AnomalyResult | None = None,
     reference_date: date | None = None,
+    *,
+    usage: AgentUsage | None = None,
 ) -> SynthesisResult:
     """Combine all agent results into a synthesis report."""
     ref = reference_date or date.today()
@@ -73,5 +79,8 @@ def run_synthesizer(
         )
     prompt_parts.append("Erstelle den Wochenbericht gemäß dem Schema.")
 
-    result = synthesizer_agent.run_sync("\n".join(prompt_parts))
+    result = run_in_fresh_loop(synthesizer_agent.run("\n".join(prompt_parts)))
+    if usage is not None:
+        in_t, out_t = extract_usage(result)
+        usage.add_call(MODEL, in_t, out_t)
     return result.output

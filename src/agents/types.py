@@ -24,9 +24,14 @@ class CategorySuggestion(BaseModel):
 
 class CategorizationResult(BaseModel):
     suggestions: list[CategorySuggestion]
-    uncategorized_count: int
+    # The counts are derived by the orchestrator from the actual data and
+    # the configured threshold — the LLM doesn't need to fill them. Default
+    # to 0 so newer/stricter models (Sonnet 4.6) don't fail validation when
+    # they return only the `suggestions` list.
+    uncategorized_count: int = 0
     high_confidence_count: int = Field(
-        description="Number of suggestions with confidence >= 0.8"
+        default=0,
+        description="Number of suggestions with confidence >= the auto-apply threshold",
     )
 
 

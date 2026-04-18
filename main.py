@@ -8,9 +8,19 @@ import re
 import uuid
 
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, field_validator
 
-from src.api.routers import aggregates, categories, reports, runs, transactions
+from src.api.routers import (
+    aggregates,
+    auth,
+    categories,
+    categorization,
+    reports,
+    runs,
+    settings as settings_router,
+    transactions,
+)
 from src.connector.comdirect_client import ComdirectClient
 from src.core.config import settings
 from src.core.logging import get_logger, setup_logging
@@ -24,6 +34,16 @@ app = FastAPI(
     version="0.2.0",
 )
 
+_origins = settings.get_cors_origins()
+if _origins:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=_origins,
+        allow_credentials=False,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
 # ---------------------------------------------------------------------------
 # In-memory pending sessions (single-worker deployment)
 # ---------------------------------------------------------------------------
@@ -31,11 +51,14 @@ app = FastAPI(
 _pending_sessions: dict[str, dict] = {}
 
 # Finance API (M6) — transaction, category & aggregate endpoints
+app.include_router(auth.router, prefix="/api/v1")
 app.include_router(transactions.router, prefix="/api/v1")
 app.include_router(categories.router, prefix="/api/v1")
 app.include_router(aggregates.router, prefix="/api/v1")
 app.include_router(runs.router, prefix="/api/v1")
 app.include_router(reports.router, prefix="/api/v1")
+app.include_router(settings_router.router, prefix="/api/v1")
+app.include_router(categorization.router, prefix="/api/v1")
 
 
 class SyncStartRequest(BaseModel):
@@ -225,23 +248,11 @@ async def internal_sync_confirm(session_id: str):
         except Exception:
             logger.exception("Ingest/normalization failed (export still succeeded)")
 
-        # ----------------------------------------------------------
-        # Run agent pipeline after successful normalization
-        # ----------------------------------------------------------
-        agent_result = None
-        if ingest_result is not None:
-            try:
-                from src.agents.orchestrator import AgentOrchestrator
-
-                orchestrator = AgentOrchestrator(
-                    database_url=settings.database_url,
-                    own_ibans=settings.get_own_ibans(),
-                )
-                run_id = orchestrator.run_full()
-                logger.info("Agent pipeline completed, run_id=%s", run_id)
-                agent_result = {"run_id": run_id}
-            except Exception:
-                logger.exception("Agent pipeline failed (export + normalization still succeeded)")
+        # Agent pipeline is intentionally NOT triggered here — sync only
+        # fetches Comdirect data + normalizes. Trigger LLM agents
+        # separately via POST /api/v1/runs/full so the user controls
+        # cost/time and the long-running phase shows up in the dedicated
+        # Agents UI with progress.
 
         logger.info("Export completed successfully")
     except Exception as exc:
@@ -250,7 +261,6 @@ async def internal_sync_confirm(session_id: str):
 
     return {
         "status": "done",
-        "message": "Export completed",
+        "message": "Sync abgeschlossen — Agents separat starten",
         "ingest": ingest_result,
-        "agents": agent_result,
     }
