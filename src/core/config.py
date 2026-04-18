@@ -18,8 +18,11 @@ class Settings(BaseSettings):
     sync_dedup_enabled: bool = True
     account_transaction_limit: int = 500
     account_transaction_min_booking_date: str | None = None
-    depot_transaction_limit: int = 100
-    depot_transaction_min_booking_date: str | None = None
+    # Depot transactions: Comdirect's min-bookingDate defaults to -180d (6 mo.),
+    # which would truncate the trailing-12M dividend-yield KPI. Pull 2 years by
+    # default and max out paging-count (1000) — typically one API call per depot.
+    depot_transaction_limit: int = 1000
+    depot_transaction_min_booking_date: str | None = "-730d"
 
     # Agent / LLM (M7)
     anthropic_api_key: str = ""

@@ -114,10 +114,13 @@ class DepotPosition(BaseModel):
     isin: str = ""
     wkn: str = ""
     name: str = ""
+    instrument_type: str = ""
     quantity: float = 0.0
     current_price: float = 0.0
     current_value: float = 0.0
     purchase_value: float = 0.0
+    prev_day_price: float = 0.0
+    prev_day_value: float = 0.0
     currency: str = "EUR"
 
     @model_validator(mode="before")
@@ -130,6 +133,11 @@ class DepotPosition(BaseModel):
             "isin": instrument.get("isin") or data.get("isin") or "",
             "wkn": instrument.get("wkn") or data.get("wkn") or "",
             "name": instrument.get("name") or data.get("name") or "",
+            "instrument_type": (
+                instrument.get("instrumentType")
+                or data.get("instrumentType")
+                or ""
+            ),
             "quantity": float(data.get("quantity", {}).get("value") or data.get("stueckzahl") or 0),
             "current_price": float(
                 data.get("currentPrice", {}).get("price", {}).get("value")
@@ -146,6 +154,14 @@ class DepotPosition(BaseModel):
                 or data.get("einstandswert", {}).get("value")
                 or 0
             ),
+            "prev_day_price": float(
+                data.get("prevDayPrice", {}).get("price", {}).get("value")
+                or data.get("prevDayPrice", {}).get("value")
+                or 0
+            ),
+            "prev_day_value": float(
+                data.get("prevDayValue", {}).get("value") or 0
+            ),
             "currency": (
                 data.get("currentValue", {}).get("unit")
                 or data.get("kurswert", {}).get("unit")
@@ -160,6 +176,21 @@ class DepotPosition(BaseModel):
     @property
     def gains_percent(self) -> float:
         return round((self.gains / self.purchase_value * 100) if self.purchase_value else 0, 4)
+
+    @property
+    def daily_gains(self) -> float:
+        """Today's P&L vs. previous-day close. Uses prevDayValue when available,
+        falls back to prev_day_price × quantity."""
+        if self.prev_day_value:
+            return round(self.current_value - self.prev_day_value, 2)
+        if self.prev_day_price:
+            return round((self.current_price - self.prev_day_price) * self.quantity, 2)
+        return 0.0
+
+    @property
+    def daily_gains_percent(self) -> float:
+        ref = self.prev_day_value or (self.prev_day_price * self.quantity)
+        return round((self.daily_gains / ref * 100) if ref else 0, 4)
 
 
 class DepotTransaction(BaseModel):

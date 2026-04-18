@@ -154,7 +154,11 @@ def test_internal_sync_confirm_calls_ingest_and_normalize():
     assert resp.status_code == 200
     data = resp.json()
     assert data["status"] == "done"
-    assert data["ingest"] == {"inserted": 5, "normalized": 5}
+    assert data["ingest"]["inserted"] == 5
+    assert data["ingest"]["normalized"] == 5
+    # depot ingest runs best-effort; with the mocked engine backing an empty
+    # DB the depot counters may be None or all-zero, but the key must exist.
+    assert "depots" in data["ingest"]
     mock_ingest.assert_called_once()
     mock_pipeline_instance.process_and_normalize.assert_called_once()
 

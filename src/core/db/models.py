@@ -25,6 +25,7 @@ from sqlalchemy import (
     Integer,
     Numeric,
     String,
+    UniqueConstraint,
 )
 from sqlalchemy import Enum as SQLEnum
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
@@ -378,4 +379,156 @@ class AppSettings(Base):
         server_default=func.now(),
         onupdate=func.now(),
         nullable=False,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Portfolio / Depot (M8)
+#
+# Comdirect returns depot positions and transactions at every sync but has no
+# history endpoint. `positions` is a per-sync snapshot (UNIQUE(depot_id, isin),
+# refreshed every sync); `portfolio_snapshots` captures one row per depot + an
+# aggregate row (depot_id NULL) per sync day so the UI can render a
+# timeseries that grows over time.
+# ---------------------------------------------------------------------------
+
+
+class Depot(Base):
+    __tablename__ = "depots"
+
+    depot_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    client_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    depot_type: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    currency: Mapped[str] = mapped_column(String(3), nullable=False, default="EUR")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+
+class Instrument(Base):
+    __tablename__ = "instruments"
+
+    isin: Mapped[str] = mapped_column(String(12), primary_key=True)
+    wkn: Mapped[Optional[str]] = mapped_column(String(12), nullable=True, index=True)
+    name: Mapped[str] = mapped_column(String, nullable=False, default="")
+    instrument_type: Mapped[Optional[str]] = mapped_column(
+        String(32), nullable=True, index=True
+    )
+    currency: Mapped[str] = mapped_column(String(3), nullable=False, default="EUR")
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+
+class Position(Base):
+    """Current holdings per (depot, instrument). Refreshed on every sync."""
+
+    __tablename__ = "positions"
+    __table_args__ = (
+        UniqueConstraint("depot_id", "isin", name="uq_positions_depot_isin"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    depot_id: Mapped[str] = mapped_column(
+        ForeignKey("depots.depot_id", ondelete="CASCADE"), nullable=False
+    )
+    isin: Mapped[str] = mapped_column(
+        ForeignKey("instruments.isin", ondelete="RESTRICT"), nullable=False
+    )
+    quantity: Mapped[Decimal] = mapped_column(Numeric(18, 6), nullable=False)
+    current_price: Mapped[Decimal] = mapped_column(
+        Numeric(14, 4), nullable=False, default=Decimal("0")
+    )
+    current_value: Mapped[Decimal] = mapped_column(
+        Numeric(14, 2), nullable=False, default=Decimal("0")
+    )
+    purchase_value: Mapped[Decimal] = mapped_column(
+        Numeric(14, 2), nullable=False, default=Decimal("0")
+    )
+    prev_day_price: Mapped[Optional[Decimal]] = mapped_column(
+        Numeric(14, 4), nullable=True
+    )
+    prev_day_value: Mapped[Optional[Decimal]] = mapped_column(
+        Numeric(14, 2), nullable=True
+    )
+    currency: Mapped[str] = mapped_column(String(3), nullable=False, default="EUR")
+    as_of: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class DepotTransactionType(str, enum.Enum):
+    BUY = "BUY"
+    SELL = "SELL"
+    DIVIDEND = "DIVIDEND"
+    OTHER = "OTHER"
+
+
+class DepotTransaction(Base):
+    __tablename__ = "depot_transactions"
+
+    transaction_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    depot_id: Mapped[str] = mapped_column(
+        ForeignKey("depots.depot_id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    isin: Mapped[Optional[str]] = mapped_column(
+        ForeignKey("instruments.isin", ondelete="RESTRICT"),
+        nullable=True,
+        index=True,
+    )
+    booking_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    transaction_type: Mapped[str] = mapped_column(String(16), nullable=False)
+    quantity: Mapped[Decimal] = mapped_column(
+        Numeric(18, 6), nullable=False, default=Decimal("0")
+    )
+    price: Mapped[Decimal] = mapped_column(
+        Numeric(14, 4), nullable=False, default=Decimal("0")
+    )
+    amount: Mapped[Decimal] = mapped_column(
+        Numeric(14, 2), nullable=False, default=Decimal("0")
+    )
+    currency: Mapped[str] = mapped_column(String(3), nullable=False, default="EUR")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class PortfolioSnapshot(Base):
+    """Per-day snapshot of depot total value.
+
+    `depot_id IS NULL` marks the aggregate row across all depots — the
+    series the performance chart reads from.
+    """
+
+    __tablename__ = "portfolio_snapshots"
+    __table_args__ = (
+        UniqueConstraint(
+            "depot_id", "snapshot_date", name="uq_portfolio_snapshots_depot_date"
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    depot_id: Mapped[Optional[str]] = mapped_column(
+        ForeignKey("depots.depot_id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
+    )
+    snapshot_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    total_value: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False)
+    total_purchase_value: Mapped[Decimal] = mapped_column(
+        Numeric(14, 2), nullable=False
+    )
+    captured_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
     )

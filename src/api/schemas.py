@@ -174,3 +174,93 @@ class ReportListOut(BaseModel):
     total: int
     limit: int
     offset: int
+
+
+# ── Portfolio / Depot (M8) ─────────────────────────────────────
+
+
+class DepotOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    depot_id: str
+    depot_type: str | None = None
+    currency: str
+    total_value: Decimal
+    total_purchase_value: Decimal
+    total_pnl_abs: Decimal
+    total_pnl_rel: Decimal
+    positions_count: int
+    last_synced_at: datetime | None = None
+
+
+class InstrumentOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    isin: str
+    wkn: str | None = None
+    name: str
+    instrument_type: str | None = None
+    currency: str
+
+
+class PositionOut(BaseModel):
+    depot_id: str
+    instrument: InstrumentOut
+    quantity: Decimal
+    current_price: Decimal
+    current_value: Decimal
+    purchase_value: Decimal
+    prev_day_price: Decimal | None = None
+    daily_pnl_abs: Decimal
+    daily_pnl_rel: Decimal
+    total_pnl_abs: Decimal
+    total_pnl_rel: Decimal
+    weight_pct: Decimal
+    currency: str
+    as_of: datetime
+
+
+class DepotTransactionOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    transaction_id: str
+    depot_id: str
+    isin: str | None = None
+    booking_date: date
+    transaction_type: str
+    quantity: Decimal
+    price: Decimal
+    amount: Decimal
+    currency: str
+
+
+class DepotTransactionListOut(BaseModel):
+    items: list[DepotTransactionOut]
+    total: int
+    limit: int
+    offset: int
+
+
+class PortfolioSummaryOut(BaseModel):
+    total_value: Decimal
+    total_purchase_value: Decimal
+    total_pnl_abs: Decimal
+    total_pnl_rel: Decimal
+    daily_pnl_abs: Decimal
+    daily_pnl_rel: Decimal
+    dividend_yield_pct: Decimal
+    positions_count: int
+    depots_count: int
+    last_synced_at: datetime | None = None
+
+
+class AllocationBucketOut(BaseModel):
+    bucket: str
+    value: Decimal
+    share_pct: Decimal
+
+
+class PerformancePointOut(BaseModel):
+    snapshot_date: date
+    total_value: Decimal
+    total_purchase_value: Decimal
