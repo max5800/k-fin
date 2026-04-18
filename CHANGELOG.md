@@ -1,3 +1,10 @@
+# [1.21.0](https://github.com/max5800/k-fin/compare/v1.20.0...v1.21.0) (2026-04-18)
+
+
+### Features
+
+* **m7:** agent pipeline with live progress, token cost tracking, Sonnet 4.6 categorization ([721a30c](https://github.com/max5800/k-fin/commit/721a30c972fe7d6d7f477b2d76ec96bba75d506c))
+
 # [1.20.0](https://github.com/max5800/k-fin/compare/v1.19.2...v1.20.0) (2026-04-17)
 
 
