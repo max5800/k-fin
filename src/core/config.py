@@ -20,8 +20,11 @@ class Settings(BaseSettings):
     account_transaction_min_booking_date: str | None = None
     # Depot transactions: Comdirect's min-bookingDate defaults to -180d (6 mo.),
     # which would truncate the trailing-12M dividend-yield KPI. Pull 2 years by
-    # default and max out paging-count (1000) — typically one API call per depot.
-    depot_transaction_limit: int = 1000
+    # default. paging-count for /brokerage/v3/depots/{id}/transactions caps at
+    # 500 (Comdirect: ERROR_VALIDATION_PAGING_INVALID at >500); buy-and-hold
+    # depots stay well under that. The connector warn-logs if we hit the cap so
+    # paging truncation is visible — full paging loop is M11 tech debt.
+    depot_transaction_limit: int = 500
     depot_transaction_min_booking_date: str | None = "-730d"
 
     # Agent / LLM (M7)
