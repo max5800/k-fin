@@ -61,11 +61,17 @@ def extract_usage(result: Any) -> tuple[int, int]:
 
 @dataclass
 class AgentUsage:
-    """Accumulated token usage + cost across one or more LLM calls."""
+    """Accumulated token usage + cost across one or more LLM calls.
+
+    `extra` carries free-form per-agent metrics (e.g. categorization's
+    memory-hit stats). Stays per-agent — the cross-agent total intentionally
+    drops it because aggregation rarely makes sense for these fields.
+    """
 
     input_tokens: int = 0
     output_tokens: int = 0
     cost_usd: Decimal = field(default_factory=lambda: Decimal("0"))
+    extra: dict[str, Any] = field(default_factory=dict)
 
     def add_call(self, model: str, input_tokens: int, output_tokens: int) -> None:
         self.input_tokens += input_tokens

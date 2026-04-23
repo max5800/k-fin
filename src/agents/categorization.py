@@ -9,6 +9,7 @@ suggestions immediately, then loops until everything is classified
 
 from __future__ import annotations
 
+import contextvars
 import json
 import logging
 from collections.abc import Callable
@@ -24,6 +25,7 @@ from src.agents._usage import AgentUsage, extract_usage
 from src.agents.gather import (
     count_uncategorized_transactions,
     get_available_categories,
+    get_similar_categorized_transactions,
     get_uncategorized_transactions,
 )
 from src.agents.prompts.categorization import CATEGORIZATION_SYSTEM_PROMPT
@@ -71,12 +73,36 @@ categorization_agent = Agent(
 ProgressCallback = Callable[[int, int, str], None]
 
 
-def _format_user_prompt(transactions: list[dict], categories: list[dict]) -> str:
-    """Build the user prompt with actual data."""
+def _format_user_prompt(
+    transactions: list[dict],
+    categories: list[dict],
+    memory_examples: list[dict] | None = None,
+) -> str:
+    """Build the user prompt with actual data.
+
+    `memory_examples` (Phase 1a Few-Shot Memory): previously categorized
+    txns whose sender/recipient matches anything in the current batch.
+    Rendered as a reference block before the to-be-classified batch.
+    """
     cat_lines = "\n".join(f"- {c['id']}: {c['name']} ({c['type']})" for c in categories)
     tx_lines = json.dumps(transactions, ensure_ascii=False, indent=2)
+
+    memory_block = ""
+    if memory_examples:
+        memory_lines = "\n".join(
+            f'- "{e.get("sender") or e.get("recipient") or ""}" '
+            f"| {e['amount']:.2f} EUR "
+            f"| Kategorie: {e['category_name']}"
+            for e in memory_examples
+        )
+        memory_block = (
+            "## Bekannte vergleichbare Transaktionen (bereits kategorisiert)\n\n"
+            f"{memory_lines}\n\n"
+        )
+
     return (
         f"## Verfügbare Kategorien\n\n{cat_lines}\n\n"
+        f"{memory_block}"
         f"## Unkategorisierte Transaktionen\n\n{tx_lines}\n\n"
         "Ordne jeder Transaktion eine Kategorie zu. "
         "Antworte als JSON gemäß dem Schema."
@@ -127,7 +153,9 @@ def run_categorization(
     if not categories:
         logger.warning("No categories defined — skipping categorization")
         return CategorizationResult(
-            suggestions=[], uncategorized_count=0, high_confidence_count=0
+            suggestions=[],
+            uncategorized_count=count_uncategorized_transactions(engine),
+            high_confidence_count=0,
         )
 
     initial_total = count_uncategorized_transactions(engine)
@@ -147,16 +175,31 @@ def run_categorization(
     processed = 0
     page_num = 0
 
-    def _run_batch(batch: list[dict]) -> tuple[list[CategorySuggestion], int, int]:
-        """Run one LLM batch + apply its high-confidence suggestions inline."""
-        prompt = _format_user_prompt(batch, categories)
+    # Memory-effectiveness metrics: hits per batch + low-confidence
+    # split by whether the batch had any few-shot examples. Persisted in
+    # `usage.extra["memory"]` for Phase 1b decision (do we need pgvector?).
+    memory_hits_per_batch: list[int] = []
+    low_conf_with_memory = 0
+    low_conf_without_memory = 0
+
+    def _run_batch(
+        batch: list[dict],
+    ) -> tuple[list[CategorySuggestion], int, int, int]:
+        """Run one LLM batch + apply its high-confidence suggestions inline.
+
+        Returns (suggestions, applied, batch_len, memory_hits).
+        """
+        memory_examples = get_similar_categorized_transactions(engine, batch)
+        prompt = _format_user_prompt(
+            batch, categories, memory_examples=memory_examples
+        )
         result = run_in_fresh_loop(categorization_agent.run(prompt))
         if usage is not None:
             in_t, out_t = extract_usage(result)
             usage.add_call(MODEL, in_t, out_t)
         suggestions = list(result.output.suggestions)
         applied = apply_high_confidence(engine, suggestions, auto_apply_threshold)
-        return suggestions, applied, len(batch)
+        return suggestions, applied, len(batch), len(memory_examples)
 
     while processed < MAX_TRANSACTIONS_PER_RUN:
         page = get_uncategorized_transactions(engine, limit=PAGE_SIZE)
@@ -178,12 +221,21 @@ def run_categorization(
         page_failed = 0
         page_succeeded = 0
         page_applied = 0
+        # Each pool worker gets its own copy of the caller's ContextVar
+        # context so `pydantic_ai.Agent.override(model=TestModel())` and
+        # other context-bound state survive the thread hop. We copy once
+        # PER batch — a single shared Context cannot be entered by more
+        # than one thread at a time (`RuntimeError: cannot enter context:
+        # ... is already entered`).
         with ThreadPoolExecutor(max_workers=MAX_CONCURRENT_BATCHES) as ex:
-            futures = {ex.submit(_run_batch, b): idx for idx, b in enumerate(batches)}
+            futures = {
+                ex.submit(contextvars.copy_context().run, _run_batch, b): idx
+                for idx, b in enumerate(batches)
+            }
             for fut in as_completed(futures):
                 idx = futures[fut]
                 try:
-                    suggestions, applied, batch_len = fut.result()
+                    suggestions, applied, batch_len, mem_hits = fut.result()
                 except Exception:
                     page_failed += 1
                     logger.exception("Batch %d failed", idx + 1)
@@ -193,6 +245,14 @@ def run_categorization(
                 all_suggestions.extend(suggestions)
                 total_applied += applied
                 processed += batch_len
+                memory_hits_per_batch.append(mem_hits)
+                low_conf_in_batch = sum(
+                    1 for s in suggestions if s.confidence < auto_apply_threshold
+                )
+                if mem_hits > 0:
+                    low_conf_with_memory += low_conf_in_batch
+                else:
+                    low_conf_without_memory += low_conf_in_batch
                 logger.info(
                     "  batch %d/%d done — %d suggestions, %d applied (%d/%d total)",
                     idx + 1,
@@ -266,6 +326,16 @@ def run_categorization(
         len(deduped),
         total_applied,
     )
+
+    if usage is not None and memory_hits_per_batch:
+        usage.extra["memory"] = {
+            "hits_per_batch": memory_hits_per_batch,
+            "batches_total": len(memory_hits_per_batch),
+            "batches_with_memory": sum(1 for h in memory_hits_per_batch if h > 0),
+            "low_conf_with_memory": low_conf_with_memory,
+            "low_conf_without_memory": low_conf_without_memory,
+        }
+
     return CategorizationResult(
         suggestions=deduped,
         uncategorized_count=initial_total,

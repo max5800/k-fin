@@ -14,6 +14,7 @@ coroutine completes; no pool, no leaked loops.
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import threading
 from collections.abc import Awaitable
 from typing import TypeVar
@@ -22,13 +23,21 @@ T = TypeVar("T")
 
 
 def run_in_fresh_loop(coro: Awaitable[T]) -> T:
-    """Run an async coroutine on a fresh event loop in a dedicated thread."""
+    """Run an async coroutine on a fresh event loop in a dedicated thread.
+
+    The current ContextVar context is copied into the worker thread so
+    things like `pydantic_ai.Agent.override()` (which patches the model
+    via a ContextVar) take effect on the LLM call. Without this the
+    override is lost across the thread boundary and tests fall through
+    to the real Anthropic provider.
+    """
     box: dict = {}
+    ctx = contextvars.copy_context()
 
     def _worker() -> None:
         loop = asyncio.new_event_loop()
         try:
-            box["value"] = loop.run_until_complete(coro)
+            box["value"] = ctx.run(loop.run_until_complete, coro)
         except BaseException as exc:  # propagate to caller thread
             box["error"] = exc
         finally:
