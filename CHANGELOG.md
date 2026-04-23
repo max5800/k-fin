@@ -1,3 +1,10 @@
+## [1.23.1](https://github.com/max5800/k-fin/compare/v1.23.0...v1.23.1) (2026-04-23)
+
+
+### Bug Fixes
+
+* **deploy:** bump UI image tag to v1.0.2 ([d0b88c0](https://github.com/max5800/k-fin/commit/d0b88c0a411c20e2d166a96e8f0ef294288a6182))
+
 # [1.23.0](https://github.com/max5800/k-fin/compare/v1.22.0...v1.23.0) (2026-04-23)
 
 
