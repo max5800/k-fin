@@ -138,7 +138,10 @@ def test_internal_sync_confirm_calls_ingest_and_normalize():
 
     mock_ingest = MagicMock(return_value=5)
     mock_pipeline_instance = MagicMock()
-    mock_pipeline_instance.process_and_normalize.return_value = MagicMock(__len__=lambda self: 5)
+    mock_pipeline_instance.process_and_normalize.return_value = (
+        MagicMock(__len__=lambda self: 5),
+        "test-run-id",
+    )
     mock_pipeline_cls = MagicMock(return_value=mock_pipeline_instance)
 
     patches = _make_confirm_patches(

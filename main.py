@@ -99,8 +99,8 @@ def internal_normalize():
         database_url=settings.database_url,
         own_ibans=settings.get_own_ibans(),
     )
-    df = pipeline.process_and_normalize()
-    return {"status": "done", "normalized": len(df)}
+    df, run_id = pipeline.process_and_normalize()
+    return {"status": "done", "normalized": len(df), "run_id": run_id}
 
 
 @app.post("/internal/sync/start")
@@ -247,7 +247,7 @@ async def internal_sync_confirm(session_id: str):
             inserted = ingest_json_export(pipeline, json_path)
             logger.info("Ingested %d raw transactions", inserted)
 
-            _df = pipeline.process_and_normalize()
+            _df, _normalize_run_id = pipeline.process_and_normalize()
             logger.info("Normalization completed (%d rows)", len(_df))
 
             depot_stats: dict[str, int] | None = None
@@ -262,6 +262,7 @@ async def internal_sync_confirm(session_id: str):
             ingest_result = {
                 "inserted": inserted,
                 "normalized": len(_df),
+                "normalize_run_id": _normalize_run_id,
                 "depots": depot_stats,
             }
         except Exception:
