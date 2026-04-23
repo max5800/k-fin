@@ -99,8 +99,9 @@ worker:
     EXPORTS_DIR: "/data/exports"
     ACCOUNT_TRANSACTION_LIMIT: "500"
     # Depot: 2-year window + max paging so the trailing-12M dividend KPI has
-    # enough booking history to be accurate.
-    DEPOT_TRANSACTION_LIMIT: "1000"
+    # enough booking history to be accurate. paging-count for the depot
+    # transactions endpoint caps at 500 (Comdirect rejects higher with 422).
+    DEPOT_TRANSACTION_LIMIT: "500"
     DEPOT_TRANSACTION_MIN_BOOKING_DATE: "-730d"
     # Worker also mounts the auth router, so it needs the same APP_ENV
     # and bootstrap knobs as the api. Defaults are production-safe.

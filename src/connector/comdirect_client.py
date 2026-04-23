@@ -334,6 +334,14 @@ class ComdirectClient:
                 headers=self._auth_headers(),
                 params=params,
             )
+            if response.status_code >= 400:
+                logger.error(
+                    "get_transactions(%s) failed: HTTP %d, params=%s, body=%s",
+                    account_id,
+                    response.status_code,
+                    params,
+                    response.text[:500],
+                )
             response.raise_for_status()
             data = response.json()
             return data.get("values", [])
@@ -406,12 +414,31 @@ class ComdirectClient:
                 headers=self._auth_headers(),
                 params=params,
             )
+            if response.status_code >= 400:
+                logger.error(
+                    "get_depot_transactions(%s) failed: HTTP %d, params=%s, body=%s",
+                    depot_id,
+                    response.status_code,
+                    params,
+                    response.text[:500],
+                )
             response.raise_for_status()
             data = response.json()
+            values = data.get("values", [])
+            if len(values) >= limit:
+                # Comdirect caps depot paging-count at 500. Without a paging
+                # loop (M11 tech debt) we silently drop anything beyond — log
+                # a WARN so trading-heavy depots make it visible.
+                logger.warning(
+                    "get_depot_transactions(%s): hit paging cap (%d rows) — "
+                    "older transactions in the window may be truncated",
+                    depot_id,
+                    limit,
+                )
             logger.info(
-                f"get_depot_transactions({depot_id}): {len(data.get('values', []))} transactions"
+                f"get_depot_transactions({depot_id}): {len(values)} transactions"
             )
-            return data.get("values", [])
+            return values
 
     async def get_all_data(
         self,
