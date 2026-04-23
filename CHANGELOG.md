@@ -1,3 +1,16 @@
+# [1.23.0](https://github.com/max5800/k-fin/compare/v1.22.0...v1.23.0) (2026-04-23)
+
+
+### Bug Fixes
+
+* **connector:** cap depot paging at Comdirect's 500 limit ([be87d3a](https://github.com/max5800/k-fin/commit/be87d3add66a63371a3fed2edbe14c1562fb2f29))
+* **deploy:** pin UI image tag to v1.0.0 ([8d8db3b](https://github.com/max5800/k-fin/commit/8d8db3b94274618b1468ba38a5d3c73e251fe608))
+
+
+### Features
+
+* **agents:** few-shot memory for categorization (M7a Phase 1a) ([e7a70a0](https://github.com/max5800/k-fin/commit/e7a70a0de667576bff852c159faa99efd262749a))
+
 # [1.22.0](https://github.com/max5800/k-fin/compare/v1.21.0...v1.22.0) (2026-04-18)
 
 
