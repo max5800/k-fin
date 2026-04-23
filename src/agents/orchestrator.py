@@ -52,13 +52,20 @@ AGENT_MODELS: dict[str, str] = {
 
 
 def _usage_to_dict(usage: AgentUsage, model: str) -> dict[str, Any]:
-    """Serialise a single-agent AgentUsage for JSON persistence."""
-    return {
+    """Serialise a single-agent AgentUsage for JSON persistence.
+
+    Per-agent extras (e.g. categorization's `memory` block) are folded
+    into the same dict so they show up under `usage_detail.<agent>.<key>`.
+    """
+    out: dict[str, Any] = {
         "model": model,
         "input_tokens": usage.input_tokens,
         "output_tokens": usage.output_tokens,
         "cost_usd": str(usage.cost_usd),
     }
+    if usage.extra:
+        out.update(usage.extra)
+    return out
 
 logger = logging.getLogger(__name__)
 

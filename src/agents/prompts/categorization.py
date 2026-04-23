@@ -18,4 +18,11 @@ lasse sie weg.
 - Kontext: Deutsche Bankdaten, Comdirect-Girokonto.
 - Bei unbekannten lokalen Merchants ohne klare Heuristik: lieber \
 weglassen (confidence < 0.5) als raten.
+
+Optional erhältst du eine Liste bereits kategorisierter Referenz-Transaktionen \
+("Bekannte vergleichbare Transaktionen") mit demselben oder ähnlichem \
+Sender/Empfänger. Werte exakte oder klare Substring-Treffer als starkes \
+Signal und übernimm die jeweilige Kategorie, sofern Betrag und Kontext \
+nicht klar dagegen sprechen. Bei Konflikt: eigene Einschätzung mit \
+Begründung und niedrigerer Confidence.
 """

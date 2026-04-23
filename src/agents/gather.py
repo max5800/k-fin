@@ -10,7 +10,7 @@ from __future__ import annotations
 from datetime import date
 from decimal import Decimal
 
-from sqlalchemy import Engine, case, func, select
+from sqlalchemy import Engine, case, func, or_, select
 from sqlalchemy.orm import Session
 
 from src.core.db.models import (
@@ -81,6 +81,81 @@ def get_available_categories(engine: Engine) -> list[dict]:
         {"id": r.id, "name": r.name, "type": r.type.value}
         for r in rows
     ]
+
+
+def get_similar_categorized_transactions(
+    engine: Engine,
+    batch: list[dict],
+    limit_per_batch: int = 20,
+) -> list[dict]:
+    """Few-shot memory for Categorization: previously categorized txns whose
+    sender or recipient matches anything in the current batch.
+
+    SQL-only Phase 1a — case-insensitive substring match (`ILIKE %key%`).
+    Catches stable bank-side identifiers ("VATTENFALL EUROPE SALES",
+    "NETFLIX.COM") which dominate recurring transactions. Long-tail
+    variable descriptions stay uncovered until Phase 1b (pgvector).
+
+    Dedup: max one example per (sender_lower, category_id) pair, newest
+    booking_date first, capped at `limit_per_batch`.
+    """
+    keys: set[str] = set()
+    for tx in batch:
+        s = (tx.get("sender") or "").strip().lower()
+        r = (tx.get("recipient") or "").strip().lower()
+        if s:
+            keys.add(s)
+        if r:
+            keys.add(r)
+    if not keys:
+        return []
+
+    ilike_clauses = []
+    for key in keys:
+        pattern = f"%{key}%"
+        ilike_clauses.append(NormalizedTransaction.sender.ilike(pattern))
+        ilike_clauses.append(NormalizedTransaction.recipient.ilike(pattern))
+
+    stmt = (
+        select(
+            NormalizedTransaction.sender,
+            NormalizedTransaction.recipient,
+            NormalizedTransaction.amount,
+            NormalizedTransaction.category_id,
+            Category.name.label("category_name"),
+        )
+        .join(Category, NormalizedTransaction.category_id == Category.id)
+        .where(NormalizedTransaction.category_id.isnot(None))
+        .where(NormalizedTransaction.internal_transfer == False)  # noqa: E712
+        .where(or_(*ilike_clauses))
+        .order_by(NormalizedTransaction.booking_date.desc())
+        # Over-fetch so dedup can drop duplicates without falling under cap.
+        .limit(limit_per_batch * 5)
+    )
+
+    with Session(engine) as session:
+        rows = session.execute(stmt).all()
+
+    seen: set[tuple[str, str]] = set()
+    examples: list[dict] = []
+    for row in rows:
+        sender_key = (row.sender or "").strip().lower()
+        dedup_key = (sender_key, row.category_id)
+        if dedup_key in seen:
+            continue
+        seen.add(dedup_key)
+        examples.append(
+            {
+                "sender": row.sender or "",
+                "recipient": row.recipient or "",
+                "amount": _to_float(row.amount),
+                "category_id": row.category_id,
+                "category_name": row.category_name,
+            }
+        )
+        if len(examples) >= limit_per_batch:
+            break
+    return examples
 
 
 # ---------------------------------------------------------------------------

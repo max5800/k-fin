@@ -260,6 +260,184 @@ class TestGather:
         assert len(result) == 1
         assert result[0]["recipient"] == "Vermieter GmbH"
 
+    # ----- M7a Phase 1a: Few-Shot Memory ------------------------------
+
+    def test_get_similar_categorized_exact_match(self, db_engine, agent_seed):
+        """A batch tx with a known recipient pulls back the categorized example."""
+        from src.agents.gather import get_similar_categorized_transactions
+
+        batch = [
+            {
+                "id": "new-1",
+                "sender": "John Doe",
+                "recipient": "REWE",
+                "amount": -25.00,
+                "booking_date": "2026-04-20",
+                "description": "Einkauf",
+            }
+        ]
+        result = get_similar_categorized_transactions(db_engine, batch)
+        cat_ids = {r["category_id"] for r in result}
+        assert "groceries" in cat_ids
+        # Every returned example must already be categorized.
+        assert all(r["category_id"] is not None for r in result)
+
+    def test_get_similar_case_insensitive(self, db_engine, agent_seed):
+        from src.agents.gather import get_similar_categorized_transactions
+
+        batch = [
+            {
+                "id": "new-2",
+                "sender": "JOHN DOE",
+                "recipient": "rewe",
+                "amount": -10.0,
+                "booking_date": "2026-04-20",
+                "description": "",
+            }
+        ]
+        result = get_similar_categorized_transactions(db_engine, batch)
+        assert any(r["category_id"] == "groceries" for r in result)
+
+    def test_get_similar_substring_match(self, db_engine, agent_seed):
+        """Batch key 'Vermieter' matches DB sender 'Vermieter GmbH'."""
+        from src.agents.gather import get_similar_categorized_transactions
+
+        batch = [
+            {
+                "id": "new-3",
+                "sender": "John Doe",
+                "recipient": "Vermieter",
+                "amount": -800.00,
+                "booking_date": "2026-04-20",
+                "description": "",
+            }
+        ]
+        result = get_similar_categorized_transactions(db_engine, batch)
+        assert any(r["category_id"] == "rent" for r in result)
+
+    def test_get_similar_empty_batch_returns_empty(self, db_engine, agent_seed):
+        from src.agents.gather import get_similar_categorized_transactions
+
+        assert get_similar_categorized_transactions(db_engine, []) == []
+
+    def test_get_similar_no_match_returns_empty(self, db_engine, agent_seed):
+        from src.agents.gather import get_similar_categorized_transactions
+
+        result = get_similar_categorized_transactions(
+            db_engine,
+            [
+                {
+                    "id": "new-4",
+                    "sender": "Total Unknown",
+                    "recipient": "Nobody Inc",
+                    "amount": 0.0,
+                    "booking_date": "2026-04-20",
+                    "description": "",
+                }
+            ],
+        )
+        assert result == []
+
+    def test_get_similar_dedupes_by_sender_and_category(self, db_engine):
+        """Two categorized REWE txns with the same category collapse to one example."""
+        from src.agents.gather import get_similar_categorized_transactions
+        from src.core.db.models import (
+            Category,
+            NormalizedTransaction,
+            RawTransaction,
+            TypeEnum,
+        )
+
+        with Session(db_engine) as s:
+            s.add(Category(id="groceries", name="Lebensmittel", type=TypeEnum.VARIABEL))
+            for char in "ab":
+                s.add(
+                    RawTransaction(
+                        content_hash=char * 64,
+                        comdirect_id=f"CD-{char}",
+                        raw_data={"stub": True},
+                    )
+                )
+            s.flush()
+            for i, char in enumerate("ab"):
+                s.add(
+                    NormalizedTransaction(
+                        id=f"txn-rewe-{i}",
+                        raw_content_hash=char * 64,
+                        booking_date=date(2026, 4, 1 + i),
+                        valuation_date=date(2026, 4, 1 + i),
+                        amount=Decimal("-12.50"),
+                        sender="REWE",
+                        recipient="John Doe",
+                        description=f"Einkauf {i}",
+                        category_id="groceries",
+                        is_recurring=False,
+                        is_outlier=False,
+                        internal_transfer=False,
+                    )
+                )
+            s.commit()
+
+        batch = [
+            {
+                "id": "new-dedup",
+                "sender": "REWE",
+                "recipient": "",
+                "amount": -10.0,
+                "booking_date": "2026-04-22",
+                "description": "",
+            }
+        ]
+        result = get_similar_categorized_transactions(db_engine, batch)
+        rewe = [r for r in result if (r["sender"] or "").lower() == "rewe"]
+        assert len(rewe) == 1
+
+
+class TestFormatUserPrompt:
+    """Memory block injection into the categorization prompt (Phase 1a)."""
+
+    def _make_prompt(self, memory_examples):
+        from src.agents.categorization import _format_user_prompt
+
+        return _format_user_prompt(
+            transactions=[
+                {
+                    "id": "tx1",
+                    "sender": "NETFLIX.COM",
+                    "recipient": "",
+                    "amount": -15.99,
+                    "booking_date": "2026-04-01",
+                    "description": "",
+                }
+            ],
+            categories=[{"id": "fun", "name": "Freizeit", "type": "diskretionaer"}],
+            memory_examples=memory_examples,
+        )
+
+    def test_includes_memory_block_when_examples_given(self):
+        prompt = self._make_prompt(
+            [
+                {
+                    "sender": "NETFLIX.COM",
+                    "recipient": "John Doe",
+                    "amount": -15.99,
+                    "category_id": "fun",
+                    "category_name": "Freizeit",
+                }
+            ]
+        )
+        assert "Bekannte vergleichbare Transaktionen" in prompt
+        assert "NETFLIX.COM" in prompt
+        assert "Freizeit" in prompt
+        # Memory block must appear *before* the to-be-classified batch.
+        assert prompt.index("Bekannte vergleichbare") < prompt.index(
+            "Unkategorisierte Transaktionen"
+        )
+
+    def test_no_memory_block_when_empty(self):
+        assert "Bekannte vergleichbare" not in self._make_prompt(None)
+        assert "Bekannte vergleichbare" not in self._make_prompt([])
+
 
 # ---------------------------------------------------------------------------
 # Categorization agent tests (TestModel — no LLM)
