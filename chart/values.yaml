@@ -46,7 +46,7 @@ ui:
     # UI is released from a separate repo (k-fin-ui) with its own
     # semantic-release cadence, so the tag is NOT tied to Chart.Version.
     # Bump this manually when a new UI image is published to GHCR.
-    tag: "v1.0.0"
+    tag: "v1.0.2"
     pullPolicy: IfNotPresent
   replicaCount: 1
   service:
