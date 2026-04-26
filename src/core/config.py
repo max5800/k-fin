@@ -29,6 +29,10 @@ class Settings(BaseSettings):
 
     # Agent / LLM (M7)
     anthropic_api_key: str = ""
+    # SearXNG meta-search instance for the categorization agent's
+    # `search_web` tool. Empty ⇒ tool not registered, agent runs without
+    # web lookup. Set in cluster via Helm chart (api.env.SEARXNG_URL).
+    searxng_url: str = ""
 
     # App
     app_env: str = "development"
