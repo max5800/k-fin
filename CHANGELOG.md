@@ -1,3 +1,10 @@
+# [1.24.0](https://github.com/max5800/k-fin/compare/v1.23.1...v1.24.0) (2026-04-26)
+
+
+### Features
+
+* **agents:** wire SearXNG search_web tool into categorization ([0418064](https://github.com/max5800/k-fin/commit/04180646e28cfe8855c35d51940b11314a78b774))
+
 ## [1.23.1](https://github.com/max5800/k-fin/compare/v1.23.0...v1.23.1) (2026-04-23)
 
 
