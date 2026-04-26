@@ -1,3 +1,10 @@
+## [1.24.2](https://github.com/max5800/k-fin/compare/v1.24.1...v1.24.2) (2026-04-26)
+
+
+### Bug Fixes
+
+* **deploy:** keep SEARXNG_URL on public ingress ([591f09e](https://github.com/max5800/k-fin/commit/591f09edfb4941c02af50e52edc3a499a0be278c))
+
 ## [1.24.1](https://github.com/max5800/k-fin/compare/v1.24.0...v1.24.1) (2026-04-26)
 
 
