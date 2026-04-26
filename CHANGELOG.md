@@ -1,3 +1,10 @@
+## [1.24.1](https://github.com/max5800/k-fin/compare/v1.24.0...v1.24.1) (2026-04-26)
+
+
+### Bug Fixes
+
+* **deploy:** point SEARXNG_URL at in-cluster service DNS ([7b03c61](https://github.com/max5800/k-fin/commit/7b03c61b37bb75eaa77db10bfee86d7206ef17ab))
+
 # [1.24.0](https://github.com/max5800/k-fin/compare/v1.23.1...v1.24.0) (2026-04-26)
 
 
