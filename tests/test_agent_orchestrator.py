@@ -490,6 +490,105 @@ class TestCategorizationAgent:
 
 
 # ---------------------------------------------------------------------------
+# search_web tool — no live HTTP calls, all responses mocked
+# ---------------------------------------------------------------------------
+
+
+class TestSearchWebTool:
+    def test_returns_disabled_marker_when_url_empty(self):
+        """Empty SEARXNG_URL ⇒ explicit disabled marker, no HTTP attempt."""
+        import asyncio
+
+        from src.agents.categorization import search_web
+        from src.core.config import settings
+
+        with patch.object(settings, "searxng_url", ""):
+            result = asyncio.run(search_web("any merchant"))
+
+        assert result == [{"error": "search_disabled"}]
+
+    def test_parses_top3_from_searxng_json(self):
+        """Happy path: parse title/url/content into snippet, cap at 3."""
+        import asyncio
+
+        from src.agents.categorization import search_web
+        from src.core.config import settings
+
+        fake_payload = {
+            "results": [
+                {"title": "Böhnlich Bamberg", "url": "https://example.de/1", "content": "Fleischerei in Bamberg seit 1898"},
+                {"title": "Bewertungen", "url": "https://example.de/2", "content": "4.7 Sterne"},
+                {"title": "Karte", "url": "https://example.de/3", "content": "Lange Str. 1"},
+                {"title": "EXTRA", "url": "https://example.de/4", "content": "should be dropped"},
+            ]
+        }
+
+        class _FakeResp:
+            def raise_for_status(self):
+                return None
+
+            def json(self):
+                return fake_payload
+
+        class _FakeClient:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *args):
+                return None
+
+            async def get(self, url, **kwargs):
+                params = kwargs["params"]
+                assert url.endswith("/search")
+                assert params["q"] == "böhnlich bamberg"
+                assert params["format"] == "json"
+                return _FakeResp()
+
+        with patch.object(settings, "searxng_url", "https://search.max5800.com"):
+            with patch("src.agents.categorization.httpx.AsyncClient", _FakeClient):
+                result = asyncio.run(search_web("böhnlich bamberg"))
+
+        assert len(result) == 3
+        assert result[0] == {
+            "title": "Böhnlich Bamberg",
+            "url": "https://example.de/1",
+            "snippet": "Fleischerei in Bamberg seit 1898",
+        }
+
+    def test_unreachable_searxng_returns_error_dict(self):
+        """Connection error ⇒ structured error, not raised exception."""
+        import asyncio
+
+        import httpx as _httpx
+
+        from src.agents.categorization import search_web
+        from src.core.config import settings
+
+        class _BoomClient:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *args):
+                return None
+
+            async def get(self, *_args, **_kwargs):
+                raise _httpx.ConnectError("nope")
+
+        with patch.object(settings, "searxng_url", "https://search.max5800.com"):
+            with patch("src.agents.categorization.httpx.AsyncClient", _BoomClient):
+                result = asyncio.run(search_web("anything"))
+
+        assert len(result) == 1
+        assert result[0]["error"].startswith("search_unavailable: ConnectError")
+
+
+# ---------------------------------------------------------------------------
 # Orchestrator tests
 # ---------------------------------------------------------------------------
 

@@ -33,6 +33,9 @@ api:
     # CORS origins — comma-separated. Empty omits the middleware entirely.
     # Override per-environment in dev/values.remote.yaml.
     CORS_ORIGINS: ""
+    # SearXNG instance for the categorization agent's `search_web` tool.
+    # Empty ⇒ tool not registered (categorization runs without web lookup).
+    SEARXNG_URL: "https://search.max5800.com"
 
 service:
   type: ClusterIP

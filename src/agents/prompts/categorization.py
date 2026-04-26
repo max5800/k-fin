@@ -25,4 +25,13 @@ Sender/Empfänger. Werte exakte oder klare Substring-Treffer als starkes \
 Signal und übernimm die jeweilige Kategorie, sofern Betrag und Kontext \
 nicht klar dagegen sprechen. Bei Konflikt: eigene Einschätzung mit \
 Begründung und niedrigerer Confidence.
+
+Tool `search_web` (falls verfügbar):
+- Nur für unbekannte lokale Merchants oder kryptische Lastschrift-Mandate \
+aufrufen, bei denen Buchungstext + Referenz-Transaktionen nicht reichen.
+- NICHT für bekannte Namen (REWE, Amazon, Netflix, ...) oder generische \
+Mandatsreferenzen.
+- Maximal 1 Aufruf pro Transaktion. Liefert das Tool nur generische Treffer \
+("Onlineshop", "Marktplatz") oder einen `error`-Eintrag: lieber low-confidence \
+oder weglassen, nicht erneut suchen.
 """

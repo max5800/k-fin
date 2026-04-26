@@ -1,10 +1,11 @@
 """Categorization agent — LLM-based classification for uncategorized tx.
 
-Uses Sonnet 4.6 with the WebSearchTool so unknown local merchants
-("Böhnlich Bamberg" → Fleischerei → Lebensmittel) can be looked up.
-Processes pages of 200 in batches of 25, applies high-confidence
-suggestions immediately, then loops until everything is classified
-(safety-capped at MAX_TRANSACTIONS_PER_RUN).
+Uses Sonnet 4.6. When `SEARXNG_URL` is configured, the `search_web` tool
+is registered so unknown local merchants ("Böhnlich Bamberg" → Fleischerei
+→ Lebensmittel) can be looked up via the home-lab SearXNG instance.
+Processes pages of PAGE_SIZE in batches of BATCH_SIZE, applies
+high-confidence suggestions immediately, then loops until everything is
+classified (safety-capped at MAX_TRANSACTIONS_PER_RUN).
 """
 
 from __future__ import annotations
@@ -15,6 +16,7 @@ import logging
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
+import httpx
 from pydantic_ai import Agent
 from pydantic_ai.settings import ModelSettings
 from sqlalchemy import Engine, update
@@ -30,6 +32,7 @@ from src.agents.gather import (
 )
 from src.agents.prompts.categorization import CATEGORIZATION_SYSTEM_PROMPT
 from src.agents.types import CategorizationResult, CategorySuggestion
+from src.core.config import settings
 from src.core.db.models import NormalizedTransaction
 
 logger = logging.getLogger(__name__)
@@ -68,6 +71,61 @@ categorization_agent = Agent(
     retries=2,
     model_settings=ModelSettings(max_tokens=16000),
 )
+
+
+# Soft cap so a single search-call can't stall a whole 50-tx batch.
+_SEARXNG_TIMEOUT_S = 5.0
+
+
+async def search_web(query: str) -> list[dict]:
+    """Search the public web via the home-lab SearXNG instance.
+
+    Use ONLY for unknown local merchants where the booking text doesn't
+    let you decide a category (e.g. an obscure shop or German Lastschrift
+    with a cryptic Mandatsreferenz). Don't call for well-known names
+    (REWE, Amazon, ...) or for generic Mandatsref strings — the search
+    won't help and burns latency.
+
+    Args:
+        query: Plain merchant name or sender/recipient string. No
+            quotes, no Boolean operators.
+
+    Returns:
+        Up to 3 result dicts with `title`, `url`, `snippet`. On
+        unreachable / disabled SearXNG, returns a single
+        `{"error": "..."}` entry — treat that as "no info available"
+        and fall back to a low-confidence guess or skip the tx.
+    """
+    base = settings.searxng_url
+    if not base:
+        return [{"error": "search_disabled"}]
+    try:
+        async with httpx.AsyncClient(timeout=_SEARXNG_TIMEOUT_S) as client:
+            resp = await client.get(
+                f"{base.rstrip('/')}/search",
+                params={"q": query, "format": "json", "language": "de"},
+            )
+            resp.raise_for_status()
+            data = resp.json()
+    except (httpx.HTTPError, ValueError) as exc:
+        logger.warning("search_web failed for %r: %s", query, exc)
+        return [{"error": f"search_unavailable: {type(exc).__name__}"}]
+
+    return [
+        {
+            "title": item.get("title", ""),
+            "url": item.get("url", ""),
+            "snippet": (item.get("content") or "")[:300],
+        }
+        for item in (data.get("results") or [])[:3]
+    ]
+
+
+# Register the tool only when SearXNG is actually configured. Skipping
+# registration in dev/test runs avoids the LLM speculatively calling a
+# tool that would always reply "search_disabled".
+if settings.searxng_url:
+    categorization_agent.tool_plain(search_web)
 
 
 ProgressCallback = Callable[[int, int, str], None]
