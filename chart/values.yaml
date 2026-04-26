@@ -34,8 +34,10 @@ api:
     # Override per-environment in dev/values.remote.yaml.
     CORS_ORIGINS: ""
     # SearXNG instance for the categorization agent's `search_web` tool.
+    # Co-located on the app cluster, so we hit the in-cluster Service DNS
+    # directly — no Ingress, no TLS, no external DNS roundtrip.
     # Empty ⇒ tool not registered (categorization runs without web lookup).
-    SEARXNG_URL: "https://search.max5800.com"
+    SEARXNG_URL: "http://searxng.searxng.svc.cluster.local"
 
 service:
   type: ClusterIP
