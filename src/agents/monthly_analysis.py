@@ -24,7 +24,7 @@ from src.agents.types import AnalysisResult
 
 logger = logging.getLogger(__name__)
 
-MODEL = "anthropic:claude-sonnet-4-20250514"
+MODEL = "anthropic:claude-sonnet-4-6"
 
 monthly_analysis_agent = Agent(
     MODEL,

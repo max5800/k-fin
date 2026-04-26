@@ -22,7 +22,7 @@ from src.agents.types import (
 
 logger = logging.getLogger(__name__)
 
-MODEL = "anthropic:claude-sonnet-4-20250514"
+MODEL = "anthropic:claude-sonnet-4-6"
 
 synthesizer_agent = Agent(
     MODEL,
