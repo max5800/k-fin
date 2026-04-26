@@ -25,7 +25,6 @@ logger = logging.getLogger(__name__)
 PRICING: dict[str, tuple[Decimal, Decimal]] = {
     "anthropic:claude-haiku-4-5-20251001": (Decimal("1.00"), Decimal("5.00")),
     "anthropic:claude-haiku-4-5": (Decimal("1.00"), Decimal("5.00")),
-    "anthropic:claude-sonnet-4-20250514": (Decimal("3.00"), Decimal("15.00")),
     "anthropic:claude-sonnet-4-5-20250929": (Decimal("3.00"), Decimal("15.00")),
     "anthropic:claude-sonnet-4-5": (Decimal("3.00"), Decimal("15.00")),
     "anthropic:claude-sonnet-4-6": (Decimal("3.00"), Decimal("15.00")),
