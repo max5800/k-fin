@@ -91,3 +91,29 @@ jobs:
 
       - name: Push Helm chart
         run: helm push k-fin-${{ needs.release.outputs.version }}.tgz oci://ghcr.io/max5800/helm-charts
+
+  update-fleet:
+    name: Pin Fleet version
+    needs: [release, publish]
+    if: needs.release.outputs.published == 'true'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout home-lab
+        uses: actions/checkout@v4
+        with:
+          repository: max5800/home-lab
+          token: ${{ secrets.HOME_LAB_PAT }}
+
+      - name: Bump k-fin chart version in Fleet bundle
+        run: |
+          yq e '.helm.version = "${{ needs.release.outputs.version }}"' -i \
+            kubernetes/apps/k-fin/app/fleet.yaml
+
+      - name: Commit and push
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add kubernetes/apps/k-fin/app/fleet.yaml
+          git commit -m "chore(release): bump k-fin to v${{ needs.release.outputs.version }}"
+          git push

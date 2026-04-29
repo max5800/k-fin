@@ -23,28 +23,6 @@ spec:
       {{- end }}
       securityContext:
         {{- toYaml .Values.worker.podSecurityContext | nindent 8 }}
-      {{- if .Values.postgres.enabled }}
-      initContainers:
-        - name: migrate
-          image: "{{ .Values.postgres.migrate.image.repository | default .Values.worker.image.repository }}:{{ .Values.postgres.migrate.image.tag | default .Values.worker.image.tag | default (printf "v%s" .Chart.Version) }}"
-          imagePullPolicy: {{ .Values.postgres.migrate.image.pullPolicy | default .Values.worker.image.pullPolicy }}
-          command: ["/app/.venv/bin/python", "scripts/migrate.py"]
-          securityContext:
-            {{- toYaml .Values.worker.securityContext | nindent 12 }}
-          env:
-            - name: UV_CACHE_DIR
-              value: /tmp/.cache/uv
-            - name: PYTHONPATH
-              value: /app
-            - name: DATABASE_URL
-              valueFrom:
-                secretKeyRef:
-                  name: {{ .Values.postgres.credentialsSecret }}
-                  key: uri
-          volumeMounts:
-            - name: tmp
-              mountPath: /tmp
-      {{- end }}
       containers:
         - name: worker
           image: "{{ .Values.worker.image.repository }}:{{ .Values.worker.image.tag | default (printf "v%s" .Chart.Version) }}"

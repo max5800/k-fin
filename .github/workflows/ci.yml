@@ -35,6 +35,48 @@ jobs:
           ANTHROPIC_API_KEY: dummy-for-tests
         run: uv run pytest --tb=short
 
+  test-migrations:
+    name: Migration smoke test
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: finance
+          POSTGRES_USER: finance
+          POSTGRES_PASSWORD: testpassword
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          version: "0.6"
+
+      - name: Set up Python
+        run: uv python install 3.13
+
+      - name: Install dependencies
+        run: uv sync --dev
+
+      - name: Run all migrations
+        env:
+          DATABASE_URL: postgresql+psycopg://finance:testpassword@localhost:5432/finance
+        run: uv run python scripts/migrate.py
+
+      - name: Verify HEAD revision
+        env:
+          DATABASE_URL: postgresql+psycopg://finance:testpassword@localhost:5432/finance
+        run: uv run alembic current 2>&1 | grep -q "(head)"
+
   docker-build:
     name: Docker Build
     runs-on: ubuntu-latest
