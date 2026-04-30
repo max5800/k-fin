@@ -74,6 +74,10 @@ spec:
             - name: {{ $key }}
               value: {{ $value | quote }}
             {{- end }}
+          envFrom:
+            - secretRef:
+                name: {{ include "k-fin.fullname" . }}-infra-secrets
+                optional: true
           volumeMounts:
             {{- if .Values.persistence.enabled }}
             - name: exports
