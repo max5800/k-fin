@@ -40,6 +40,17 @@ class Settings(BaseSettings):
     api_token: str = ""
     worker_url: str = "http://comdirect-worker:8001"
 
+    # JWT auth (M10a)
+    jwt_secret: str = ""
+    jwt_algorithm: str = "HS256"
+    jwt_ttl_minutes: int = 60
+
+    # Bootstrap user seed — temporary (M10a only, removed after Vault/ESO wired up).
+    # Used only by the Alembic migration to seed the initial user row.
+    bootstrap_user_email: str = ""
+    bootstrap_user_display_name: str = "Max"
+    bootstrap_user_initial_password: str = ""
+
     # Bootstrap login (DEV ONLY — issues the static API_TOKEN after a fixed
     # credential check). Hard-disabled when app_env == "production".
     bootstrap_login_enabled: bool = False
