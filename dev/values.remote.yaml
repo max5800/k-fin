@@ -4,6 +4,13 @@ imagePullSecrets:
 api:
   image:
     pullPolicy: Always
+  # Dev-only: allow Tilt live_update to write synced files into /app.
+  # Production keeps readOnlyRootFilesystem=true (chart/values.yaml default).
+  securityContext:
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: false
+    runAsNonRoot: true
+    runAsUser: 1001
   resources:
     requests:
       cpu: 50m
@@ -12,23 +19,23 @@ api:
       cpu: 500m
       memory: 512Mi
   env:
-    # Dev cluster runs in development mode so the bootstrap login endpoint
-    # is reachable. The auth router hard-disables itself when APP_ENV=production.
-    APP_ENV: "development"
+    APP_ENV: "production"
     LOG_LEVEL: "INFO"
     EXPORTS_DIR: "/data/exports"
-    # Bootstrap login — DEV ONLY. Password is sourced from Vault
-    # (k8s/finance-api → BOOTSTRAP_PASSWORD) via infraSecrets ESO.
-    BOOTSTRAP_LOGIN_ENABLED: "true"
-    BOOTSTRAP_EMAIL: "dev@k-fin.local"
-    # Origins served by the dev Ingress + local Vite (when pointed at the
-    # cluster API). Same-origin requests through the Ingress don't strictly
-    # need CORS, but we list the host so cross-origin tooling works too.
+    # M10a real auth. JWT_SECRET + bootstrap user credentials come from
+    # Vault via infraSecrets ESO. Display name is static.
+    BOOTSTRAP_USER_DISPLAY_NAME: "Max"
     CORS_ORIGINS: "http://k-fin-dev.max5800.com,http://localhost:3000,http://localhost:5173"
 
 worker:
   image:
     pullPolicy: Always
+  # Dev-only: allow Tilt live_update to write synced files into /app.
+  securityContext:
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: false
+    runAsNonRoot: true
+    runAsUser: 1001
   resources:
     requests:
       cpu: 50m
@@ -39,12 +46,9 @@ worker:
   env:
     EXPORTS_DIR: "/data/exports"
     SYNC_INTERVAL_MINUTES: "60"
-    # Worker also mounts the auth router (main.py includes auth.router),
-    # so it needs the same dev settings as the api. BOOTSTRAP_PASSWORD
-    # is auto-injected via envFrom -> infra-secrets.
-    APP_ENV: "development"
-    BOOTSTRAP_LOGIN_ENABLED: "true"
-    BOOTSTRAP_EMAIL: "dev@k-fin.local"
+    APP_ENV: "production"
+    # Worker mounts the same auth router — JWT_SECRET injected via ESO.
+    BOOTSTRAP_USER_DISPLAY_NAME: "Max"
     CORS_ORIGINS: "http://k-fin-dev.max5800.com,http://localhost:3000,http://localhost:5173"
 
 ui:
@@ -103,15 +107,21 @@ externalSecret:
       - path: k8s/finance-api
         vaultKey: ANTHROPIC_API_KEY
         envVar: ANTHROPIC_API_KEY
-      # DEV ONLY — bootstrap login password (unlocks API_TOKEN via
-      # /api/v1/auth/login). Write the value to Vault before the first
-      # `tilt up`, otherwise the endpoint will 500 with "misconfigured":
-      #   vault kv put secret/k8s/finance-api BOOTSTRAP_PASSWORD=<dev-password>
-      # (preserve the existing API_TOKEN / ANTHROPIC_API_KEY keys — use
-      # `vault kv patch` if your Vault version supports it.)
+      # M10a real auth secrets — write these to Vault before the first
+      # `tilt up` (vault kv patch secret/k8s/finance-api ...):
+      #   JWT_SECRET              — random 32+ char string
+      #   BOOTSTRAP_USER_EMAIL    — your login email
+      #   BOOTSTRAP_USER_INITIAL_PASSWORD — temp password (min 12 chars);
+      #     only used once by the migration to seed the users table
       - path: k8s/finance-api
-        vaultKey: BOOTSTRAP_PASSWORD
-        envVar: BOOTSTRAP_PASSWORD
+        vaultKey: JWT_SECRET
+        envVar: JWT_SECRET
+      - path: k8s/finance-api
+        vaultKey: BOOTSTRAP_USER_EMAIL
+        envVar: BOOTSTRAP_USER_EMAIL
+      - path: k8s/finance-api
+        vaultKey: BOOTSTRAP_USER_INITIAL_PASSWORD
+        envVar: BOOTSTRAP_USER_INITIAL_PASSWORD
 
 postgres:
   enabled: true
