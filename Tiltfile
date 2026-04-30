@@ -25,6 +25,7 @@ docker_build(
     dockerfile="./Dockerfile.api",
     entrypoint=["uvicorn", "src.api.app:app", "--host", "0.0.0.0", "--port", "8000", "--reload"],
     live_update=[
+        fall_back_on(["./pyproject.toml", "./uv.lock"]),
         sync("./src/api", "/app/src/api"),
         sync("./src/core", "/app/src/core"),
         sync("./src/agents", "/app/src/agents"),
@@ -38,6 +39,7 @@ docker_build(
     dockerfile="./Dockerfile",
     entrypoint=["/app/.venv/bin/uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8001", "--reload"],
     live_update=[
+        fall_back_on(["./pyproject.toml", "./uv.lock"]),
         sync("./src", "/app/src"),
         sync("./main.py", "/app/main.py"),
         sync("./scripts", "/app/scripts"),
