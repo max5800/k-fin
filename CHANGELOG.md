@@ -1,3 +1,16 @@
+# [1.25.0](https://github.com/max5800/k-fin/compare/v1.24.2...v1.25.0) (2026-04-30)
+
+
+### Bug Fixes
+
+* **deploy:** wire JWT_SECRET and bootstrap-user envs into api/migrate ([3175eda](https://github.com/max5800/k-fin/commit/3175eda14e273b757e61fa1fa46cc8eb3f579e36))
+* **dev:** make Tilt live_update reliable for the api image ([526084f](https://github.com/max5800/k-fin/commit/526084f82c40def8fb62601495470210c811c808))
+
+
+### Features
+
+* **auth:** add JWT-based user auth (M10a) ([06e56dc](https://github.com/max5800/k-fin/commit/06e56dc312f19700c5ccd69cd0f313eac3dfb171))
+
 ## [1.24.2](https://github.com/max5800/k-fin/compare/v1.24.1...v1.24.2) (2026-04-26)
 
 
