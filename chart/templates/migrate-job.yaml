@@ -37,6 +37,23 @@ spec:
                 secretKeyRef:
                   name: {{ .Values.postgres.credentialsSecret }}
                   key: uri
+            # Bootstrap user seed (consumed by migration 0013_users).
+            # Optional: if the Vault keys are missing, the migration
+            # silently skips the INSERT and no user is seeded.
+            - name: BOOTSTRAP_USER_EMAIL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "k-fin.fullname" . }}-infra-secrets
+                  key: BOOTSTRAP_USER_EMAIL
+                  optional: true
+            - name: BOOTSTRAP_USER_INITIAL_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "k-fin.fullname" . }}-infra-secrets
+                  key: BOOTSTRAP_USER_INITIAL_PASSWORD
+                  optional: true
+            - name: BOOTSTRAP_USER_DISPLAY_NAME
+              value: {{ .Values.api.env.BOOTSTRAP_USER_DISPLAY_NAME | default "Max" | quote }}
           volumeMounts:
             - name: tmp
               mountPath: /tmp
