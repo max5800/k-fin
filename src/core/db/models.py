@@ -532,3 +532,32 @@ class PortfolioSnapshot(Base):
     captured_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
+
+
+class User(Base):
+    """Single-user auth table (M10a).
+
+    UUID PK to allow future multi-user migration (M17) without schema pain.
+    No user_id FKs on transaction tables — that is M17 scope.
+    """
+
+    __tablename__ = "users"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    email: Mapped[str] = mapped_column(String, nullable=False, unique=True, index=True)
+    display_name: Mapped[str] = mapped_column(String, nullable=False, default="")
+    password_hash: Mapped[str] = mapped_column(String, nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    role: Mapped[str] = mapped_column(String(32), nullable=False, default="admin")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+    last_login_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )

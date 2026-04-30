@@ -25,20 +25,18 @@ api:
     APP_ENV: "production"
     LOG_LEVEL: "INFO"
     EXPORTS_DIR: "/data/exports"
-    # Bootstrap login — DEV ONLY. Hard-disabled when APP_ENV=production
-    # (the auth router 404s regardless of this flag), so leaving it false
-    # here is just defence-in-depth for the chart default.
+    # Bootstrap login — DEV ONLY. Hard-disabled when APP_ENV=production.
     BOOTSTRAP_LOGIN_ENABLED: "false"
     BOOTSTRAP_EMAIL: ""
     # CORS origins — comma-separated. Empty omits the middleware entirely.
     # Override per-environment in dev/values.remote.yaml.
     CORS_ORIGINS: ""
     # SearXNG instance for the categorization agent's `search_web` tool.
-    # Lives on the infra cluster (cross-cluster), so we hit the public
-    # Ingress on max5800.com — internal DNS via Technitium routes the
-    # request inside the LAN, no public exposure.
-    # Empty ⇒ tool not registered (categorization runs without web lookup).
     SEARXNG_URL: "https://search.max5800.com"
+    # M10a real auth — JWT_SECRET and bootstrap user credentials are
+    # injected at runtime from the ESO-generated Secret (see infraSecrets).
+    # Only the static display name is set here; secrets stay in Vault.
+    BOOTSTRAP_USER_DISPLAY_NAME: "Max"
 
 service:
   type: ClusterIP
@@ -182,6 +180,16 @@ externalSecret:
       - path: k8s/finance-api
         vaultKey: BOOTSTRAP_PASSWORD
         envVar: BOOTSTRAP_PASSWORD
+      # M10a real auth secrets
+      - path: k8s/finance-api
+        vaultKey: JWT_SECRET
+        envVar: JWT_SECRET
+      - path: k8s/finance-api
+        vaultKey: BOOTSTRAP_USER_EMAIL
+        envVar: BOOTSTRAP_USER_EMAIL
+      - path: k8s/finance-api
+        vaultKey: BOOTSTRAP_USER_INITIAL_PASSWORD
+        envVar: BOOTSTRAP_USER_INITIAL_PASSWORD
 
 # --- Postgres (CloudNativePG) ---
 postgres:
