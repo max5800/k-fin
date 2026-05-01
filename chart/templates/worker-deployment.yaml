@@ -66,6 +66,14 @@ spec:
             {{- toYaml .Values.worker.securityContext | nindent 12 }}
           resources:
             {{- toYaml .Values.worker.resources | nindent 12 }}
+          # Startup probe gates Ready until the boot reaper finishes.
+          # 30 × 5s = 150s max grace before liveness takes over.
+          startupProbe:
+            httpGet:
+              path: /health
+              port: 8001
+            failureThreshold: 30
+            periodSeconds: 5
           livenessProbe:
             httpGet:
               path: /health
@@ -76,7 +84,7 @@ spec:
             httpGet:
               path: /health
               port: 8001
-            initialDelaySeconds: 5
+            initialDelaySeconds: 15
             periodSeconds: 10
       volumes:
         - name: tmp

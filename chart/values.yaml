@@ -93,12 +93,17 @@ worker:
     runAsNonRoot: true
     runAsUser: 1001
   resources:
+    # Worker now hosts the agent pipeline (LLM batches via httpx +
+    # ThreadPoolExecutor max_workers=3). Argon2 hashing alone needs
+    # ~64 MB; pydantic_ai + concurrent batches push peak to 400-700 MiB.
+    # 1Gi limit gives comfortable headroom; 256Mi requests keeps the
+    # baseline footprint small for the scheduler.
     requests:
-      cpu: 50m
-      memory: 64Mi
-    limits:
-      cpu: 200m
+      cpu: 100m
       memory: 256Mi
+    limits:
+      cpu: 1000m
+      memory: 1Gi
   env:
     EXPORTS_DIR: "/data/exports"
     ACCOUNT_TRANSACTION_LIMIT: "500"
