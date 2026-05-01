@@ -89,6 +89,73 @@ def test_reingest_is_idempotent(postgres_url, db_engine):
     assert reingest == 0, "identical payloads must not create duplicate raw rows"
 
 
+def test_normalize_preserves_existing_category(postgres_url, db_engine):
+    """Regression: re-running process_and_normalize must NOT wipe a
+    category_id that was already set by the agent / a manual edit /
+    a previous rule match.
+
+    Prod incident 2026-05-01: every sync re-built the dataframe from
+    raw_transactions with category_id=None, then the on-conflict upsert
+    overwrote agent-set categories with NULL. Fix uses COALESCE so the
+    existing value wins on conflict.
+    """
+    fixture = _load_json("ground_truth_transactions.json")
+    own_ibans = fixture["own_ibans"]
+    transactions = fixture["transactions"][:3]
+
+    with Session(db_engine) as session:
+        _seed_catalog(session)
+
+    pipeline = NormalizationPipeline(postgres_url, own_ibans=own_ibans)
+    ingest_transactions(pipeline, transactions, batch_id="initial")
+    pipeline.process_and_normalize()
+
+    # Simulate the categorization agent (or a manual UI edit) setting a
+    # category that is NOT what the rules would assign.
+    with Session(db_engine) as session:
+        target = session.query(NormalizedTransaction).first()
+        assert target is not None
+        target.category_id = "groceries"  # explicit assignment
+        session.commit()
+        target_id = target.id
+
+    # Re-running normalize (e.g. after a sync, or a backfill) used to
+    # wipe the category. With the COALESCE fix it must stay.
+    pipeline.process_and_normalize()
+
+    with Session(db_engine) as session:
+        after = session.get(NormalizedTransaction, target_id)
+        assert after is not None
+        assert after.category_id == "groceries", (
+            "normalize re-run wiped the explicit category — "
+            "this regression cost us the prod-2026-05-01 incident"
+        )
+
+
+def test_normalize_still_applies_rules_to_uncategorized_rows(postgres_url, db_engine):
+    """The COALESCE fix must not break the legitimate case: when a row
+    has NO category yet, a matching rule should still set one.
+    """
+    fixture = _load_json("ground_truth_transactions.json")
+    own_ibans = fixture["own_ibans"]
+    transactions = fixture["transactions"][:3]
+
+    with Session(db_engine) as session:
+        _seed_catalog(session)
+
+    pipeline = NormalizationPipeline(postgres_url, own_ibans=own_ibans)
+    ingest_transactions(pipeline, transactions, batch_id="initial")
+    df, _ = pipeline.process_and_normalize()
+
+    # At least one of the seeded rules must have matched and set a
+    # category — otherwise the test is meaningless.
+    with Session(db_engine) as session:
+        rows = session.query(NormalizedTransaction).all()
+        assert any(r.category_id is not None for r in rows), (
+            "no rule matched any seeded transaction — fixture/rules drift"
+        )
+
+
 def test_corrected_transaction_creates_new_version(postgres_url, db_engine):
     fixture = _load_json("ground_truth_transactions.json")
     own_ibans = fixture["own_ibans"]

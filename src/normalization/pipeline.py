@@ -18,7 +18,7 @@ from decimal import Decimal
 from typing import Any, Iterable
 
 import pandas as pd
-from sqlalchemy import create_engine, select, update
+from sqlalchemy import create_engine, func, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
@@ -406,12 +406,24 @@ class NormalizationPipeline:
                 internal_transfer=bool(row["internal_transfer"]),
                 recurring_pattern_id=row.get("recurring_pattern_id"),
             )
+            # Preserve any category_id already set on the existing row
+            # (by the categorization agent, a manual edit, or a prior rule
+            # match). Without COALESCE, every re-run of process_and_normalize
+            # would overwrite agent/user categories with NULL or a stale
+            # rule result — see the post-mortem of the prod incident on
+            # 2026-05-01 where a sync wiped all categorized transactions.
+            # If a user wants to (re-)apply rules to already-categorized
+            # rows, that's an explicit separate action — not a side effect
+            # of normalisation.
             stmt = stmt.on_conflict_do_update(
                 index_elements=["id"],
                 set_={
                     "raw_content_hash": stmt.excluded.raw_content_hash,
                     "amount": stmt.excluded.amount,
-                    "category_id": stmt.excluded.category_id,
+                    "category_id": func.coalesce(
+                        NormalizedTransaction.category_id,
+                        stmt.excluded.category_id,
+                    ),
                     "is_recurring": stmt.excluded.is_recurring,
                     "is_outlier": stmt.excluded.is_outlier,
                     "internal_transfer": stmt.excluded.internal_transfer,
