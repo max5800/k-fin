@@ -1,3 +1,15 @@
+# [1.26.0](https://github.com/max5800/k-fin/compare/v1.25.0...v1.26.0) (2026-05-01)
+
+
+### Bug Fixes
+
+* **deploy:** bump worker memory to 1Gi + add startupProbe ([405e8d0](https://github.com/max5800/k-fin/commit/405e8d0679a876fb3da2d91fd0f86cde80677e5f))
+
+
+### Features
+
+* **reliability:** move agent runs to worker, add cancel + heartbeat reaper ([0ea658c](https://github.com/max5800/k-fin/commit/0ea658ca6d08208947b74972a9bea1ea3e154df2))
+
 # [1.25.0](https://github.com/max5800/k-fin/compare/v1.24.2...v1.25.0) (2026-04-30)
 
 
