@@ -1,3 +1,10 @@
+# [1.27.0](https://github.com/max5800/k-fin/compare/v1.26.1...v1.27.0) (2026-05-01)
+
+
+### Features
+
+* **reports:** expose agent JSON content to UI + fix synthesis solo run ([013becb](https://github.com/max5800/k-fin/commit/013becbd3075b26645ee76536660cd9a437e99c6))
+
 ## [1.26.1](https://github.com/max5800/k-fin/compare/v1.26.0...v1.26.1) (2026-05-01)
 
 
