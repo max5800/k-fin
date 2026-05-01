@@ -1,3 +1,10 @@
+## [1.28.1](https://github.com/max5800/k-fin/compare/v1.28.0...v1.28.1) (2026-05-01)
+
+
+### Bug Fixes
+
+* **normalize:** COALESCE category_id on upsert to preserve agent/user assignments ([b786af4](https://github.com/max5800/k-fin/commit/b786af46f6afdcda8f63082c3f95a8d0f2d63cd9))
+
 # [1.28.0](https://github.com/max5800/k-fin/compare/v1.27.0...v1.28.0) (2026-05-01)
 
 
