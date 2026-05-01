@@ -1,9 +1,10 @@
 """Reports router for the Finance API."""
 
+import json
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -49,6 +50,7 @@ def list_reports(
     offset: int = Query(0, ge=0),
     format: str | None = Query(None),
     status_filter: str | None = Query(None, alias="status"),
+    report_type: str | None = Query(None),
 ):
     stmt = select(Report)
     count_stmt = select(func.count()).select_from(Report)
@@ -59,6 +61,9 @@ def list_reports(
     if status_filter:
         stmt = stmt.where(Report.status == status_filter)
         count_stmt = count_stmt.where(Report.status == status_filter)
+    if report_type:
+        stmt = stmt.where(Report.report_type == report_type)
+        count_stmt = count_stmt.where(Report.report_type == report_type)
 
     total = db.execute(count_stmt).scalar_one()
 
@@ -100,6 +105,24 @@ def download_report(
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=f"Report is not ready (status: {report.status.value})",
+        )
+
+    # Agent-produced JSON reports live entirely in `Report.content` — there
+    # is no file on disk. Serve them directly so the download button works
+    # without a parallel file-export pipeline.
+    if report.file_path is None and report.content is not None:
+        body = json.dumps(report.content, ensure_ascii=False, indent=2).encode("utf-8")
+        filename = f"{report.report_type}-{report.period_start.isoformat()}.json"
+        return Response(
+            content=body,
+            media_type="application/json; charset=utf-8",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+
+    if report.file_path is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Report has no downloadable payload",
         )
 
     path = _resolve_report_path(report)

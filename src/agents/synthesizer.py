@@ -12,7 +12,7 @@ from sqlalchemy import Engine
 from src.agents._anthropic import make_anthropic_model
 from src.agents._runner import run_in_fresh_loop
 from src.agents._usage import AgentUsage, extract_usage
-from src.agents.gather import get_recent_reports
+from src.agents.gather import get_latest_report_content, get_recent_reports
 from src.agents.prompts.synthesizer import SYNTHESIZER_SYSTEM_PROMPT
 from src.agents.types import (
     AnalysisResult,
@@ -43,7 +43,14 @@ def run_synthesizer(
     *,
     usage: AgentUsage | None = None,
 ) -> SynthesisResult:
-    """Combine all agent results into a synthesis report."""
+    """Combine all agent results into a synthesis report.
+
+    When invoked standalone (no in-memory results from a sibling run), the
+    function rehydrates inputs from the most recent persisted reports of
+    each type. Without this fallback the solo `Run Synthese`-button on the
+    Agents page produced an empty `"Keine Agent-Ergebnisse"`-result with
+    no LLM call.
+    """
     ref = reference_date or date.today()
     monday = ref - timedelta(days=ref.weekday())
     period = monday.strftime("%G-W%V")
@@ -57,6 +64,25 @@ def run_synthesizer(
         inputs["monthly_analysis"] = monthly.model_dump()
     if anomaly:
         inputs["anomaly_detection"] = anomaly.model_dump()
+
+    # Solo-run rehydration: pull the latest persisted report of each type.
+    # Each lookup is independent — if e.g. anomaly never ran we still
+    # synthesize from whatever else is available.
+    if len(inputs) == 1:
+        for key, report_type in (
+            ("categorization", "categorization"),
+            ("weekly_analysis", "weekly_analysis"),
+            ("monthly_analysis", "monthly_analysis"),
+            ("anomaly_detection", "anomaly"),
+        ):
+            content = get_latest_report_content(engine, report_type)
+            if content is not None:
+                inputs[key] = content
+        if len(inputs) > 1:
+            logger.info(
+                "Synthesizer solo-run: rehydrated %d prior report(s) from DB",
+                len(inputs) - 1,
+            )
 
     if len(inputs) <= 1:
         logger.info("No agent results to synthesize — returning empty")

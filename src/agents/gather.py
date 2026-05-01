@@ -398,3 +398,24 @@ def get_recent_reports(engine: Engine, report_type: str, limit: int = 3) -> list
         {"content": r.content, "created_at": r.created_at.isoformat()}
         for r in rows
     ]
+
+
+def get_latest_report_content(engine: Engine, report_type: str) -> dict | None:
+    """Return the JSON `content` of the most recent report of a given type.
+
+    Used by the synthesizer's solo-run path: when triggered standalone (no
+    sibling agents executed in this run), the synthesizer rehydrates inputs
+    from the most recent persisted reports instead of producing an empty
+    summary.
+    """
+    with Session(engine) as session:
+        row = session.execute(
+            select(Report.content)
+            .where(Report.report_type == report_type)
+            .order_by(Report.created_at.desc())
+            .limit(1)
+        ).first()
+    if row is None:
+        return None
+    content = row[0]
+    return content if isinstance(content, dict) else None

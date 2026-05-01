@@ -160,6 +160,7 @@ class ReportOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: str
+    report_type: str
     title: str
     period_start: date
     period_end: date
@@ -168,6 +169,9 @@ class ReportOut(BaseModel):
     size_bytes: int | None
     status: str
     error: str | None
+    # Agent-produced JSON payload (CategorizationResult, AnalysisResult, …).
+    # NULL for legacy/file-backed PDF/MD reports.
+    content: dict | None = None
     created_at: datetime
     updated_at: datetime
 
