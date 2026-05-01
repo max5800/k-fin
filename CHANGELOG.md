@@ -1,3 +1,10 @@
+# [1.28.0](https://github.com/max5800/k-fin/compare/v1.27.0...v1.28.0) (2026-05-01)
+
+
+### Features
+
+* **backfill:** historical transaction backfill (24 months, TAN-in-the-loop) ([41eb235](https://github.com/max5800/k-fin/commit/41eb235985b4d28f3d2263ccfcca27cab8ac90e2))
+
 # [1.27.0](https://github.com/max5800/k-fin/compare/v1.26.1...v1.27.0) (2026-05-01)
 
 
