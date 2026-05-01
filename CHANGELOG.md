@@ -1,3 +1,10 @@
+## [1.26.1](https://github.com/max5800/k-fin/compare/v1.26.0...v1.26.1) (2026-05-01)
+
+
+### Bug Fixes
+
+* **agents:** surface real cause on batch failure, stop retrying 4xx ([0b1cbe9](https://github.com/max5800/k-fin/commit/0b1cbe97ef6c168afbf9249fa7d860a64ec411c1))
+
 # [1.26.0](https://github.com/max5800/k-fin/compare/v1.25.0...v1.26.0) (2026-05-01)
 
 
