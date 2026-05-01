@@ -13,7 +13,7 @@ import uuid
 from datetime import date, datetime, timezone
 from typing import Any
 
-from sqlalchemy import Engine, create_engine, delete, update
+from sqlalchemy import Engine, create_engine, delete, select, update
 from sqlalchemy.orm import Session
 
 from src.agents import (
@@ -30,6 +30,7 @@ from src.agents.categorization import (
     run_categorization,
 )
 from src.agents.monthly_analysis import run_monthly_analysis
+from src.agents.reaper import RunCancelled
 from src.agents.synthesizer import run_synthesizer
 from src.agents.weekly_analysis import run_weekly_analysis
 from src.core.db.models import (
@@ -187,6 +188,10 @@ class AgentOrchestrator:
             detail = {agent_type: _usage_to_dict(usage, AGENT_MODELS.get(agent_type, "unknown"))} if usage.input_tokens or usage.output_tokens else None
             self._finish_run(run_id, results=results, usage=usage, usage_detail=detail)
             self._persist_report(agent_type, result)
+        except RunCancelled as exc:
+            # Row already reflects the truth (cancelled by user / reaped).
+            # Don't overwrite — finalise nothing.
+            logger.info("Run %s stopped cooperatively: %s", run_id, exc)
         except Exception as exc:
             logger.error("Agent %s failed: %s", agent_type, exc)
             self._finish_run(
@@ -196,7 +201,11 @@ class AgentOrchestrator:
     def run_full_for(self, run_id: str) -> None:
         """Execute all agents for an existing run (API-triggered)."""
         self._mark_running(run_id)
-        results, errors, usage, detail = self._run_all_agents(run_id=run_id)
+        try:
+            results, errors, usage, detail = self._run_all_agents(run_id=run_id)
+        except RunCancelled as exc:
+            logger.info("Run %s stopped cooperatively: %s", run_id, exc)
+            return
         error_msg = _format_errors(errors) if errors else None
         # Any agent failure makes the whole pipeline failed — partial
         # success would be misleading (the synthesis agent emits an empty
@@ -284,9 +293,11 @@ class AgentOrchestrator:
             try:
                 if agent_type == "categorization":
                     cb = self._make_progress_callback(run_id, label) if run_id else None
+                    err_cb = self._make_batch_error_callback(run_id) if run_id else None
                     result = run_categorization(
                         self.engine,
                         on_progress=cb,
+                        on_batch_error=err_cb,
                         auto_apply_threshold=threshold,
                         usage=agent_usage,
                     )
@@ -300,6 +311,12 @@ class AgentOrchestrator:
                     raise ValueError(f"Unhandled agent_type {agent_type}")
                 results[agent_type] = result
                 self._persist_report(agent_type, result)
+            except RunCancelled:
+                # Bubble up to run_full_for / run_single_for — don't swallow
+                # cancellation as a per-agent error.
+                per_agent[agent_type] = agent_usage
+                total_usage.merge(agent_usage)
+                raise
             except Exception as exc:
                 logger.error("%s agent failed: %s", agent_type, exc)
                 errors.append(f"{agent_type}: {exc}")
@@ -327,6 +344,10 @@ class AgentOrchestrator:
             )
             results["synthesis"] = result
             self._persist_report("synthesis", result)
+        except RunCancelled:
+            per_agent["synthesis"] = synth_usage
+            total_usage.merge(synth_usage)
+            raise
         except Exception as exc:
             logger.error("Synthesizer agent failed: %s", exc)
             errors.append(f"synthesis: {exc}")
@@ -406,6 +427,14 @@ class AgentOrchestrator:
 
         return _cb
 
+    def _make_batch_error_callback(self, run_id: str):
+        """Build a closure that writes/clears `last_error` on the run row."""
+
+        def _cb(message: str | None) -> None:
+            self._record_last_error(run_id, message)
+
+        return _cb
+
     # ------------------------------------------------------------------
     # Persistence
     # ------------------------------------------------------------------
@@ -418,20 +447,23 @@ class AgentOrchestrator:
         total: int | None = None,
         message: str | None = None,
     ) -> None:
-        """Write live progress fields to the agent_runs row.
+        """Write live progress fields + heartbeat, then assert run is still RUNNING.
 
-        Best-effort: a failed update never aborts the run (DB hiccup mid-run
-        shouldn't kill an in-flight LLM pipeline).
+        Best-effort on the DB write: a hiccup never aborts the run. The
+        post-write status check raises RunCancelled if the row is no longer
+        RUNNING — set by the user (`cancelled`) or the reaper (`failed`).
+        Cooperative cancellation point — kept here because every batch
+        boundary already calls _update_progress.
         """
-        values: dict[str, Any] = {}
+        values: dict[str, Any] = {"heartbeat_at": datetime.now(timezone.utc)}
         if current is not None:
             values["progress_current"] = current
         if total is not None:
             values["progress_total"] = total
         if message is not None:
             values["progress_message"] = message
-        if not values:
-            return
+
+        current_status: RunStatus | None = None
         try:
             with Session(self.engine) as session:
                 session.execute(
@@ -439,9 +471,37 @@ class AgentOrchestrator:
                     .where(AgentRun.id == run_id)
                     .values(**values)
                 )
+                current_status = session.execute(
+                    select(AgentRun.status).where(AgentRun.id == run_id)
+                ).scalar_one_or_none()
                 session.commit()
         except Exception:
             logger.exception("Failed to update progress for run %s", run_id)
+            return
+
+        if current_status is not None and current_status != RunStatus.RUNNING:
+            raise RunCancelled(
+                f"Run {run_id} left RUNNING (now {current_status.value}); "
+                "stopping cooperative cancellation"
+            )
+
+    def _record_last_error(self, run_id: str, message: str | None) -> None:
+        """Write a transient error visible while status='running'.
+
+        Pass `None` (or empty string) to clear it after a recovery. The
+        persistent `error` column is set separately by `_finish_run`.
+        """
+        clean = (message or None) and message[:500]
+        try:
+            with Session(self.engine) as session:
+                session.execute(
+                    update(AgentRun)
+                    .where(AgentRun.id == run_id)
+                    .values(last_error=clean)
+                )
+                session.commit()
+        except Exception:
+            logger.exception("Failed to record last_error for run %s", run_id)
 
     def _load_auto_apply_threshold(self) -> float:
         """Read the user-configured auto-apply threshold from app_settings.
@@ -495,6 +555,8 @@ class AgentOrchestrator:
             "finished_at": datetime.now(timezone.utc),
             "result": json_results,
             "error": error,
+            # Final state replaces the transient running-state warning.
+            "last_error": None,
         }
         if usage is not None:
             values["input_tokens"] = usage.input_tokens

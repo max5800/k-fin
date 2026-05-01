@@ -6,11 +6,9 @@ No bank secrets — those stay in the worker (port 8001).
 
 import logging
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy import update
 
 from src.api.routers import (
     aggregates,
@@ -33,34 +31,14 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def _lifespan(_app: FastAPI):
-    """Mark abandoned agent runs as failed on startup.
+    """No-op lifespan.
 
-    Background tasks die with the pod they ran on. Without this, runs
-    interrupted by a restart stay PENDING/RUNNING forever and block the
-    UI's "no concurrent run" guard.
+    Run lifecycle moved to the worker pod (M11) — `src/agents/reaper.py`
+    handles heartbeat-based stale-run cleanup there, both at boot and on
+    a 5-min loop. The api pod no longer drives runs, so blanket-marking
+    every RUNNING row as FAILED at api startup would now incorrectly kill
+    in-flight runs whenever the api rolled.
     """
-    try:
-        from src.api.deps import _get_engine
-        from src.core.db.models import AgentRun, RunStatus
-        from sqlalchemy.orm import Session
-
-        with Session(_get_engine()) as s:
-            stmt = (
-                update(AgentRun)
-                .where(AgentRun.status.in_([RunStatus.PENDING, RunStatus.RUNNING]))
-                .values(
-                    status=RunStatus.FAILED,
-                    finished_at=datetime.now(timezone.utc),
-                    error="abandoned: pod restarted while run was active",
-                )
-            )
-            result = s.execute(stmt)
-            s.commit()
-            if result.rowcount:
-                logger.info("Marked %d abandoned agent run(s) as failed", result.rowcount)
-    except Exception:
-        logger.exception("Startup cleanup of abandoned runs failed")
-
     yield
 
 

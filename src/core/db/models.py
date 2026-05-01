@@ -58,6 +58,7 @@ class RunStatus(str, enum.Enum):
     RUNNING = "running"
     SUCCEEDED = "succeeded"
     FAILED = "failed"
+    CANCELLED = "cancelled"
 
 
 class RunTrigger(str, enum.Enum):
@@ -267,6 +268,16 @@ class AgentRun(Base):
     output_tokens: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     cost_usd: Mapped[Optional[Decimal]] = mapped_column(Numeric(10, 6), nullable=True)
     usage_detail: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    # Heartbeat: refreshed by _update_progress and at every batch boundary so a
+    # stale-run reaper can distinguish a stalled run from one still making
+    # progress. NULL on rows pre-dating M11 reliability work.
+    heartbeat_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    # Surfaced inline while status='running' when an internal batch fails
+    # (e.g. transient LLM connection error). The run continues; the UI uses
+    # this to render an amber "retrying" banner without ending the run.
+    last_error: Mapped[Optional[str]] = mapped_column(String, nullable=True)
 
 
 class ReportStatus(str, enum.Enum):

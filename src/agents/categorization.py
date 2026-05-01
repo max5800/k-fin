@@ -13,15 +13,22 @@ from __future__ import annotations
 import contextvars
 import json
 import logging
+import time
 from collections.abc import Callable
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import (
+    ThreadPoolExecutor,
+    TimeoutError as FutureTimeoutError,
+    as_completed,
+)
 
 import httpx
 from pydantic_ai import Agent
+from pydantic_ai.exceptions import ModelAPIError
 from pydantic_ai.settings import ModelSettings
 from sqlalchemy import Engine, update
 from sqlalchemy.orm import Session
 
+from src.agents._anthropic import make_anthropic_model
 from src.agents._runner import run_in_fresh_loop
 from src.agents._usage import AgentUsage, extract_usage
 from src.agents.gather import (
@@ -46,6 +53,19 @@ PAGE_SIZE = 200
 MAX_CONCURRENT_BATCHES = 3
 MAX_TRANSACTIONS_PER_RUN = 5000
 
+# Hard upper bound on a single batch (one LLM call + tool fan-out + apply).
+# Longer than the underlying httpx read-timeout (180s) so the timeout wins
+# cleanly on the network layer; this is a belt-and-braces cap that catches
+# anything weird upstream (deadlocks, GIL-stalls, etc.).
+BATCH_TIMEOUT_S = 240
+
+# Retries inside a batch for transient model/network errors only.
+# pydantic_ai's Agent has its own `retries=2` for model-output validation;
+# this layer guards specifically against connection blips so an 8h-stuck
+# run can never recur.
+BATCH_MAX_RETRIES = 2
+BATCH_RETRY_INITIAL_BACKOFF_S = 2.0
+
 DEFAULT_AUTO_APPLY_CONFIDENCE = 0.6
 
 MODEL = "anthropic:claude-sonnet-4-6"
@@ -65,7 +85,7 @@ categorization_agent = Agent(
     # mid-JSON makes Anthropic surface a truncated tool_use with
     # args={}, which then fails CategorizationResult validation and
     # burns all retries. 16k gives comfortable 3× headroom.
-    MODEL,
+    make_anthropic_model(MODEL),
     output_type=CategorizationResult,
     system_prompt=CATEGORIZATION_SYSTEM_PROMPT,
     retries=2,
@@ -129,6 +149,9 @@ if settings.searxng_url:
 
 
 ProgressCallback = Callable[[int, int, str], None]
+# Surfaces a per-batch failure (post-retry) while the run is still alive.
+# `None` means "clear" — write back when the next batch succeeds.
+BatchErrorCallback = Callable[[str | None], None]
 
 
 def _format_user_prompt(
@@ -198,6 +221,7 @@ def run_categorization(
     engine: Engine,
     *,
     on_progress: ProgressCallback | None = None,
+    on_batch_error: BatchErrorCallback | None = None,
     auto_apply_threshold: float = DEFAULT_AUTO_APPLY_CONFIDENCE,
     usage: AgentUsage | None = None,
 ) -> CategorizationResult:
@@ -240,13 +264,9 @@ def run_categorization(
     low_conf_with_memory = 0
     low_conf_without_memory = 0
 
-    def _run_batch(
+    def _run_batch_once(
         batch: list[dict],
     ) -> tuple[list[CategorySuggestion], int, int, int]:
-        """Run one LLM batch + apply its high-confidence suggestions inline.
-
-        Returns (suggestions, applied, batch_len, memory_hits).
-        """
         memory_examples = get_similar_categorized_transactions(engine, batch)
         prompt = _format_user_prompt(
             batch, categories, memory_examples=memory_examples
@@ -258,6 +278,35 @@ def run_categorization(
         suggestions = list(result.output.suggestions)
         applied = apply_high_confidence(engine, suggestions, auto_apply_threshold)
         return suggestions, applied, len(batch), len(memory_examples)
+
+    def _run_batch(
+        batch: list[dict],
+    ) -> tuple[list[CategorySuggestion], int, int, int]:
+        """Run one LLM batch with retry on transient connection errors.
+
+        Retries up to BATCH_MAX_RETRIES times on `ModelAPIError` /
+        `httpx.HTTPError` with exponential backoff (2s, 4s). Validation
+        errors and other non-transient failures fall through immediately
+        (pydantic_ai's own `retries=2` already covers schema retries).
+        """
+        attempt = 0
+        backoff = BATCH_RETRY_INITIAL_BACKOFF_S
+        while True:
+            try:
+                return _run_batch_once(batch)
+            except (ModelAPIError, httpx.HTTPError) as exc:
+                attempt += 1
+                if attempt > BATCH_MAX_RETRIES:
+                    raise
+                logger.warning(
+                    "Batch transient error (attempt %d/%d): %s — retrying in %.1fs",
+                    attempt,
+                    BATCH_MAX_RETRIES,
+                    exc,
+                    backoff,
+                )
+                time.sleep(backoff)
+                backoff *= 2
 
     while processed < MAX_TRANSACTIONS_PER_RUN:
         page = get_uncategorized_transactions(engine, limit=PAGE_SIZE)
@@ -290,13 +339,33 @@ def run_categorization(
                 ex.submit(contextvars.copy_context().run, _run_batch, b): idx
                 for idx, b in enumerate(batches)
             }
+            # Hard upper bound per future. `as_completed(timeout=...)` raises
+            # if NOTHING completes by then; `Future.result(timeout=...)` is
+            # what catches an individual stuck batch and lets us move on.
             for fut in as_completed(futures):
                 idx = futures[fut]
                 try:
-                    suggestions, applied, batch_len, mem_hits = fut.result()
-                except Exception:
+                    suggestions, applied, batch_len, mem_hits = fut.result(
+                        timeout=BATCH_TIMEOUT_S
+                    )
+                except FutureTimeoutError:
+                    page_failed += 1
+                    msg = (
+                        f"Batch {idx + 1} hardstop nach {BATCH_TIMEOUT_S}s"
+                    )
+                    logger.error(msg)
+                    if on_batch_error is not None:
+                        on_batch_error(msg)
+                    # Cancel the abandoned future. Cannot interrupt the
+                    # already-running thread (Python limitation), but stops
+                    # any not-yet-started ones.
+                    fut.cancel()
+                    continue
+                except Exception as exc:
                     page_failed += 1
                     logger.exception("Batch %d failed", idx + 1)
+                    if on_batch_error is not None:
+                        on_batch_error(f"Batch {idx + 1}: {exc}")
                     continue
                 page_succeeded += 1
                 page_applied += applied
@@ -320,6 +389,9 @@ def run_categorization(
                     processed,
                     initial_total,
                 )
+                # Successful batch clears any stale per-batch error banner.
+                if on_batch_error is not None and page_failed == 0:
+                    on_batch_error(None)
                 if on_progress:
                     display_current = min(processed, initial_total)
                     on_progress(

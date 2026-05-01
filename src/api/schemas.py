@@ -104,6 +104,9 @@ class RunOut(BaseModel):
     output_tokens: int | None = None
     cost_usd: Decimal | None = None
     usage_detail: dict | None = None
+    # M11 reliability surface — surfaced live while status='running'.
+    heartbeat_at: datetime | None = None
+    last_error: str | None = None
 
 
 class RunListOut(BaseModel):

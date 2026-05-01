@@ -715,10 +715,17 @@ class TestOrchestrator:
 
 @pytest.fixture
 def agent_api_client(db_engine):
-    """TestClient for agent API endpoints."""
+    """TestClient for agent API endpoints.
+
+    The runs router POSTs to the worker pod's /internal/runs/* endpoint;
+    in tests there is no worker, so we stub `_dispatch_to_worker` to a
+    no-op. (Tests that want to exercise the dispatch failure path live
+    in tests/api/test_runs_router.py.)
+    """
     from fastapi.testclient import TestClient
 
     from src.api.deps import get_db
+    from src.api.routers import runs as runs_router
 
     def _override_get_db():
         with Session(db_engine) as session:
@@ -728,13 +735,14 @@ def agent_api_client(db_engine):
     # from settings.database_url, so the patched env also needs the URL.
     db_url = db_engine.url.render_as_string(hide_password=False)
     with patch.dict(os.environ, {"API_TOKEN": "test-secret", "DATABASE_URL": db_url}):
-        from src.api.app import create_app
+        with patch.object(runs_router, "_dispatch_to_worker", lambda *_a, **_kw: None):
+            from src.api.app import create_app
 
-        app = create_app()
-        app.dependency_overrides[get_db] = _override_get_db
-        client = TestClient(app)
-        yield client
-        app.dependency_overrides.clear()
+            app = create_app()
+            app.dependency_overrides[get_db] = _override_get_db
+            client = TestClient(app)
+            yield client
+            app.dependency_overrides.clear()
 
 
 AUTH = {"Authorization": "Bearer test-secret"}

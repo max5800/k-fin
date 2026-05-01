@@ -1,11 +1,19 @@
-"""Runs router — trigger and monitor agent runs (M7)."""
+"""Runs router — trigger and monitor agent runs (M7).
+
+Run execution lives in the worker pod (port 8001) — the api just creates
+the AgentRun row and fire-and-forgets a POST to the worker. This keeps
+long-running LLM work out of the api request-handler process so api
+rollouts don't kill in-flight runs (the worker's reaper still cleans up
+if the worker itself dies mid-run).
+"""
 
 import logging
 import uuid
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
-from sqlalchemy import func, select
+import httpx
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
 from src.api.deps import get_db, require_token
@@ -29,21 +37,28 @@ KNOWN_AGENTS = {
     "synthesis",
 }
 
-
-def _execute_run(run_id: str, agent_name: str) -> None:
-    """Background task: dispatch a single agent via the orchestrator."""
-    from src.agents.orchestrator import AgentOrchestrator
-
-    orchestrator = AgentOrchestrator(database_url=settings.database_url)
-    orchestrator.run_single_for(run_id, agent_name)
+# Short timeout — the worker accepts the request, schedules the background
+# task, and returns 202 within milliseconds. Anything slower is a worker
+# health issue we want surfaced to the caller.
+_DISPATCH_TIMEOUT_S = 5.0
 
 
-def _execute_full_run(run_id: str) -> None:
-    """Background task: run all agents sequentially."""
-    from src.agents.orchestrator import AgentOrchestrator
-
-    orchestrator = AgentOrchestrator(database_url=settings.database_url)
-    orchestrator.run_full_for(run_id)
+def _dispatch_to_worker(path: str, payload: dict) -> None:
+    """Fire a single POST at the worker. Raises HTTPException on failure."""
+    url = settings.worker_url.rstrip("/") + path
+    try:
+        resp = httpx.post(url, json=payload, timeout=_DISPATCH_TIMEOUT_S)
+    except httpx.HTTPError as exc:
+        logger.error("Worker dispatch %s failed: %s", path, exc)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Worker unreachable: {exc}",
+        )
+    if resp.status_code >= 400:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Worker rejected dispatch ({resp.status_code}): {resp.text[:200]}",
+        )
 
 
 @router.post(
@@ -53,7 +68,6 @@ def _execute_full_run(run_id: str) -> None:
     summary="Trigger a full agent pipeline run",
 )
 def start_full_run(
-    background_tasks: BackgroundTasks,
     body: RunCreate | None = None,
     db: Session = Depends(get_db),
 ):
@@ -70,7 +84,23 @@ def start_full_run(
     db.commit()
     db.refresh(run)
 
-    background_tasks.add_task(_execute_full_run, run.id)
+    try:
+        _dispatch_to_worker("/internal/runs/start-full", {"run_id": run.id})
+    except HTTPException:
+        # Mark the row as failed so the user sees the dispatch error
+        # instead of a phantom RUNNING that the worker never picks up.
+        db.execute(
+            update(AgentRun)
+            .where(AgentRun.id == run.id)
+            .values(
+                status=RunStatus.FAILED,
+                finished_at=datetime.now(timezone.utc),
+                error="Worker dispatch failed",
+            )
+        )
+        db.commit()
+        raise
+
     return run
 
 
@@ -82,7 +112,6 @@ def start_full_run(
 )
 def start_run(
     agent_name: str,
-    background_tasks: BackgroundTasks,
     body: RunCreate | None = None,
     db: Session = Depends(get_db),
 ):
@@ -105,7 +134,24 @@ def start_run(
     db.commit()
     db.refresh(run)
 
-    background_tasks.add_task(_execute_run, run.id, agent_name)
+    try:
+        _dispatch_to_worker(
+            f"/internal/runs/start?agent_name={agent_name}",
+            {"run_id": run.id},
+        )
+    except HTTPException:
+        db.execute(
+            update(AgentRun)
+            .where(AgentRun.id == run.id)
+            .values(
+                status=RunStatus.FAILED,
+                finished_at=datetime.now(timezone.utc),
+                error="Worker dispatch failed",
+            )
+        )
+        db.commit()
+        raise
+
     return run
 
 
@@ -144,3 +190,43 @@ def get_run(
     if not run:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Run not found")
     return run
+
+
+@router.delete(
+    "/{run_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Cancel a running agent run",
+)
+def cancel_run(
+    run_id: str,
+    db: Session = Depends(get_db),
+) -> None:
+    """Cooperative cancel: flip the row to `cancelled`. The worker's
+    `_update_progress` checks the status at every batch boundary and
+    raises `RunCancelled` on the next call, ending the in-flight work.
+
+    Idempotent on already-terminal runs returns 409 (so the UI can show
+    a meaningful error if the user clicks twice).
+    """
+    run = db.get(AgentRun, run_id)
+    if run is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Run not found")
+
+    if run.status not in (RunStatus.PENDING, RunStatus.RUNNING):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Run is already {run.status.value}",
+        )
+
+    db.execute(
+        update(AgentRun)
+        .where(AgentRun.id == run_id)
+        .values(
+            status=RunStatus.CANCELLED,
+            finished_at=datetime.now(timezone.utc),
+            error="cancelled by user",
+            last_error=None,
+        )
+    )
+    db.commit()
+    return None

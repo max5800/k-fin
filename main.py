@@ -4,13 +4,17 @@ Runs on port 8001, never exposed to the internet.
 Receives sync requests from the public comdirect-api service.
 """
 
+import asyncio
 import re
 import uuid
+from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException
+from fastapi import BackgroundTasks, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, field_validator
+from sqlalchemy import create_engine
 
+from src.agents.reaper import reap_stale_runs, start_periodic_reaper
 from src.api.routers import (
     aggregates,
     auth,
@@ -28,10 +32,44 @@ from src.core.logging import get_logger, setup_logging
 setup_logging()
 logger = get_logger("worker")
 
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Boot-time reaper + periodic stale-run reaper.
+
+    The boot-mode reaper sweeps `RUNNING` rows orphaned by a previous
+    worker death (heartbeat_at NULL or older than the cutoff). The
+    periodic loop catches in-flight orphans for the rest of the
+    process's lifetime — every 5 min, very cheap.
+    """
+    engine = create_engine(settings.database_url)
+    try:
+        reaped = await asyncio.to_thread(reap_stale_runs, engine, boot_mode=True)
+        if reaped:
+            logger.warning("Boot reaper: marked %d stale run(s) as failed", reaped)
+    except Exception:
+        # Don't refuse to start the worker — but we will log loudly.
+        logger.exception("Boot reaper failed; serving anyway")
+
+    reaper_task = await start_periodic_reaper(engine)
+    app.state.engine = engine
+    app.state.reaper_task = reaper_task
+    try:
+        yield
+    finally:
+        reaper_task.cancel()
+        try:
+            await reaper_task
+        except (asyncio.CancelledError, Exception):
+            pass
+        engine.dispose()
+
+
 app = FastAPI(
     title="k-fin Worker",
     description="Internal sync worker — not publicly accessible",
     version="0.2.0",
+    lifespan=lifespan,
 )
 
 _origins = settings.get_cors_origins()
@@ -88,6 +126,55 @@ class SyncStartRequest(BaseModel):
 @app.get("/health")
 def health():
     return {"status": "ok", "service": "comdirect-worker", "platform": "k-fin"}
+
+
+class RunDispatchRequest(BaseModel):
+    run_id: str = Field(min_length=1, max_length=64)
+
+
+def _execute_run_in_worker(run_id: str, agent_name: str) -> None:
+    """Background body: dispatch the run via the orchestrator.
+
+    Imported lazily so the worker boot doesn't pay the heavy
+    pydantic_ai import cost until the first run lands.
+    """
+    from src.agents.orchestrator import AgentOrchestrator
+
+    orchestrator = AgentOrchestrator(database_url=settings.database_url)
+    orchestrator.run_single_for(run_id, agent_name)
+
+
+def _execute_full_run_in_worker(run_id: str) -> None:
+    from src.agents.orchestrator import AgentOrchestrator
+
+    orchestrator = AgentOrchestrator(database_url=settings.database_url)
+    orchestrator.run_full_for(run_id)
+
+
+@app.post("/internal/runs/start", status_code=202)
+def internal_run_start(
+    agent_name: str,
+    payload: RunDispatchRequest,
+    background_tasks: BackgroundTasks,
+):
+    """Dispatch a single-agent run for an existing AgentRun row.
+
+    Fire-and-forget from the api caller's perspective. The row is created
+    (status=pending) by the api before this is invoked. The orchestrator
+    flips it to running, drives heartbeats, and writes the terminal status.
+    """
+    background_tasks.add_task(_execute_run_in_worker, payload.run_id, agent_name)
+    return {"status": "accepted", "run_id": payload.run_id, "agent": agent_name}
+
+
+@app.post("/internal/runs/start-full", status_code=202)
+def internal_run_start_full(
+    payload: RunDispatchRequest,
+    background_tasks: BackgroundTasks,
+):
+    """Dispatch a full-pipeline run (all agents, sequentially)."""
+    background_tasks.add_task(_execute_full_run_in_worker, payload.run_id)
+    return {"status": "accepted", "run_id": payload.run_id, "agent": "full"}
 
 
 @app.post("/internal/normalize")

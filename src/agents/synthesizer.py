@@ -9,6 +9,7 @@ from datetime import date, timedelta
 from pydantic_ai import Agent
 from sqlalchemy import Engine
 
+from src.agents._anthropic import make_anthropic_model
 from src.agents._runner import run_in_fresh_loop
 from src.agents._usage import AgentUsage, extract_usage
 from src.agents.gather import get_recent_reports
@@ -25,7 +26,7 @@ logger = logging.getLogger(__name__)
 MODEL = "anthropic:claude-sonnet-4-6"
 
 synthesizer_agent = Agent(
-    MODEL,
+    make_anthropic_model(MODEL),
     output_type=SynthesisResult,
     system_prompt=SYNTHESIZER_SYSTEM_PROMPT,
     retries=2,
