@@ -23,7 +23,7 @@ from concurrent.futures import (
 
 import httpx
 from pydantic_ai import Agent
-from pydantic_ai.exceptions import ModelAPIError
+from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError
 from pydantic_ai.settings import ModelSettings
 from sqlalchemy import Engine, update
 from sqlalchemy.orm import Session
@@ -154,6 +154,51 @@ ProgressCallback = Callable[[int, int, str], None]
 BatchErrorCallback = Callable[[str | None], None]
 
 
+# HTTP statuses that warrant retrying the same request:
+#   408 Request Timeout, 425 Too Early, 429 Rate Limit,
+#   500/502/503/504 server-side hiccups.
+# Anything else (400 invalid request, 401 unauthorised, 402 payment
+# required, 403 forbidden, 404 not found, 422 unprocessable) is the
+# user's problem — retrying is a waste and hides the real cause.
+_TRANSIENT_HTTP_STATUSES = frozenset({408, 425, 429, 500, 502, 503, 504})
+
+
+def _is_transient(exc: BaseException) -> bool:
+    """Decide whether to retry this exception within a batch."""
+    if isinstance(exc, ModelHTTPError):
+        return exc.status_code in _TRANSIENT_HTTP_STATUSES
+    if isinstance(exc, httpx.HTTPError):
+        # httpx network errors (connect, read, pool, timeout) are network-level.
+        return True
+    if isinstance(exc, ModelAPIError):
+        # Generic model error without an HTTP status — assume transient.
+        return True
+    return False
+
+
+def _format_model_error(exc: BaseException) -> str:
+    """Extract a user-actionable message out of a model exception.
+
+    For `ModelHTTPError` this digs into the Anthropic error body so the
+    UI can show "Anthropic API (400): Your credit balance is too low …"
+    rather than the opaque pydantic-ai stringification.
+    """
+    if isinstance(exc, ModelHTTPError):
+        body = exc.body
+        if isinstance(body, dict):
+            err = body.get("error")
+            if isinstance(err, dict):
+                message = err.get("message")
+                if message:
+                    return f"Anthropic API ({exc.status_code}): {message}"
+        return f"Anthropic API HTTP {exc.status_code}"
+    if isinstance(exc, httpx.HTTPError):
+        return f"Netzwerkfehler ({type(exc).__name__}): {exc}"
+    if isinstance(exc, ModelAPIError):
+        return f"Modell-Fehler ({type(exc).__name__}): {exc}"
+    return f"{type(exc).__name__}: {exc}"
+
+
 def _format_user_prompt(
     transactions: list[dict],
     categories: list[dict],
@@ -282,12 +327,14 @@ def run_categorization(
     def _run_batch(
         batch: list[dict],
     ) -> tuple[list[CategorySuggestion], int, int, int]:
-        """Run one LLM batch with retry on transient connection errors.
+        """Run one LLM batch with retry on TRANSIENT failures only.
 
-        Retries up to BATCH_MAX_RETRIES times on `ModelAPIError` /
-        `httpx.HTTPError` with exponential backoff (2s, 4s). Validation
-        errors and other non-transient failures fall through immediately
-        (pydantic_ai's own `retries=2` already covers schema retries).
+        Retries up to BATCH_MAX_RETRIES times with exponential backoff
+        (2s, 4s) on 5xx, 408, 425, 429, and httpx network errors. 4xx
+        from Anthropic (400 invalid request, 401 auth, 402 payment, 403,
+        404, 422) is surfaced immediately — retrying a depleted credit
+        balance just delays a user-actionable error without fixing it.
+        Pydantic-ai's own `retries=2` covers output-schema retries.
         """
         attempt = 0
         backoff = BATCH_RETRY_INITIAL_BACKOFF_S
@@ -296,7 +343,7 @@ def run_categorization(
                 return _run_batch_once(batch)
             except (ModelAPIError, httpx.HTTPError) as exc:
                 attempt += 1
-                if attempt > BATCH_MAX_RETRIES:
+                if not _is_transient(exc) or attempt > BATCH_MAX_RETRIES:
                     raise
                 logger.warning(
                     "Batch transient error (attempt %d/%d): %s — retrying in %.1fs",
@@ -328,6 +375,11 @@ def run_categorization(
         page_failed = 0
         page_succeeded = 0
         page_applied = 0
+        # Most-recent batch error within the page — rolled into the
+        # page-failed RuntimeError so the user sees the actual cause
+        # (e.g. "Anthropic API (400): credit balance too low") rather
+        # than a generic "page fully failed" message.
+        last_batch_error: str | None = None
         # Each pool worker gets its own copy of the caller's ContextVar
         # context so `pydantic_ai.Agent.override(model=TestModel())` and
         # other context-bound state survive the thread hop. We copy once
@@ -350,10 +402,9 @@ def run_categorization(
                     )
                 except FutureTimeoutError:
                     page_failed += 1
-                    msg = (
-                        f"Batch {idx + 1} hardstop nach {BATCH_TIMEOUT_S}s"
-                    )
+                    msg = f"Batch {idx + 1} hardstop nach {BATCH_TIMEOUT_S}s"
                     logger.error(msg)
+                    last_batch_error = msg
                     if on_batch_error is not None:
                         on_batch_error(msg)
                     # Cancel the abandoned future. Cannot interrupt the
@@ -364,8 +415,9 @@ def run_categorization(
                 except Exception as exc:
                     page_failed += 1
                     logger.exception("Batch %d failed", idx + 1)
+                    last_batch_error = _format_model_error(exc)
                     if on_batch_error is not None:
-                        on_batch_error(f"Batch {idx + 1}: {exc}")
+                        on_batch_error(last_batch_error)
                     continue
                 page_succeeded += 1
                 page_applied += applied
@@ -408,11 +460,14 @@ def run_categorization(
 
         # Safety: if every batch in this page failed, the next page-fetch
         # would return the same rows (nothing got applied) → infinite loop.
-        # Bail out so the run finishes as failed rather than hanging.
+        # Bail out so the run finishes as failed rather than hanging, and
+        # surface the underlying cause (e.g. Anthropic 400 credit-balance)
+        # so the user can act instead of staring at a generic "fully failed".
         if page_succeeded == 0 and page_failed > 0:
+            cause = last_batch_error or "kein Batch hat ein Ergebnis geliefert"
             raise RuntimeError(
-                f"Categorization page {page_num} fully failed "
-                f"({page_failed} batches) — aborting to avoid infinite retry"
+                f"Kategorisierung fehlgeschlagen ({page_failed}/"
+                f"{len(batches)} Batches): {cause}"
             )
 
         # Same loop risk: batches succeeded but zero suggestions met the

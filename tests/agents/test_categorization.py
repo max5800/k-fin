@@ -182,18 +182,21 @@ class TestBatchRetry:
         errors_seen: list[str | None] = []
         monkeypatch.setattr(cat_mod, "BATCH_MAX_RETRIES", 2)
 
-        with pytest.raises(RuntimeError, match="fully failed"):
+        with pytest.raises(RuntimeError, match="fehlgeschlagen") as exc_info:
             cat_mod.run_categorization(
                 seeded_engine,
                 on_batch_error=lambda m: errors_seen.append(m),
                 auto_apply_threshold=0.6,
             )
 
+        # Bail-out message must include the underlying network failure so
+        # the user sees what actually broke, not just "fully failed".
+        assert "DNS down" in str(exc_info.value)
+
         # Callback must have been invoked at least once with a non-None
-        # message describing the batch failure.
+        # formatted message (Netzwerkfehler / Anthropic API / etc.).
         non_none = [m for m in errors_seen if m is not None]
         assert non_none, f"expected ≥1 non-None error, got {errors_seen!r}"
-        assert any("Batch" in m for m in non_none)
 
 
 # ---------------------------------------------------------------------------
@@ -261,12 +264,15 @@ class TestBatchTimeout:
         monkeypatch.setattr(cat_mod, "ThreadPoolExecutor", _FakePool)
 
         errors_seen: list[str | None] = []
-        with pytest.raises(RuntimeError, match="fully failed"):
+        with pytest.raises(RuntimeError, match="fehlgeschlagen") as exc_info:
             cat_mod.run_categorization(
                 seeded_engine,
                 on_batch_error=lambda m: errors_seen.append(m),
                 auto_apply_threshold=0.6,
             )
+
+        # Hardstop reason must be carried into the page-failed message.
+        assert "hardstop" in str(exc_info.value)
 
         non_none = [m for m in errors_seen if m]
         assert non_none, "timeout should surface via on_batch_error"
