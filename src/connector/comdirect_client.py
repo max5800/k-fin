@@ -346,6 +346,93 @@ class ComdirectClient:
             data = response.json()
             return data.get("values", [])
 
+    async def get_transactions_window(
+        self,
+        account_id: str,
+        from_date: date,
+        to_date: date,
+        *,
+        paging_count: int = 500,
+        transaction_state: str = "BOOKED",
+    ) -> tuple[list[dict], int]:
+        """Fetch one date-window of account transactions for backfill.
+
+        Sets both ``min-bookingDate`` and ``max-bookingDate`` so the response
+        is bounded on both sides. Returns ``(values, matches)`` where
+        ``matches`` is the API-reported total in the window. If
+        ``len(values) >= paging_count`` the caller should treat the window as
+        truncated and split it.
+
+        HTTP 422 (typically: window outside the API's lookback boundary) is
+        not raised — it returns ``([], 0)`` with a WARN. The window-walk
+        treats that as a soft stop. Other 4xx/5xx still raise.
+        """
+        if not (self._secondary_token or self.access_token):
+            raise RuntimeError("Not authenticated")
+
+        if from_date > to_date:
+            raise ValueError(f"from_date ({from_date}) must be <= to_date ({to_date})")
+
+        params: dict[str, str | int] = {
+            "paging-count": paging_count,
+            "min-bookingDate": from_date.isoformat(),
+            "max-bookingDate": to_date.isoformat(),
+            "transactionState": transaction_state,
+        }
+
+        logger.info(
+            "get_transactions_window(%s): %s..%s, paging-count=%s, state=%s",
+            account_id,
+            from_date.isoformat(),
+            to_date.isoformat(),
+            paging_count,
+            transaction_state,
+        )
+
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                f"{BASE_URL}/api/banking/v1/accounts/{account_id}/transactions",
+                headers=self._auth_headers(),
+                params=params,
+            )
+
+            if response.status_code == 422:
+                logger.warning(
+                    "get_transactions_window(%s) HTTP 422 for %s..%s — treating as boundary",
+                    account_id,
+                    from_date.isoformat(),
+                    to_date.isoformat(),
+                )
+                return [], 0
+
+            if response.status_code >= 400:
+                logger.error(
+                    "get_transactions_window(%s) failed: HTTP %d, params=%s, body=%s",
+                    account_id,
+                    response.status_code,
+                    params,
+                    response.text[:500],
+                )
+            response.raise_for_status()
+
+            data = response.json()
+            values = data.get("values", [])
+            paging = data.get("paging") or {}
+            matches = paging.get("matches", len(values))
+
+            if len(values) >= paging_count:
+                logger.warning(
+                    "get_transactions_window(%s) hit paging cap (%d rows, matches=%s) "
+                    "for %s..%s — caller should split window",
+                    account_id,
+                    len(values),
+                    matches,
+                    from_date.isoformat(),
+                    to_date.isoformat(),
+                )
+
+            return values, matches
+
     async def get_depots(self) -> list[dict]:
         """Fetch all depots (brokerage accounts)."""
         if not (self._secondary_token or self.access_token):

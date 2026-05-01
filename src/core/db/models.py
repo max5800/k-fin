@@ -67,6 +67,13 @@ class RunTrigger(str, enum.Enum):
     WEBHOOK = "webhook"
 
 
+class BackfillStatus(str, enum.Enum):
+    RUNNING = "running"
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+
+
 class RawTransaction(Base):
     """Immutable audit log of raw transaction payloads.
 
@@ -570,5 +577,37 @@ class User(Base):
         nullable=False,
     )
     last_login_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+
+class BackfillRun(Base):
+    """Tracks a historical-backfill walk over Comdirect account transactions.
+
+    One row per user-initiated backfill (covers all accounts at once;
+    ``account_id`` is intentionally NULL — per-account scoping is M17 work).
+    The worker writes progress here so the UI can poll status.
+    """
+
+    __tablename__ = "backfill_runs"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    account_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    target_start_date: Mapped[date] = mapped_column(Date, nullable=False)
+    current_window_start: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
+    windows_total: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    windows_done: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    rows_inserted: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    progress_message: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    status: Mapped[BackfillStatus] = mapped_column(
+        SQLEnum(BackfillStatus, values_callable=lambda e: [m.value for m in e]),
+        nullable=False,
+        default=BackfillStatus.RUNNING,
+    )
+    error: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    started_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    finished_at: Mapped[Optional[datetime]] = mapped_column(
         DateTime(timezone=True), nullable=True
     )

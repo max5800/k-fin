@@ -371,3 +371,235 @@ async def internal_sync_confirm(session_id: str):
         "message": "Sync abgeschlossen — Agents separat starten",
         "ingest": ingest_result,
     }
+
+
+# ---------------------------------------------------------------------------
+# Historical backfill endpoints (M-backfill)
+# ---------------------------------------------------------------------------
+
+
+class BackfillStartRequest(BaseModel):
+    months: int = Field(default=24, ge=1, le=24)
+
+
+class BackfillStartResponse(BaseModel):
+    status: str
+    session_id: str
+
+
+class BackfillRunResponse(BaseModel):
+    run_id: str
+    status: str
+    target_start_date: str
+    current_window_start: str | None
+    windows_total: int
+    windows_done: int
+    rows_inserted: int
+    progress_message: str | None
+    error: str | None
+    started_at: str
+    finished_at: str | None
+
+
+def _execute_backfill_in_worker(
+    run_id: str,
+    client: ComdirectClient,
+    target_start_date_iso: str,
+) -> None:
+    """Background body: drive the backfill walker and write terminal status.
+
+    Runs in a worker BackgroundTask so the HTTP confirm-call returns
+    immediately. Status updates land on the BackfillRun row continuously.
+    """
+    import asyncio as _asyncio
+    from datetime import date as _date
+
+    from src.core.db.models import BackfillStatus
+    from src.normalization.pipeline import NormalizationPipeline
+    from src.scheduler.backfill import (
+        mark_run_terminal,
+        run_backfill,
+    )
+
+    pipeline = NormalizationPipeline(
+        database_url=settings.database_url,
+        own_ibans=settings.get_own_ibans(),
+    )
+
+    async def _drive() -> None:
+        try:
+            accounts = await client.get_accounts()
+            account_ids: list[str] = []
+            for acc in accounts:
+                inner = acc.get("account") or acc
+                aid = inner.get("accountId")
+                if aid:
+                    account_ids.append(aid)
+
+            if not account_ids:
+                raise RuntimeError("No accounts returned from Comdirect")
+
+            target = _date.fromisoformat(target_start_date_iso)
+            await run_backfill(
+                client=client,
+                pipeline=pipeline,
+                run_id=run_id,
+                target_start_date=target,
+                account_ids=account_ids,
+            )
+            mark_run_terminal(pipeline, run_id, status=BackfillStatus.SUCCEEDED)
+            logger.info("Backfill %s succeeded", run_id)
+        except Exception as exc:
+            logger.exception("Backfill %s failed", run_id)
+            mark_run_terminal(
+                pipeline, run_id, status=BackfillStatus.FAILED, error=str(exc)
+            )
+
+    _asyncio.run(_drive())
+
+
+@app.post("/internal/backfill/start", response_model=BackfillStartResponse)
+async def internal_backfill_start(payload: BackfillStartRequest | None = None):
+    """Step 1: Begin backfill auth flow and trigger TAN challenge.
+
+    Refuses (409) if any backfill is already running — max one per user.
+    """
+    from sqlalchemy.orm import Session
+
+    from src.core.db.models import BackfillRun, BackfillStatus
+
+    config = payload.model_dump() if payload else {"months": 24}
+
+    # Concurrency guard: refuse if a run is already in-flight.
+    engine = create_engine(settings.database_url)
+    try:
+        with Session(engine) as s:
+            existing = s.execute(
+                BackfillRun.__table__.select()
+                .where(BackfillRun.status == BackfillStatus.RUNNING)
+                .limit(1)
+            ).first()
+            if existing is not None:
+                raise HTTPException(
+                    status_code=409,
+                    detail="Ein Backfill läuft bereits — bitte warten oder abbrechen.",
+                )
+    finally:
+        engine.dispose()
+
+    client = ComdirectClient()
+    try:
+        auth_state = await client.begin_auth()
+    except RuntimeError as exc:
+        logger.error(f"begin_auth failed: {exc}")
+        raise HTTPException(status_code=502, detail=str(exc))
+
+    session_id = str(uuid.uuid4())
+    _pending_sessions[session_id] = {
+        "kind": "backfill",
+        "client": client,
+        "session_identifier": auth_state["session_identifier"],
+        "challenge_id": auth_state["challenge_id"],
+        "config": config,
+    }
+
+    logger.info("Backfill TAN challenge sent, session_id=%s", session_id)
+    return BackfillStartResponse(status="pending_tan", session_id=session_id)
+
+
+@app.post("/internal/backfill/confirm", status_code=202)
+async def internal_backfill_confirm(
+    session_id: str, background_tasks: BackgroundTasks
+):
+    """Step 2: Complete auth, create BackfillRun row, dispatch to BackgroundTasks."""
+    from datetime import date as _date
+
+    from sqlalchemy.orm import Session
+
+    from src.core.db.models import BackfillRun, BackfillStatus
+
+    if session_id not in _pending_sessions:
+        raise HTTPException(status_code=404, detail="Unknown session_id")
+
+    pending = _pending_sessions.pop(session_id)
+    if pending.get("kind") != "backfill":
+        raise HTTPException(
+            status_code=400,
+            detail=f"Session {session_id} is not a backfill session",
+        )
+
+    client: ComdirectClient = pending["client"]
+    config = pending.get("config", {})
+    months = int(config.get("months", 24))
+
+    ok = await client.complete_auth(
+        pending["session_identifier"], pending["challenge_id"]
+    )
+    if not ok:
+        raise HTTPException(status_code=502, detail="Session activation failed")
+
+    today = _date.today()
+    target = today.replace(day=1)
+    # Roll back `months` whole months (calendar-aware).
+    year = target.year
+    month = target.month - months
+    while month <= 0:
+        month += 12
+        year -= 1
+    target = target.replace(year=year, month=month)
+
+    run_id = str(uuid.uuid4())
+    engine = create_engine(settings.database_url)
+    try:
+        with Session(engine) as s:
+            s.add(
+                BackfillRun(
+                    id=run_id,
+                    target_start_date=target,
+                    status=BackfillStatus.RUNNING,
+                )
+            )
+            s.commit()
+    finally:
+        engine.dispose()
+
+    background_tasks.add_task(
+        _execute_backfill_in_worker, run_id, client, target.isoformat()
+    )
+
+    logger.info("Backfill %s dispatched (target=%s, months=%d)", run_id, target, months)
+    return {"status": "accepted", "run_id": run_id, "target_start_date": target.isoformat()}
+
+
+@app.get("/internal/backfill/runs/{run_id}", response_model=BackfillRunResponse)
+def internal_backfill_run_status(run_id: str):
+    """Return the current state of a backfill run for UI polling."""
+    from sqlalchemy.orm import Session
+
+    from src.core.db.models import BackfillRun
+
+    engine = create_engine(settings.database_url)
+    try:
+        with Session(engine) as s:
+            row = s.get(BackfillRun, run_id)
+            if row is None:
+                raise HTTPException(status_code=404, detail="Run not found")
+            return BackfillRunResponse(
+                run_id=row.id,
+                status=row.status.value if hasattr(row.status, "value") else str(row.status),
+                target_start_date=row.target_start_date.isoformat(),
+                current_window_start=(
+                    row.current_window_start.isoformat()
+                    if row.current_window_start
+                    else None
+                ),
+                windows_total=row.windows_total,
+                windows_done=row.windows_done,
+                rows_inserted=row.rows_inserted,
+                progress_message=row.progress_message,
+                error=row.error,
+                started_at=row.started_at.isoformat(),
+                finished_at=row.finished_at.isoformat() if row.finished_at else None,
+            )
+    finally:
+        engine.dispose()
