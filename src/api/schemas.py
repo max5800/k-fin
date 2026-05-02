@@ -134,6 +134,8 @@ class MonthlySummaryOut(BaseModel):
     income: Decimal
     expenses: Decimal
     net: Decimal
+    # Savings rate as a fraction in [-inf, 1.0]: 0.30 means 30 %.
+    # API convention: all `_rate` / `_ratio` fields are fractions, never percent values.
     savings_rate: Decimal
     transaction_count: int
     by_category: list[CategoryBreakdown]

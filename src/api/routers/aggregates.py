@@ -63,7 +63,7 @@ def monthly_summary(
     income = row.income
     expenses = row.expenses
     net = income + expenses
-    savings_rate = (net / income * 100) if income else 0
+    savings_rate = (net / income) if income else 0
 
     # --- per-category breakdown ---
     cat_stmt = (
@@ -100,7 +100,7 @@ def monthly_summary(
         income=income,
         expenses=expenses,
         net=net,
-        savings_rate=round(savings_rate, 2),
+        savings_rate=round(savings_rate, 4),
         transaction_count=row.transaction_count,
         by_category=categories,
     )
