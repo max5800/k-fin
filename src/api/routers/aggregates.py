@@ -111,9 +111,27 @@ def cashflow_over_time(
     db: Session = Depends(get_db),
     date_from: date | None = Query(None),
     date_to: date | None = Query(None),
+    months: int | None = Query(
+        None,
+        ge=1,
+        le=120,
+        description="Rolling window: include the last N months ending today. "
+        "Mutually exclusive with date_from/date_to (date_from/_to win if set).",
+    ),
     exclude_internal: bool = Query(True),
 ):
     """Return a monthly time-series of income and expenses."""
+    if months is not None and date_from is None and date_to is None:
+        today = date.today()
+        # First day of the month that is (months-1) months before the current one,
+        # so `months=12` returns 12 calendar months including the current one.
+        year = today.year
+        month = today.month - (months - 1)
+        while month <= 0:
+            month += 12
+            year -= 1
+        date_from = date(year, month, 1)
+
     stmt = (
         select(
             extract("year", NormalizedTransaction.booking_date).label("year"),
