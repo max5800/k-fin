@@ -1,3 +1,11 @@
+## [1.28.2](https://github.com/max5800/k-fin/compare/v1.28.1...v1.28.2) (2026-05-02)
+
+
+### Bug Fixes
+
+* **aggregates:** honor ?months= param in cashflow-over-time ([3ae1f1d](https://github.com/max5800/k-fin/commit/3ae1f1d804574d2805db36cf6a8c4431306a0f6b))
+* **aggregates:** return savings_rate as fraction, not percent ([5e4af3a](https://github.com/max5800/k-fin/commit/5e4af3af9742a74eb2c918f7f4cabee03a491208))
+
 ## [1.28.1](https://github.com/max5800/k-fin/compare/v1.28.0...v1.28.1) (2026-05-01)
 
 
