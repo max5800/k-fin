@@ -14,10 +14,11 @@ Connects to the Comdirect REST API (read-only), normalizes your financial data i
 
 - **Comdirect connector** — OAuth2 + pushTAN authentication, strictly read-only
 - **CSV/JSON export** — Accounts, transactions, depot positions, depot transactions, financial overview
-- **Finance API** — REST API for normalized financial data (transactions, categorization)
+- **Finance API** — REST API for normalized financial data (transactions, categorization, aggregates)
 - **Normalization pipeline** — Ingests raw Comdirect data into a canonical schema in Postgres
+- **AI categorization** — LLM agents (pydantic-ai + Claude) categorize transactions, detect anomalies, generate monthly summaries
+- **MCP server** — Exposes the read-only Finance API as MCP tools for agent use
 - **Docker / Kubernetes** — Two-microservice architecture: public API + internal worker
-- **Firefly III import** — Legacy (frozen / not maintained)
 
 ## Architecture
 
@@ -35,12 +36,15 @@ A Kubernetes NetworkPolicy ensures only `comdirect-api` can reach `comdirect-wor
 | Module | Description |
 |--------|-------------|
 | `src/connector/` | Comdirect API client (auth, accounts, transactions, depot) |
-| `src/api/` | Read-only FastAPI serving CSV exports (comdirect-api) |
+| `src/api/` | FastAPI app, routers, JWT auth (`src/api/auth/`) |
 | `src/normalization/` | Ingest + canonicalize pipeline for Postgres |
+| `src/agents/` | LLM agents — categorization, anomaly detection, monthly analysis, orchestrator |
+| `src/mcp_server/` | MCP server exposing the Finance API as agent tools |
 | `src/exporter/` | Finance agent mapper + model-based JSON export |
 | `src/scheduler/` | Sync job orchestration (comdirect-worker) |
-| `src/core/` | Config (pydantic-settings), logging, DB models |
-| `scripts/` | Export script, auth test, debug tools |
+| `src/core/` | Config (pydantic-settings), logging, SQLAlchemy DB models |
+| `alembic/` | DB migrations |
+| `scripts/` | Export, report, migration, and debug CLIs |
 
 ## Tech Stack
 
@@ -57,18 +61,28 @@ A Kubernetes NetworkPolicy ensures only `comdirect-api` can reach `comdirect-wor
 ## Prerequisites
 
 - Python 3.13+ and uv
-- Comdirect API credentials (Client ID, Client Secret, account number, PIN)
+- Postgres 16+ (local instance or Docker)
+- Comdirect API credentials (Client ID, Client Secret, account number, PIN) — register at <https://developer.comdirect.de/>
 - A pushTAN-capable device for authentication
 - Docker (optional, for container setup)
+- An Anthropic API key if you want the AI categorization features
 
 ## Setup
 
 ```bash
 git clone https://github.com/max5800/k-fin.git
 cd k-fin
-cp .env.example .env
-# Fill in your credentials in .env
+
+# Python deps
 uv sync
+
+# Config — fill in your Comdirect creds, API_TOKEN, DATABASE_URL,
+# OWN_IBANS, ANTHROPIC_API_KEY (see .env.example for the full list)
+cp .env.example .env
+$EDITOR .env
+
+# Database — apply schema migrations (uses DATABASE_URL from .env)
+uv run alembic upgrade head
 ```
 
 ## Usage
@@ -132,7 +146,19 @@ Set `API_TOKEN` in your `.env` to require authentication.
 
 - **Manual pushTAN is a feature, not a bug:** Because Comdirect does not offer scoped read-only API tokens, requiring a manual pushTAN confirmation for every sync is a deliberate security boundary. It ensures no automated system can quietly access your bank data or initiate sessions without your physical device approval.
 - **Your credentials never leave your machine.** All data flows from Comdirect into your local Postgres DB via the normalization pipeline.
+- **Read-only API.** The Comdirect connector implements only `GET` operations. Write operations (transfers, orders) are not and will not be supported.
 - Never commit your `.env` file. It contains banking credentials.
+
+## Disclaimer
+
+This is a personal project shared as-is under the Apache 2.0 license (see [LICENSE](LICENSE)).
+
+- **No warranty.** Use at your own risk. Read the full warranty disclaimer in `LICENSE`.
+- **Banking data is sensitive.** You are responsible for securing your own deployment — credentials, network exposure, database access, backups, and the host running k-fin. Don't put this on the public internet without auth and TLS.
+- **Not affiliated with Comdirect.** k-fin is an independent open-source project. It uses the public Comdirect REST API with end-user credentials. The Comdirect API specification (`docs/comdirect_REST_API_Dokumentation.*`) is not included in this repository — fetch it directly from <https://developer.comdirect.de/> for local reference.
+- **No support guarantee.** Issues and PRs are welcome but answered as time allows.
+
+For security-relevant findings, see [SECURITY.md](SECURITY.md).
 
 ## Built with AI
 
