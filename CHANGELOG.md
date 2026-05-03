@@ -1,3 +1,10 @@
+# [1.29.0](https://github.com/max5800/k-fin/compare/v1.28.2...v1.29.0) (2026-05-03)
+
+
+### Features
+
+* **deploy:** add docker-compose stack for self-hosted use ([f089b0b](https://github.com/max5800/k-fin/commit/f089b0b7a3eca05f27f0fbe565fa418eef1a2033))
+
 ## [1.28.2](https://github.com/max5800/k-fin/compare/v1.28.1...v1.28.2) (2026-05-02)
 
 
