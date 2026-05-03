@@ -6,7 +6,9 @@
 
 **Read-only financial data platform powered by the Comdirect REST API — CSV export, Finance API, and normalization pipeline.**
 
-> I built this for myself. It works for me. If it is useful to you, great — but this comes with no guarantees and no support.
+> A personal project, not a finished product. I run it daily on my own bank data and iterate from real usage — features land when I miss them, not on a public roadmap. It works well enough that I trust it with my own finances; whether that bar is high enough for you is your call. No guarantees, no support.
+
+**Companion repo:** [k-fin-ui](https://github.com/max5800/k-fin-ui) — React frontend for this backend.
 
 ## What it does
 
@@ -162,7 +164,7 @@ For security-relevant findings, see [SECURITY.md](SECURITY.md).
 
 ## Built with AI
 
-This project was built with AI-assisted development (primarily Claude via OpenClaw). Architecture, security rules, and code were collaboratively developed — but every merge went through a human review. AI writes code; humans decide what ships.
+I do not write the code in this project. Claude (via OpenClaw) writes it; I direct the architecture, security model, and product decisions, and review every change before it ships. Treat this as a human-curated AI-built codebase rather than a hand-written one — the design choices and the trust boundary are mine, the implementation is the model's.
 
 ## License
 
