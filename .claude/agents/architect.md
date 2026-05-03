@@ -14,10 +14,10 @@ You evaluate software architecture — module boundaries, data flow, API design,
 
 ## Project Context
 
-- Python app: Comdirect (bank) -> CSV/JSON export + REST API + (planned) Firefly III import
-- Modules: connector (Comdirect API), api (FastAPI), importer (Firefly III), exporter (mappers), scheduler, core (config/logging)
-- Current state: export works, API works, Firefly import is scaffolded but not complete
-- Single developer, personal project, but growing in scope
+- Python app: Comdirect (bank, read-only) → Postgres normalization → REST API + AI categorization agents + MCP server, with CSV/JSON export as a side path
+- Modules: `connector` (Comdirect API), `api` (FastAPI + JWT auth), `normalization` (ingest/canonicalize for Postgres), `agents` (LLM categorization, anomaly, monthly analysis, orchestrator), `mcp_server` (agent-tool surface), `exporter` (mappers), `scheduler`, `core` (config/logging/db models)
+- Two-microservice deploy: `comdirect-api` (public, no secrets) + `comdirect-worker` (internal, holds bank secrets); NetworkPolicy isolates the worker
+- **Public repo**, single maintainer, growing in scope
 
 ## What You Evaluate
 

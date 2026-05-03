@@ -26,11 +26,14 @@ Two-microservice split with strict secret separation:
 ### Source Modules
 
 - `src/connector/` — Comdirect API client (OAuth2 + pushTAN, strictly read-only)
-- `src/api/` — Read-only FastAPI serving exported CSVs (comdirect-api)
-- `src/importer/` — ~~Firefly III client + transaction mapper~~ (deleted/legacy)
+- `src/api/` — FastAPI app, routers, JWT auth (`src/api/auth/`)
+- `src/normalization/` — Ingest + canonicalize pipeline for Postgres
+- `src/agents/` — LLM agents (categorization, anomaly, monthly analysis, orchestrator)
+- `src/mcp_server/` — MCP server exposing the Finance API as agent tools
 - `src/exporter/` — Finance agent mapper + model-based JSON export
 - `src/scheduler/` — Sync job orchestration (comdirect-worker)
-- `src/core/` — Config (pydantic-settings), logging
+- `src/core/` — Config (pydantic-settings), logging, SQLAlchemy DB models
+- `alembic/` — DB migrations
 
 ## Key Rules
 
@@ -38,7 +41,9 @@ Two-microservice split with strict secret separation:
 - All secrets via environment variables, never hardcoded
 - Comdirect access is strictly read-only — never implement write operations
 - Never log sensitive data (IBANs, balances, tokens, PINs)
-- Use obvious dummy data in tests (DE00000000000000000000, John Doe)
+- Use obvious dummy data in tests (`DE00000000000000000000`, `John Doe`)
+- **Secret scanning is mandatory.** `.husky/pre-commit` runs `gitleaks protect --staged` against [.gitleaks.toml](.gitleaks.toml); CI re-runs it. When introducing a new secret-shaped pattern (credential env var, IBAN-shaped fixture, personal hostname), either fix it or add a narrow allowlist entry in `.gitleaks.toml` with a comment explaining why it's safe. Never use `git commit --no-verify`. Required tool: `brew install gitleaks`.
+- **Personal infra defaults stay local.** `dev/values.local.yaml` (git-ignored) holds the maintainer's real Helm overrides; `dev/values.remote.example.yaml` is the public template. The Tiltfile reads from `values.local.yaml`.
 - Conventional commits required
 - Python 3.13, async httpx, FastAPI, pydantic-settings, uv
 

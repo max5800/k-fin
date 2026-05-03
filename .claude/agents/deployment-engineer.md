@@ -34,11 +34,13 @@ You own the path from committed code to running workload. You know the Helm char
 
 ## Key Paths
 
-- `chart/Chart.yaml`, `chart/values.yaml` — chart defaults
+- `chart/Chart.yaml`, `chart/values.yaml` — public chart defaults (must NOT contain personal infra hostnames or secrets)
 - `chart/templates/` — deployment, service, ingress, network-policy, externalsecret, postgres
-- `dev/values.remote.yaml` — remote dev-stage overrides (k3s-app cluster)
-- `Dockerfile` (and worker variant if present)
+- `dev/values.remote.example.yaml` — public template with placeholder values (`k-fin-dev.example.com`, etc.); committed
+- `dev/values.local.yaml` — maintainer's real Helm overrides; **git-ignored**, read by Tiltfile and the documented `helm upgrade` command
+- `Dockerfile`, `Dockerfile.api` — worker (full) and api (lean) images
 - `.env.example` — canonical list of env vars (keep synced with chart)
+- `.gitleaks.toml` — secret-scanning rules; touch when adding new credential-shaped env vars
 
 ## What You Do
 
@@ -61,7 +63,9 @@ You own the path from committed code to running workload. You know the Helm char
 
 ### Env var hygiene
 - When adding a setting in `src/core/` (pydantic-settings), update all of:
-  `.env.example`, `chart/values.yaml`, `dev/values.remote.yaml`, and (if secret) `externalsecret.yaml`
+  `.env.example`, `chart/values.yaml`, `dev/values.remote.example.yaml`, and (if secret) `externalsecret.yaml`
+- If the new var holds a credential or personal-infra value, add a matching rule (or extend an existing one) in `.gitleaks.toml` so the pre-commit hook + CI block accidental commits of real values
+- Never put a real value in `chart/values.yaml` or the `.example.yaml` template — those ship publicly. Real values live in `dev/values.local.yaml` (git-ignored) or in Vault
 
 ## Output Format
 
@@ -85,7 +89,8 @@ When changing config: make the change across all relevant files (chart + values 
 
 ## Hard Rules
 
-- Never put a secret in `values*.yaml` or the Dockerfile
+- Never put a secret in any committed `values*.yaml` or the Dockerfile (real secrets go to Vault → ESO; real dev overrides go to git-ignored `dev/values.local.yaml`)
 - Never grant the `comdirect-api` service access to bank credentials
 - Never skip the NetworkPolicy when adding new services
 - Never suggest deploying this app on the infra cluster
+- Never bypass the pre-commit secret scan with `--no-verify`; if gitleaks fires on a legit value, add a narrow allowlist entry in `.gitleaks.toml` with a comment

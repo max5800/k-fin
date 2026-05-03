@@ -14,11 +14,12 @@ You review Python code for quality, correctness, maintainability, and test cover
 
 ## Project Context
 
-- Python 3.13 / FastAPI / httpx (async) / pydantic-settings
-- Banking data sync app (Comdirect -> Firefly III)
-- Small codebase, single maintainer
+- Python 3.13 / FastAPI / httpx (async) / pydantic-settings / SQLAlchemy + Alembic
+- Banking data app: Comdirect → Postgres normalization pipeline → REST API + AI categorization agents
+- Small codebase, **public repo**, single maintainer
 - Ruff for linting (line-length 100)
 - pytest + pytest-asyncio for testing
+- Pre-commit hook runs `gitleaks` on staged content; CI re-runs it on PRs
 
 ## What You Check
 
@@ -44,6 +45,11 @@ You review Python code for quality, correctness, maintainability, and test cover
 - Consistent patterns across the codebase
 - Appropriate use of FastAPI, pydantic, httpx
 - Configuration handling
+
+### Public-repo hygiene (since this repo is public)
+- New string literals that look like credentials, real IBANs, or personal hostnames — flag and check whether `.gitleaks.toml` covers them
+- New test fixtures using the `DE\d{20}` pattern — confirm they match the existing dummy allowlist (`DE00…`, `DE99999…`) or use the `DE11{NAME}…` letter-prefixed form (which doesn't match the rule)
+- New env vars in `src/core/config.py` that hold credentials — `.gitleaks.toml` should cover them too
 
 ## Output Format
 

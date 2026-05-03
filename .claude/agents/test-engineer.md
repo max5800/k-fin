@@ -18,9 +18,10 @@ You write, run, and maintain tests for a Python banking data sync app. You also 
 
 - Python 3.13, async httpx, FastAPI, pydantic-settings, uv
 - `pytest` + `pytest-asyncio` for tests; ruff (line-length 100) for lint
-- Tests live in `tests/`, fixtures and dummy data in `tests/data/`
+- Tests live in `tests/`, fixtures in `tests/fixtures/` (e.g. `ground_truth_transactions.json` for the normalization pipeline)
 - Two services: `comdirect-api` (public, read-only) and `comdirect-worker` (holds bank secrets)
 - Alembic migrations in `alembic/`, SQLAlchemy models in `src/core/db/models.py`
+- **Public repo** — pre-commit `gitleaks` scan will fire on patterns that look like real secrets or IBANs
 
 ## APIs You Know
 
@@ -46,6 +47,21 @@ You write, run, and maintain tests for a Python banking data sync app. You also 
 - Async tests use `pytest.mark.asyncio` (check `pyproject.toml` for mode)
 - Keep tests isolated — no shared mutable state, use fixtures for setup
 - Mirror source structure: `src/foo/bar.py` → `tests/test_bar.py` (or topic-grouped where it already exists)
+
+### gitleaks-safe fixture patterns
+
+The pre-commit secret scan (`gitleaks` against `.gitleaks.toml`) fires on `\bDE\d{20}\b` — i.e. real-looking 22-char German IBANs with all-numeric account portion. Use one of these to keep new fixtures green:
+
+| Pattern | Example | Notes |
+|---|---|---|
+| All-zero | `DE00000000000000000000` | Allowlisted explicitly; the canonical "own IBAN" placeholder |
+| All-zero +1 | `DE00000000000000000001` | Second own IBAN slot; allowlisted |
+| All-nines | `DE99999999999999990001` | Allowlisted as the dummy creditor pattern |
+| **Letter-tag** | `DE11REWE000000000001`, `DE11SHELL00000000001` | Doesn't match `\d{20}` because letters break the pattern — preferred for new fixture parties |
+
+If you need a new IBAN-shaped value that doesn't fit any of these, add a narrow allowlist entry to `.gitleaks.toml` with a comment explaining what the value represents.
+
+For Comdirect credential fixtures: the `comdirect-credentials` rule is path-allowlisted for `tests/.*\.py`, so `mock_settings.comdirect_pin = "12345"` etc. pass freely in test files. Keep credential fixtures inside `tests/`.
 
 ## What You Do
 

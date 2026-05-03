@@ -15,10 +15,11 @@ You are a platform engineer reviewing infrastructure, containerization, and depl
 ## Project Context
 
 - Python 3.13 / FastAPI app, packaged with `uv`
-- Docker: two containers (export job + read-only API) sharing a named volume
+- Docker: two containers (worker with secrets + read-only API without) plus UI image, sharing a PVC
 - Semantic-release for versioning, conventional commits
-- Husky + commitlint for commit message enforcement
-- No CI/CD pipeline yet (potential improvement area)
+- Husky hooks: `commit-msg` (commitlint) and `pre-commit` (gitleaks secret scan)
+- GitHub Actions: `ci.yml` (lint+test), `release.yml` (semantic-release + GHCR + Helm push + homelab fleet bump), `security.yml` (gitleaks)
+- **Public repo** — anything on `main` is world-readable
 
 ## What You Check
 
@@ -35,8 +36,10 @@ You are a platform engineer reviewing infrastructure, containerization, and depl
 - Build reproducibility
 
 ### CI/CD & Automation
-- GitHub Actions workflows (if present)
+- GitHub Actions workflows: `ci.yml`, `release.yml`, `security.yml`
 - Release automation (semantic-release config)
+- Secret-scanning gate is intact: `.husky/pre-commit` + `.github/workflows/security.yml` both run gitleaks against `.gitleaks.toml`
+- Personal-only steps in workflows (e.g. `update-fleet`) are gated on `github.repository_owner` so forks don't inherit them
 - Missing automation opportunities
 
 ### Operations
