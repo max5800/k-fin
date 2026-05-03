@@ -20,7 +20,7 @@ Connects to the Comdirect REST API (read-only), normalizes your financial data i
 - **Normalization pipeline** — Ingests raw Comdirect data into a canonical schema in Postgres
 - **AI categorization** — LLM agents (pydantic-ai + Claude) categorize transactions, detect anomalies, generate monthly summaries
 - **MCP server** — Exposes the read-only Finance API as MCP tools for agent use
-- **Docker / Kubernetes** — Two-microservice architecture: public API + internal worker
+- **Self-hostable** — `docker compose up` for a single laptop or a Helm chart for K3s/K8s; two-microservice split keeps bank credentials off the public-facing API
 
 ## Architecture
 
@@ -105,34 +105,58 @@ uv run uvicorn main:app --reload
 
 The API serves the exported CSVs at `http://localhost:8000`.
 
-## Kubernetes
+## Deployment
 
-Deploy via the **Helm chart** in `chart/` and **Tilt** for dev:
+Three supported paths, ordered by setup effort:
+
+### 1. Docker Compose (no Kubernetes required)
+
+The fastest way to run the full stack — api, worker, UI, and Postgres —
+on a laptop or a single VM. No K8s, no Helm, no operators.
 
 ```bash
-# One-time: create your local values from the template
-cp dev/values.remote.example.yaml dev/values.local.yaml
-$EDITOR dev/values.local.yaml   # set ingress.host, CORS origins, Vault paths
-
-# Remote dev stage — deploys to k3s-app cluster as k-fin-dev
-tilt up --stream
-
-# Direct Helm alternative
-helm upgrade --install k-fin-dev ./chart -f dev/values.local.yaml
+cp .env.compose.example .env
+$EDITOR .env       # fill in COMDIRECT_*, rotate the change_me_* values
+docker compose pull && docker compose up -d
+open http://localhost:3000
 ```
 
-`dev/values.local.yaml` is git-ignored; only the `.example.yaml` template is checked in.
+The compose file pulls prebuilt images from
+`ghcr.io/max5800/k-fin-{api,worker,ui}` by default. Worker port 8001 is
+intentionally not published — only the api can reach it on the
+compose-internal network, mirroring the chart's NetworkPolicy. See the
+top of [`docker-compose.yml`](docker-compose.yml) for the full layout.
 
-The remote dev stage deploys to whatever `ingress.host` you set in `dev/values.local.yaml` and exposes the FastAPI Swagger UI at `/docs`. Tilt links in the dashboard point directly to Swagger, ReDoc, and the health endpoint.
+> **pushTAN required.** Every sync needs interactive Comdirect pushTAN
+> approval on your phone — there is no fully-headless mode. This is a
+> deliberate security boundary, not a missing feature.
 
-The chart deploys two microservices:
+### 2. K3s / Kubernetes via Helm
 
-- **comdirect-api** (port 8000) — public-facing, read-only API. No bank credentials. Triggers syncs by calling the worker.
-- **comdirect-worker** (port 8001) — internal only. Holds Comdirect credentials via ExternalSecret/Vault. A NetworkPolicy restricts ingress to `comdirect-api` only.
+If you already run a cluster, install via the Helm chart in [`chart/`](chart/)
+or directly from the published OCI chart:
 
-Both services share a PVC for exported data.
+```bash
+helm upgrade --install k-fin oci://ghcr.io/max5800/helm-charts/k-fin \
+  --version 1.28.2 -n k-fin --create-namespace -f my-values.yaml
+```
 
-See `docs/kubernetes-deployment.md` for the full deployment guide.
+The chart deploys api, worker, UI, a CloudNativePG `Cluster` for Postgres,
+a NetworkPolicy isolating the worker, and a `pre-install,pre-upgrade`
+migration job. K3s with Traefik + CloudNativePG is the maintainer's
+tested reference platform; plain K8s works with `ingress.className`
+overrides.
+
+The full guide — prerequisites, BYO-Secret path, ExternalSecrets path,
+backups, upgrades — is in [`docs/kubernetes-deployment.md`](docs/kubernetes-deployment.md).
+
+### 3. Local development (maintainer workflow)
+
+The maintainer iterates against a remote K3s cluster with Tilt, Rancher
+Desktop, and ExternalSecrets pulling from Vault. **You do not need this
+path to install or run k-fin** — it's specific to the maintainer's
+homelab. If you want to contribute, see [`docs/local-development.md`](docs/local-development.md)
+for the full setup.
 
 ## API
 
