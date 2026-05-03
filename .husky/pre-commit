@@ -1,0 +1,20 @@
+#!/usr/bin/env sh
+# Pre-commit secret scan. k-fin handles banking credentials — this hook is
+# mandatory. Do NOT use `git commit --no-verify`; CI re-runs the same check
+# and a leak that bypasses the hook still ends up on the public repo.
+
+if ! command -v gitleaks >/dev/null 2>&1; then
+    printf '\n\033[31m✗ gitleaks is not installed.\033[0m\n'
+    printf '  Run: brew install gitleaks\n'
+    printf '  (See SECURITY.md for why this hook is required.)\n\n'
+    exit 1
+fi
+
+if ! gitleaks protect --staged --redact --config .gitleaks.toml --log-level=warn; then
+    printf '\n\033[31m✗ gitleaks found a possible secret in your staged changes.\033[0m\n'
+    printf '  Options:\n'
+    printf '    1. Real secret      → remove it, move to .env, rotate the credential.\n'
+    printf '    2. False positive   → add a narrow allowlist regex to .gitleaks.toml\n'
+    printf '                          with a comment explaining why it is safe.\n\n'
+    exit 1
+fi

@@ -1,0 +1,144 @@
+# gitleaks configuration for k-fin (backend)
+#
+# Two layers protect the public repo from credential / personal-data leaks:
+#   1. This file — pre-commit hook (see .husky/pre-commit) runs
+#      `gitleaks protect --staged --config .gitleaks.toml`
+#   2. The same config runs in CI (.github/workflows/security.yml) so the
+#      check is enforced even if a contributor uses `git commit --no-verify`.
+#
+# When you hit a false positive, add a NARROW allowlist regex below with a
+# comment explaining WHY the value is safe. Do NOT use inline `gitleaks:allow`
+# comments in source files — those invite lazy bypass.
+
+title = "k-fin gitleaks config"
+
+[extend]
+# Inherit gitleaks' default rule set (AWS, GCP, Anthropic, OpenAI, GitHub
+# tokens, JWTs, private keys, generic high-entropy strings, etc.)
+useDefault = true
+
+# ─── Custom rules tuned for k-fin ─────────────────────────────────────────
+
+[[rules]]
+id = "comdirect-credentials"
+description = "Comdirect bank credentials (CLIENT_ID / CLIENT_SECRET / PIN / USERNAME) with a non-placeholder value"
+regex = '''(?i)(COMDIRECT_(CLIENT_ID|CLIENT_SECRET|PIN|USERNAME))\s*[:=]\s*["']?([^\s"'#]+)["']?'''
+secretGroup = 3
+keywords = ["COMDIRECT_"]
+
+[rules.allowlist]
+description = "Placeholder values + test fixtures are safe — only real credentials should fail"
+regexes = [
+    '''your_[a-z_]+_here''',
+    '''change_me''',
+    '''dummy''',
+    '''placeholder''',
+    '''example''',
+    '''test[-_]''',          # test-id, test_secret, etc.
+    '''^(12345|john\.doe)$''', # canonical fixture values
+    '''<[^>]+>''',
+]
+paths = [
+    # Test files use mock_settings.comdirect_* with obvious fakes
+    '''tests/.*\.py$''',
+]
+
+[[rules]]
+id = "real-german-iban"
+description = "Real-looking 22-char German IBAN (DE + 20 digits) outside of dummy/test contexts"
+regex = '''\bDE\d{20}\b'''
+keywords = ["DE"]
+
+[rules.allowlist]
+description = "Documented dummy IBANs used in fixtures, .env.example, and docs"
+regexes = [
+    '''DE0{20}''',                  # DE00000000000000000000
+    '''DE0{19}1''',                  # DE00000000000000000001 (own-IBAN counter)
+    '''DE99999999999999\d{6}''',    # DE9999... — dummy creditor in fixtures
+]
+paths = [
+    # Test files use intentionally-shaped fake IBANs as fixtures
+    '''tests/.*''',
+    # Ground-truth fixture set for the normalization pipeline
+    '''tests/fixtures/.*''',
+]
+
+[[rules]]
+id = "personal-domain-max5800"
+description = "Personal infrastructure domain max5800.com — must not become a public default"
+regex = '''\bmax5800\.com\b'''
+keywords = ["max5800"]
+
+[rules.allowlist]
+description = "ghcr.io/max5800/* is the public container registry namespace and is fine"
+regexes = [
+    '''ghcr\.io/max5800/''',
+]
+paths = [
+    # Historical changelog URLs reference the old repo; not actionable.
+    '''CHANGELOG\.md$''',
+    # SECURITY.md documents the rule itself by name
+    '''SECURITY\.md$''',
+]
+
+[[rules]]
+id = "private-network-address"
+description = "RFC1918 / link-local / .home.lab references that should not ship as defaults"
+regex = '''\b(?:192\.168\.\d{1,3}\.\d{1,3}|10\.\d{1,3}\.\d{1,3}\.\d{1,3}|172\.(?:1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3})\b|\.home\.lab\b'''
+
+[rules.allowlist]
+paths = [
+    # Docs and tests legitimately reference private ranges
+    '''tests/.*''',
+    '''docs/.*\.md$''',
+    # SECURITY.md documents the rule itself
+    '''SECURITY\.md$''',
+]
+
+[[rules]]
+id = "high-entropy-jwt-secret"
+description = "JWT_SECRET set to a value that looks like an actual random secret"
+regex = '''(?i)JWT_SECRET\s*[:=]\s*["']?([A-Za-z0-9+/=]{20,})["']?'''
+secretGroup = 1
+keywords = ["JWT_SECRET"]
+
+[rules.allowlist]
+regexes = [
+    '''dummy''',
+    '''change_me''',
+    '''your_''',
+    '''placeholder''',
+    '''example''',
+    '''test_''',
+]
+
+# ─── Global allowlist ─────────────────────────────────────────────────────
+
+[allowlist]
+description = "Paths and patterns globally exempt from secret scanning"
+
+paths = [
+    # The config file itself contains regex patterns that look like secrets
+    '''\.gitleaks\.toml$''',
+    # Lock files have hashes that look like high-entropy strings
+    '''uv\.lock$''',
+    '''package-lock\.json$''',
+    '''.*\.lock$''',
+    # Vendor docs are gitignored anyway, but be explicit
+    '''docs/comdirect_REST_API_Dokumentation\.md$''',
+    '''docs/comdirect_rest_api_swagger\.json$''',
+    # Local-only Helm values (gitignored, but defense in depth)
+    '''dev/values\.local\.yaml$''',
+    # Personal env files (gitignored, but defense in depth) — anchored
+    # to the exact filename to avoid swallowing things like fake-leak.env
+    '''(^|/)\.env$''',
+]
+
+# Generic placeholder strings used in examples that gitleaks' default
+# high-entropy rule would otherwise flag.
+regexes = [
+    '''sk-ant-your-key-here''',
+    '''your_[a-z_]+_here''',
+    '''change_me_to_a_strong_random_token''',
+    '''change_me_dev_only''',
+]

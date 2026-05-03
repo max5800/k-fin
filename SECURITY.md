@@ -8,7 +8,7 @@ k-fin handles banking credentials and personal financial data. We take security 
 
 Send a private report by email to:
 
-> **rehms.maximilian@gmail.com** — subject prefix `[k-fin security]`
+> **[rehms.maximilian@gmail.com](mailto:rehms.maximilian@gmail.com)** — subject prefix `[k-fin security]`
 
 Include, as much as you can:
 
@@ -43,6 +43,39 @@ We prefer **coordinated disclosure**:
 2. We confirm and work on a fix.
 3. We agree on a public disclosure timeline (typically when the fix is released, or 90 days after the report — whichever comes first).
 4. Credit is given in the release notes unless you prefer to remain anonymous.
+
+## Pre-commit Secret Scanning
+
+Both `k-fin` and `k-fin-ui` enforce a two-layer secret-scanning gate to prevent credentials, real banking data, and personal infrastructure references from leaking into the public repo:
+
+1. **Local pre-commit hook** ([.husky/pre-commit](.husky/pre-commit)) runs [gitleaks](https://github.com/gitleaks/gitleaks) against staged content using the rules in [.gitleaks.toml](.gitleaks.toml). Required tool:
+
+   ```bash
+   brew install gitleaks
+   ```
+
+   The hook fails closed if `gitleaks` is missing — install it once, then commits work normally.
+
+2. **CI enforcement** ([.github/workflows/security.yml](.github/workflows/security.yml)) re-runs the same scan on every PR and push. This catches anything that bypasses the local hook (`git commit --no-verify`, contributor without gitleaks installed, etc.). **A failing CI scan blocks the PR.**
+
+### Handling a finding
+
+When the hook flags something:
+
+- **Real secret** — remove it, move it to `.env` (git-ignored), and rotate the credential. Treat it as if it were already public; if the commit hit any remote, `git commit --amend` won't help.
+- **False positive** — add a NARROW allowlist regex to `.gitleaks.toml` with a comment explaining why the value is safe (e.g., a documented dummy IBAN, a placeholder string in `.env.example`). Do NOT use inline `gitleaks:allow` comments in source — they invite lazy bypass.
+
+### Scope of custom rules
+
+The k-fin custom rules cover what the gitleaks defaults miss for this project:
+
+- Comdirect bank credentials (`COMDIRECT_CLIENT_ID`, `COMDIRECT_PIN`, etc.) with non-placeholder values
+- Real-looking German IBANs (`DE` + 20 digits) outside of the documented dummy set used in fixtures
+- The maintainer's personal infrastructure domain (`max5800.com`) leaking back into shipped defaults
+- RFC 1918 private network references and `.home.lab` hostnames
+- Hardcoded `JWT_SECRET` values
+
+The UI repo additionally guards against hardcoded production API URLs in `VITE_API_BASE_URL` and embedded `Bearer` tokens in source.
 
 ## Security Design Notes
 
