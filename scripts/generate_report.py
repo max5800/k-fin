@@ -268,7 +268,7 @@ def generate_report(data: dict, report_date: str | None = None) -> str:
 
     # ── Footer ─────────────────────────────────────────────────────────
     lines.append("---")
-    lines.append(f"*Generiert am {report_date} · comdirect-firefly-sync*")
+    lines.append(f"*Generiert am {report_date} · k-fin*")
     lines.append("")
 
     return "\n".join(lines)

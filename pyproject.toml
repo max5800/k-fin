@@ -1,7 +1,9 @@
 [project]
-name = "comdirect-firefly-sync"
+name = "k-fin"
 version = "0.1.0"
 description = "K-Fin — Personal Finance Intelligence Platform"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
 requires-python = ">=3.11"
 dependencies = [
     "fastapi>=0.115.0",

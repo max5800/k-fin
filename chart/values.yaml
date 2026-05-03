@@ -32,7 +32,8 @@ api:
     # Override per-environment in dev/values.remote.yaml.
     CORS_ORIGINS: ""
     # SearXNG instance for the categorization agent's `search_web` tool.
-    SEARXNG_URL: "https://search.max5800.com"
+    # Empty disables the tool. Override per-environment with your own URL.
+    SEARXNG_URL: ""
     # M10a real auth — JWT_SECRET and bootstrap user credentials are
     # injected at runtime from the ESO-generated Secret (see infraSecrets).
     # Only the static display name is set here; secrets stay in Vault.
@@ -214,7 +215,8 @@ postgres:
     retentionPolicy: "7d"
     schedule: "0 0 2 * * *"
     destinationPath: "s3://postgres-backups/finance"
-    endpointURL: "https://s3.max5800.com"
+    # Override with your S3-compatible endpoint (e.g. AWS, MinIO).
+    endpointURL: ""
     credentialsSecret: k-fin-postgres-backup-s3
   externalSecret:
     enabled: true

@@ -24,7 +24,7 @@ You greps and reads code in both:
 
 | Repo | Path | Use for |
 |------|------|---------|
-| Backend `k-fin` | `/Users/max/workspace/comdirect-firefly-sync` | API, worker, agents, connector, normalization, Helm chart, configs (most of M5–M8, M11–M14) |
+| Backend `k-fin` | `/Users/max/workspace/k-fin` | API, worker, agents, connector, normalization, Helm chart, configs (most of M5–M8, M11–M14) |
 | UI `k-fin-ui` | `/Users/max/workspace/k-fin-ui` | React frontend (M9, M10, M12 UI parts, M13 backup UI) |
 
 Pick the right repo per item — a Portfolio-Tab item lives in the UI repo, an API endpoint in the backend repo. When unsure, check both.

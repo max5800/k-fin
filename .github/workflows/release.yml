@@ -95,7 +95,9 @@ jobs:
   update-fleet:
     name: Pin Fleet version
     needs: [release, publish]
-    if: needs.release.outputs.published == 'true'
+    # Homelab-only step. Skipped on forks because the target repo and the
+    # HOME_LAB_PAT secret only exist for max5800.
+    if: needs.release.outputs.published == 'true' && github.repository_owner == 'max5800'
     runs-on: ubuntu-latest
 
     steps:

@@ -1,9 +1,9 @@
 ---
-name: comdirect-finance-api
-description: Access personal finance data via the comdirect-firefly-sync read-only API. Use when asked about bank account balances, transactions, depot positions, or financial overview. Triggers on: account balance, transactions, depot, financial overview, or any question about personal financial data from Comdirect.
+name: k-fin-finance-api
+description: Access personal finance data via the k-fin read-only API. Use when asked about bank account balances, transactions, depot positions, or financial overview. Triggers on: account balance, transactions, depot, financial overview, or any question about personal financial data from Comdirect.
 ---
 
-# Comdirect Finance API
+# k-fin Finance API
 
 Read-only access to exported financial data (Comdirect bank + depot).
 

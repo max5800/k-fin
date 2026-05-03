@@ -65,7 +65,7 @@ A Kubernetes NetworkPolicy ensures only `comdirect-api` can reach `comdirect-wor
 
 ```bash
 git clone https://github.com/max5800/k-fin.git
-cd comdirect-firefly-sync
+cd k-fin
 cp .env.example .env
 # Fill in your credentials in .env
 uv sync
@@ -94,14 +94,20 @@ The API serves the exported CSVs at `http://localhost:8000`.
 Deploy via the **Helm chart** in `chart/` and **Tilt** for dev:
 
 ```bash
+# One-time: create your local values from the template
+cp dev/values.remote.example.yaml dev/values.local.yaml
+$EDITOR dev/values.local.yaml   # set ingress.host, CORS origins, Vault paths
+
 # Remote dev stage — deploys to k3s-app cluster as k-fin-dev
 tilt up --stream
 
 # Direct Helm alternative
-helm upgrade --install k-fin-dev ./chart -f dev/values.remote.yaml
+helm upgrade --install k-fin-dev ./chart -f dev/values.local.yaml
 ```
 
-The remote dev stage deploys to `k-fin-dev.max5800.com` with Swagger UI at `/docs`. Tilt links in the dashboard point directly to Swagger, ReDoc, and the health endpoint.
+`dev/values.local.yaml` is git-ignored; only the `.example.yaml` template is checked in.
+
+The remote dev stage deploys to whatever `ingress.host` you set in `dev/values.local.yaml` and exposes the FastAPI Swagger UI at `/docs`. Tilt links in the dashboard point directly to Swagger, ReDoc, and the health endpoint.
 
 The chart deploys two microservices:
 
@@ -134,4 +140,4 @@ This project was built with AI-assisted development (primarily Claude via OpenCl
 
 ## License
 
-MIT
+Apache License 2.0 — see [LICENSE](LICENSE).

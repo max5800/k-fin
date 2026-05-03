@@ -1,8 +1,8 @@
 {
-  "name": "comdirect-firefly-sync",
+  "name": "k-fin",
   "version": "0.0.0",
   "private": true,
-  "description": "Semantic release tooling for comdirect-firefly-sync",
+  "description": "Semantic release tooling for k-fin",
   "scripts": {
     "release": "semantic-release",
     "release:dry": "semantic-release --dry-run",

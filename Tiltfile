@@ -7,7 +7,22 @@ k8s_namespace("k-fin")
 
 RELEASE_NAME = "k-fin-dev"
 FULLNAME = RELEASE_NAME + "-k-fin"
-INGRESS_HOST = "k-fin-dev.max5800.com"
+
+# All environment-specific values (ingress host, CORS, Vault paths) live in
+# dev/values.local.yaml. That file is git-ignored; copy the template once:
+#   cp dev/values.remote.example.yaml dev/values.local.yaml
+LOCAL_VALUES = "dev/values.local.yaml"
+if not os.path.exists(LOCAL_VALUES):
+    fail(
+        "Missing " + LOCAL_VALUES + ". Copy the template first:\n" +
+        "  cp dev/values.remote.example.yaml " + LOCAL_VALUES + "\n" +
+        "Then edit it to set your ingress host, CORS origins, and Vault paths."
+    )
+
+LOCAL_CFG = read_yaml(LOCAL_VALUES)
+INGRESS_HOST = LOCAL_CFG.get("ingress", {}).get("host", "")
+if not INGRESS_HOST:
+    fail("ingress.host is empty in " + LOCAL_VALUES + " — set it before `tilt up`.")
 DOCS_BASE = "http://" + INGRESS_HOST
 
 UI_CONTEXT = "../k-fin-ui"
@@ -77,7 +92,7 @@ k8s_yaml(helm(
     "./chart",
     name=RELEASE_NAME,
     namespace="k-fin",
-    values=["dev/values.remote.yaml"],
+    values=[LOCAL_VALUES],
     set=[
         "api.image.repository=" + REGISTRY_API,
         "worker.image.repository=" + REGISTRY_WORKER,

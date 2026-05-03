@@ -11,6 +11,16 @@ The canonical deployment method is the **Helm chart** in `chart/` with **Tilt** 
 
 ### Dev stage (remote k3s-app cluster)
 
+Before the first run, create your local values file from the template:
+
+```bash
+cp dev/values.remote.example.yaml dev/values.local.yaml
+$EDITOR dev/values.local.yaml   # set ingress.host, CORS origins, etc.
+```
+
+`dev/values.local.yaml` is git-ignored — the Tiltfile and the standalone
+helm command both read from it. Then:
+
 ```bash
 tilt up --stream
 ```
@@ -18,7 +28,7 @@ tilt up --stream
 ### Direct Helm (without Tilt)
 
 ```bash
-helm upgrade --install k-fin-dev ./chart -f dev/values.remote.yaml
+helm upgrade --install k-fin-dev ./chart -f dev/values.local.yaml
 ```
 
 ### Accessing Swagger UI
@@ -26,7 +36,7 @@ helm upgrade --install k-fin-dev ./chart -f dev/values.remote.yaml
 After deploying the dev stage, the FastAPI Swagger UI is available at:
 
 ```
-https://k-fin-dev.max5800.com/docs
+https://<your ingress.host>/docs
 ```
 
 The OpenAPI JSON schema is at `/openapi.json`. No additional Ingress path

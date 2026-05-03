@@ -547,7 +547,7 @@ class TestSearchWebTool:
                 assert params["format"] == "json"
                 return _FakeResp()
 
-        with patch.object(settings, "searxng_url", "https://search.max5800.com"):
+        with patch.object(settings, "searxng_url", "https://search.example.com"):
             with patch("src.agents.categorization.httpx.AsyncClient", _FakeClient):
                 result = asyncio.run(search_web("böhnlich bamberg"))
 
@@ -580,7 +580,7 @@ class TestSearchWebTool:
             async def get(self, *_args, **_kwargs):
                 raise _httpx.ConnectError("nope")
 
-        with patch.object(settings, "searxng_url", "https://search.max5800.com"):
+        with patch.object(settings, "searxng_url", "https://search.example.com"):
             with patch("src.agents.categorization.httpx.AsyncClient", _BoomClient):
                 result = asyncio.run(search_web("anything"))
 

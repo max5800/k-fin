@@ -7,8 +7,11 @@ __pycache__/
 .python-version
 
 comdirect_REST_API_Dokumentation.pdf
+docs/comdirect_REST_API_Dokumentation.md
+docs/comdirect_rest_api_swagger.json
 secrets/
 exports/
 data/
 node_modules/
 .claude/scheduled_tasks.lock
+dev/values.local.yaml

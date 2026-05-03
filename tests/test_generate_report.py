@@ -174,7 +174,7 @@ class TestGenerateReport:
 
     def test_report_footer(self):
         report = generate_report(_minimal_data(), report_date="2026-04-10")
-        assert "comdirect-firefly-sync" in report
+        assert "k-fin" in report
 
 
 class TestIsAccountEntry:
