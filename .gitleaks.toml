@@ -22,7 +22,10 @@ useDefault = true
 [[rules]]
 id = "comdirect-credentials"
 description = "Comdirect bank credentials (CLIENT_ID / CLIENT_SECRET / PIN / USERNAME) with a non-placeholder value"
-regex = '''(?i)(COMDIRECT_(CLIENT_ID|CLIENT_SECRET|PIN|USERNAME))\s*[:=]\s*["']?([^\s"'#]+)["']?'''
+# `[ \t]*` (not `\s*`) on either side of the separator keeps the match on a
+# single line — `\s*` would swallow newlines and turn an empty `KEY=` line
+# into a cross-line false positive against the next line's `KEY=value`.
+regex = '''(?i)(COMDIRECT_(CLIENT_ID|CLIENT_SECRET|PIN|USERNAME))[ \t]*[:=][ \t]*["']?([^\s"'#]+)["']?'''
 secretGroup = 3
 keywords = ["COMDIRECT_"]
 
@@ -37,6 +40,9 @@ regexes = [
     '''test[-_]''',          # test-id, test_secret, etc.
     '''^(12345|john\.doe)$''', # canonical fixture values
     '''<[^>]+>''',
+    # Shell variable interpolation in docker-compose / shell scripts:
+    # ${VAR}, ${VAR:-default}, ${VAR:?msg} — never a real secret.
+    '''^\$\{[A-Za-z_][A-Za-z0-9_]*(:[-?+][^}]*)?\}$''',
 ]
 paths = [
     # Test files use mock_settings.comdirect_* with obvious fakes
