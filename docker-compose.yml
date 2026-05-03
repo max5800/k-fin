@@ -38,7 +38,7 @@ services:
       retries: 10
 
   migrate:
-    image: ghcr.io/max5800/k-fin-worker:${K_FIN_VERSION:-1.28.2}
+    image: ghcr.io/max5800/k-fin-worker:${K_FIN_VERSION:-latest}
     # build:
     #   context: .
     #   dockerfile: Dockerfile
@@ -49,13 +49,13 @@ services:
       DATABASE_URL: postgresql+psycopg://finance:${POSTGRES_PASSWORD:-finance}@postgres:5432/finance
       BOOTSTRAP_USER_EMAIL: ${BOOTSTRAP_USER_EMAIL:-}
       BOOTSTRAP_USER_DISPLAY_NAME: ${BOOTSTRAP_USER_DISPLAY_NAME:-Me}
-      BOOTSTRAP_USER_INITIAL_PASSWORD: ${BOOTSTRAP_USER_INITIAL_PASSWORD:-}
+      BOOTSTRAP_USER_INITIAL_PASSWORD: ${BOOTSTRAP_USER_INITIAL_PASSWORD:?set BOOTSTRAP_USER_INITIAL_PASSWORD in .env to seed the initial admin}
     depends_on:
       postgres:
         condition: service_healthy
 
   worker:
-    image: ghcr.io/max5800/k-fin-worker:${K_FIN_VERSION:-1.28.2}
+    image: ghcr.io/max5800/k-fin-worker:${K_FIN_VERSION:-latest}
     # build:
     #   context: .
     #   dockerfile: Dockerfile
@@ -112,7 +112,7 @@ services:
         condition: service_completed_successfully
 
   api:
-    image: ghcr.io/max5800/k-fin-api:${K_FIN_VERSION:-1.28.2}
+    image: ghcr.io/max5800/k-fin-api:${K_FIN_VERSION:-latest}
     # build:
     #   context: .
     #   dockerfile: Dockerfile.api

@@ -43,6 +43,10 @@ regexes = [
     # Shell variable interpolation in docker-compose / shell scripts:
     # ${VAR}, ${VAR:-default}, ${VAR:?msg} — never a real secret.
     '''^\$\{[A-Za-z_][A-Za-z0-9_]*(:[-?+][^}]*)?\}$''',
+    # Python type annotations: `comdirect_pin: str = ""` captures `str`.
+    # The regex above can't tell a type-name from a real value, so allowlist
+    # the common builtins / typing names that may appear in field declarations.
+    '''^(str|int|float|bool|None|list|dict|tuple|set|bytes|Optional|Annotated)$''',
 ]
 paths = [
     # Test files use mock_settings.comdirect_* with obvious fakes
