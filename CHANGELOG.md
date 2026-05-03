@@ -1,3 +1,10 @@
+## [1.29.1](https://github.com/max5800/k-fin/compare/v1.29.0...v1.29.1) (2026-05-03)
+
+
+### Bug Fixes
+
+* **security:** stop gitleaks false positives on shell interpolation and empty env keys ([5065846](https://github.com/max5800/k-fin/commit/5065846fd485526c805014e2145eba1ab319e85a))
+
 # [1.29.0](https://github.com/max5800/k-fin/compare/v1.28.2...v1.29.0) (2026-05-03)
 
 
