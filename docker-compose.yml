@@ -1,0 +1,172 @@
+# ---------------------------------------------------------------------------
+# k-fin — self-hosted Docker Compose stack
+#
+# Quick start:
+#   cp .env.compose.example .env
+#   $EDITOR .env       # fill in COMDIRECT_*, rotate change_me_* values
+#   docker compose pull && docker compose up -d
+#   open http://localhost:3000
+#
+# Topology mirrors the Helm chart in chart/:
+#   postgres → migrate (one-shot) → worker, api → ui
+#
+# The worker holds bank credentials (COMDIRECT_*) and is intentionally not
+# published to the host. Only the api can reach it on the compose-internal
+# network, mirroring chart/templates/network-policy.yaml.
+#
+# Default images come from GHCR; uncomment the `build:` blocks to rebuild
+# locally from this repo (and ../k-fin-ui for the frontend).
+# ---------------------------------------------------------------------------
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: finance
+      POSTGRES_DB: finance
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-finance}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    # Uncomment to expose Postgres to the host (e.g. for SQL clients).
+    # ports:
+    #   - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U finance -d finance"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  migrate:
+    image: ghcr.io/max5800/k-fin-worker:${K_FIN_VERSION:-1.28.2}
+    # build:
+    #   context: .
+    #   dockerfile: Dockerfile
+    entrypoint: ["/app/.venv/bin/python", "scripts/migrate.py"]
+    command: ["upgrade"]
+    restart: "no"
+    environment:
+      DATABASE_URL: postgresql+psycopg://finance:${POSTGRES_PASSWORD:-finance}@postgres:5432/finance
+      BOOTSTRAP_USER_EMAIL: ${BOOTSTRAP_USER_EMAIL:-}
+      BOOTSTRAP_USER_DISPLAY_NAME: ${BOOTSTRAP_USER_DISPLAY_NAME:-Me}
+      BOOTSTRAP_USER_INITIAL_PASSWORD: ${BOOTSTRAP_USER_INITIAL_PASSWORD:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  worker:
+    image: ghcr.io/max5800/k-fin-worker:${K_FIN_VERSION:-1.28.2}
+    # build:
+    #   context: .
+    #   dockerfile: Dockerfile
+    entrypoint: ["/app/.venv/bin/uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8001"]
+    restart: unless-stopped
+    # Worker port 8001 is intentionally NOT published — only the api service
+    # can reach it via the compose-internal DNS name `worker`. This mirrors
+    # the NetworkPolicy in chart/templates/network-policy.yaml.
+    environment:
+      APP_ENV: ${APP_ENV:-development}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      DATABASE_URL: postgresql+psycopg://finance:${POSTGRES_PASSWORD:-finance}@postgres:5432/finance
+      EXPORTS_DIR: /data/exports
+      OWN_IBANS: ${OWN_IBANS:-}
+      API_TOKEN: ${API_TOKEN:?API_TOKEN must be set in .env (rotate the change_me_* default)}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set in .env (rotate the change_me_* default)}
+      # The worker also mounts the auth router, so it needs the bootstrap knobs.
+      BOOTSTRAP_LOGIN_ENABLED: ${BOOTSTRAP_LOGIN_ENABLED:-true}
+      BOOTSTRAP_EMAIL: ${BOOTSTRAP_EMAIL:-}
+      BOOTSTRAP_PASSWORD: ${BOOTSTRAP_PASSWORD:-}
+      BOOTSTRAP_USER_EMAIL: ${BOOTSTRAP_USER_EMAIL:-}
+      BOOTSTRAP_USER_DISPLAY_NAME: ${BOOTSTRAP_USER_DISPLAY_NAME:-Me}
+      BOOTSTRAP_USER_INITIAL_PASSWORD: ${BOOTSTRAP_USER_INITIAL_PASSWORD:-}
+      # Comdirect bank credentials — worker-only secret boundary.
+      COMDIRECT_CLIENT_ID: ${COMDIRECT_CLIENT_ID:-}
+      COMDIRECT_CLIENT_SECRET: ${COMDIRECT_CLIENT_SECRET:-}
+      COMDIRECT_USERNAME: ${COMDIRECT_USERNAME:-}
+      COMDIRECT_PIN: ${COMDIRECT_PIN:-}
+      COMDIRECT_TAN_METHOD: ${COMDIRECT_TAN_METHOD:-pushTAN}
+      # Sync tunables.
+      SYNC_INTERVAL_MINUTES: ${SYNC_INTERVAL_MINUTES:-60}
+      SYNC_INITIAL_DAYS: ${SYNC_INITIAL_DAYS:-90}
+      SYNC_DEDUP_ENABLED: ${SYNC_DEDUP_ENABLED:-true}
+      ACCOUNT_TRANSACTION_LIMIT: ${ACCOUNT_TRANSACTION_LIMIT:-500}
+      DEPOT_TRANSACTION_LIMIT: ${DEPOT_TRANSACTION_LIMIT:-500}
+      DEPOT_TRANSACTION_MIN_BOOKING_DATE: ${DEPOT_TRANSACTION_MIN_BOOKING_DATE:--730d}
+      # Optional LLM categorization.
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      SEARXNG_URL: ${SEARXNG_URL:-}
+    volumes:
+      - exports:/data/exports
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - python -c 'import urllib.request,sys; sys.exit(0 if urllib.request.urlopen("http://localhost:8001/health",timeout=2).status==200 else 1)'
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 30s
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
+  api:
+    image: ghcr.io/max5800/k-fin-api:${K_FIN_VERSION:-1.28.2}
+    # build:
+    #   context: .
+    #   dockerfile: Dockerfile.api
+    restart: unless-stopped
+    environment:
+      APP_ENV: ${APP_ENV:-development}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      DATABASE_URL: postgresql+psycopg://finance:${POSTGRES_PASSWORD:-finance}@postgres:5432/finance
+      WORKER_URL: http://worker:8001
+      EXPORTS_DIR: /data/exports
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
+      OWN_IBANS: ${OWN_IBANS:-}
+      API_TOKEN: ${API_TOKEN:?API_TOKEN must be set in .env (rotate the change_me_* default)}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set in .env (rotate the change_me_* default)}
+      BOOTSTRAP_LOGIN_ENABLED: ${BOOTSTRAP_LOGIN_ENABLED:-true}
+      BOOTSTRAP_EMAIL: ${BOOTSTRAP_EMAIL:-}
+      BOOTSTRAP_PASSWORD: ${BOOTSTRAP_PASSWORD:-}
+      BOOTSTRAP_USER_EMAIL: ${BOOTSTRAP_USER_EMAIL:-}
+      BOOTSTRAP_USER_DISPLAY_NAME: ${BOOTSTRAP_USER_DISPLAY_NAME:-Me}
+      BOOTSTRAP_USER_INITIAL_PASSWORD: ${BOOTSTRAP_USER_INITIAL_PASSWORD:-}
+    ports:
+      - "${API_PORT:-8000}:8000"
+    volumes:
+      # Read-only mount mirrors the chart's readOnlyRootFilesystem stance —
+      # the api serves exports written by the worker but never mutates them.
+      - exports:/data/exports:ro
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - python -c 'import urllib.request,sys; sys.exit(0 if urllib.request.urlopen("http://localhost:8000/health",timeout=2).status==200 else 1)'
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 15s
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
+  ui:
+    image: ghcr.io/max5800/k-fin-ui:${K_FIN_UI_VERSION:-v1.0.2}
+    # build:
+    #   context: ../k-fin-ui
+    #   dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      VITE_API_PROXY_TARGET: http://api:8000
+    ports:
+      - "${UI_PORT:-3000}:3000"
+    depends_on:
+      api:
+        condition: service_healthy
+
+volumes:
+  postgres-data:
+  exports:
