@@ -1,3 +1,10 @@
+## [1.29.3](https://github.com/max5800/k-fin/compare/v1.29.2...v1.29.3) (2026-05-05)
+
+
+### Bug Fixes
+
+* **security:** equalise login timing for unknown emails ([4be5be6](https://github.com/max5800/k-fin/commit/4be5be69c3e6751c47e52144b104e8742d47a727))
+
 ## [1.29.2](https://github.com/max5800/k-fin/compare/v1.29.1...v1.29.2) (2026-05-05)
 
 
