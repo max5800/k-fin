@@ -1,9 +1,14 @@
 """Transactions router for the Finance API."""
 
-from datetime import date
+import csv
+import io
+import json
+from datetime import date, datetime, timezone
+from typing import Iterator, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import func, select
+from fastapi.responses import StreamingResponse
+from sqlalchemy import Select, func, select
 from sqlalchemy.orm import Session
 
 from src.api.deps import get_db, require_token
@@ -62,6 +67,40 @@ def _enrich(tx: NormalizedTransaction, db: Session) -> TransactionOut:
     )
 
 
+def _apply_filters(
+    stmt: Select,
+    *,
+    date_from: date | None,
+    date_to: date | None,
+    category_id: str | None,
+    is_recurring: bool | None,
+    is_outlier: bool | None,
+    internal_transfer: bool | None,
+    search: str | None,
+) -> Select:
+    if date_from:
+        stmt = stmt.where(NormalizedTransaction.booking_date >= date_from)
+    if date_to:
+        stmt = stmt.where(NormalizedTransaction.booking_date <= date_to)
+    if category_id is not None:
+        stmt = stmt.where(NormalizedTransaction.category_id == category_id)
+    if is_recurring is not None:
+        stmt = stmt.where(NormalizedTransaction.is_recurring == is_recurring)
+    if is_outlier is not None:
+        stmt = stmt.where(NormalizedTransaction.is_outlier == is_outlier)
+    if internal_transfer is not None:
+        stmt = stmt.where(NormalizedTransaction.internal_transfer == internal_transfer)
+    if search:
+        pattern = f"%{search}%"
+        clause = (
+            NormalizedTransaction.recipient.ilike(pattern)
+            | NormalizedTransaction.sender.ilike(pattern)
+            | NormalizedTransaction.description.ilike(pattern)
+        )
+        stmt = stmt.where(clause)
+    return stmt
+
+
 @router.get("", response_model=TransactionListOut)
 def list_transactions(
     db: Session = Depends(get_db),
@@ -75,36 +114,19 @@ def list_transactions(
     internal_transfer: bool | None = Query(None),
     search: str | None = Query(None),
 ):
-    stmt = select(NormalizedTransaction)
-    count_stmt = select(func.count()).select_from(NormalizedTransaction)
-
-    if date_from:
-        stmt = stmt.where(NormalizedTransaction.booking_date >= date_from)
-        count_stmt = count_stmt.where(NormalizedTransaction.booking_date >= date_from)
-    if date_to:
-        stmt = stmt.where(NormalizedTransaction.booking_date <= date_to)
-        count_stmt = count_stmt.where(NormalizedTransaction.booking_date <= date_to)
-    if category_id is not None:
-        stmt = stmt.where(NormalizedTransaction.category_id == category_id)
-        count_stmt = count_stmt.where(NormalizedTransaction.category_id == category_id)
-    if is_recurring is not None:
-        stmt = stmt.where(NormalizedTransaction.is_recurring == is_recurring)
-        count_stmt = count_stmt.where(NormalizedTransaction.is_recurring == is_recurring)
-    if is_outlier is not None:
-        stmt = stmt.where(NormalizedTransaction.is_outlier == is_outlier)
-        count_stmt = count_stmt.where(NormalizedTransaction.is_outlier == is_outlier)
-    if internal_transfer is not None:
-        stmt = stmt.where(NormalizedTransaction.internal_transfer == internal_transfer)
-        count_stmt = count_stmt.where(NormalizedTransaction.internal_transfer == internal_transfer)
-    if search:
-        pattern = f"%{search}%"
-        clause = (
-            NormalizedTransaction.recipient.ilike(pattern)
-            | NormalizedTransaction.sender.ilike(pattern)
-            | NormalizedTransaction.description.ilike(pattern)
-        )
-        stmt = stmt.where(clause)
-        count_stmt = count_stmt.where(clause)
+    filter_kwargs = dict(
+        date_from=date_from,
+        date_to=date_to,
+        category_id=category_id,
+        is_recurring=is_recurring,
+        is_outlier=is_outlier,
+        internal_transfer=internal_transfer,
+        search=search,
+    )
+    stmt = _apply_filters(select(NormalizedTransaction), **filter_kwargs)
+    count_stmt = _apply_filters(
+        select(func.count()).select_from(NormalizedTransaction), **filter_kwargs
+    )
 
     total = db.execute(count_stmt).scalar_one()
 
@@ -120,6 +142,137 @@ def list_transactions(
         total=total,
         limit=limit,
         offset=offset,
+    )
+
+
+# Cap to keep memory/wall-clock predictable. 50 k rows ~= 6 MB CSV.
+_EXPORT_MAX_ROWS = 50_000
+
+_CSV_COLUMNS = (
+    "booking_date",
+    "value_date",
+    "description",
+    "counterparty",
+    "amount",
+    "currency",
+    "category",
+    "tags",
+)
+
+
+def _row_to_record(tx: NormalizedTransaction, category_name: str | None, tag_names: list[str]) -> dict:
+    counterparty = tx.recipient or tx.sender or ""
+    return {
+        "booking_date": tx.booking_date.isoformat(),
+        "value_date": tx.valuation_date.isoformat(),
+        "description": tx.description or "",
+        "counterparty": counterparty,
+        "amount": format(tx.amount, "f"),
+        "currency": tx.currency,
+        "category": category_name or "",
+        "tags": ",".join(tag_names),
+    }
+
+
+def _iter_export_rows(db: Session, stmt: Select) -> Iterator[dict]:
+    rows = db.execute(stmt).scalars().all()
+    if not rows:
+        return iter(())
+
+    cat_ids = {tx.category_id for tx in rows if tx.category_id}
+    cat_map: dict[str, str] = {}
+    if cat_ids:
+        cat_rows = db.execute(select(Category).where(Category.id.in_(cat_ids))).scalars().all()
+        cat_map = {c.id: c.name for c in cat_rows}
+
+    tx_ids = [tx.id for tx in rows]
+    tag_map: dict[str, list[str]] = {tid: [] for tid in tx_ids}
+    if tx_ids:
+        tag_rows = db.execute(
+            select(TransactionTag.transaction_id, Tag.name)
+            .join(Tag, TransactionTag.tag_id == Tag.id)
+            .where(TransactionTag.transaction_id.in_(tx_ids))
+        ).all()
+        for tx_id, tag_name in tag_rows:
+            tag_map.setdefault(tx_id, []).append(tag_name)
+
+    def _gen() -> Iterator[dict]:
+        for tx in rows:
+            yield _row_to_record(tx, cat_map.get(tx.category_id) if tx.category_id else None, tag_map.get(tx.id, []))
+
+    return _gen()
+
+
+def _csv_stream(records: Iterator[dict]) -> Iterator[str]:
+    buf = io.StringIO()
+    writer = csv.DictWriter(buf, fieldnames=list(_CSV_COLUMNS))
+    writer.writeheader()
+    yield buf.getvalue()
+    buf.seek(0)
+    buf.truncate(0)
+    for record in records:
+        writer.writerow(record)
+        yield buf.getvalue()
+        buf.seek(0)
+        buf.truncate(0)
+
+
+def _json_stream(records: Iterator[dict]) -> Iterator[str]:
+    yield "["
+    first = True
+    for record in records:
+        if first:
+            first = False
+        else:
+            yield ","
+        yield json.dumps(record, ensure_ascii=False)
+    yield "]"
+
+
+@router.get("/export", include_in_schema=True)
+def export_transactions(
+    db: Session = Depends(get_db),
+    format: Literal["csv", "json"] = Query("csv"),
+    date_from: date | None = Query(None),
+    date_to: date | None = Query(None),
+    category_id: str | None = Query(None),
+    is_recurring: bool | None = Query(None),
+    is_outlier: bool | None = Query(None),
+    internal_transfer: bool | None = Query(None),
+    search: str | None = Query(None),
+):
+    """Stream filtered transactions as CSV or JSON.
+
+    Filters mirror ``GET /transactions``. Capped at ``_EXPORT_MAX_ROWS``
+    rows to keep response size bounded.
+    """
+    stmt = _apply_filters(
+        select(NormalizedTransaction),
+        date_from=date_from,
+        date_to=date_to,
+        category_id=category_id,
+        is_recurring=is_recurring,
+        is_outlier=is_outlier,
+        internal_transfer=internal_transfer,
+        search=search,
+    ).order_by(NormalizedTransaction.booking_date.desc(), NormalizedTransaction.id).limit(_EXPORT_MAX_ROWS)
+
+    records = _iter_export_rows(db, stmt)
+    today = datetime.now(timezone.utc).date().isoformat()
+
+    if format == "json":
+        filename = f"transactions-{today}.json"
+        return StreamingResponse(
+            _json_stream(records),
+            media_type="application/json",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+
+    filename = f"transactions-{today}.csv"
+    return StreamingResponse(
+        _csv_stream(records),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
 
 
