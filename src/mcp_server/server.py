@@ -2,6 +2,7 @@
 
 import json
 import logging
+import subprocess
 import sys
 
 import httpx
@@ -18,10 +19,26 @@ from src.mcp_server.openapi_tools import (
 logger = logging.getLogger(__name__)
 
 
+def _curl_request(url: str, headers: dict[str, str] | None = None) -> str:
+    cmd = ["curl", "-fsSL", url]
+    for key, value in (headers or {}).items():
+        cmd += ["-H", f"{key}: {value}"]
+    try:
+        return subprocess.check_output(cmd, text=True, stderr=subprocess.STDOUT)
+    except subprocess.CalledProcessError as exc:
+        output = exc.output.strip() if exc.output else str(exc)
+        raise RuntimeError(f"curl fallback failed for {url}: {output}") from exc
+
+
 async def fetch_openapi(client: httpx.AsyncClient) -> dict:
-    resp = await client.get(f"{settings.finance_api_url}/openapi.json")
-    resp.raise_for_status()
-    return resp.json()
+    url = f"{settings.finance_api_url}/openapi.json"
+    try:
+        resp = await client.get(url)
+        resp.raise_for_status()
+        return resp.json()
+    except httpx.HTTPError as exc:
+        logger.warning("httpx failed for %s, trying curl fallback: %s", url, exc)
+        return json.loads(_curl_request(url))
 
 
 def _auth_headers() -> dict[str, str]:
@@ -54,7 +71,17 @@ def build_server(tools: list[ToolSpec], client: httpx.AsyncClient) -> Server:
 
         path, query = build_request(tool, arguments or {})
         url = f"{settings.finance_api_url}{path}"
-        resp = await client.request(tool.method, url, params=query, headers=_auth_headers())
+        try:
+            resp = await client.request(tool.method, url, params=query, headers=_auth_headers())
+        except httpx.HTTPError as exc:
+            logger.warning("httpx failed for %s, trying curl fallback: %s", url, exc)
+            query_suffix = f"?{httpx.QueryParams(query)}" if query else ""
+            body = _curl_request(f"{url}{query_suffix}", headers=_auth_headers())
+            try:
+                pretty = json.dumps(json.loads(body), indent=2, ensure_ascii=False)
+                return [TextContent(type="text", text=_cap_body(pretty))]
+            except ValueError:
+                return [TextContent(type="text", text=_cap_body(body))]
 
         if resp.status_code >= 400:
             return [
