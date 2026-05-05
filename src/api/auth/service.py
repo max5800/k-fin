@@ -9,6 +9,11 @@ from sqlalchemy.orm import Session
 from src.api.auth.passwords import hash_password, needs_rehash, verify_password
 from src.core.db.models import User
 
+# Pre-computed argon2 hash of an unguessable string. Used to spend the same
+# CPU time on unknown-email logins as on real ones, so attackers can't probe
+# valid emails by measuring response latency.
+_DUMMY_HASH = hash_password("timing-equalisation-dummy-do-not-match")
+
 
 def get_user_by_id(db: Session, user_id: str) -> User | None:
     return db.get(User, user_id)
@@ -22,11 +27,11 @@ def authenticate_user(db: Session, email: str, password: str) -> User | None:
     """Return the User if credentials are valid and account is active, else None."""
     user = get_user_by_email(db, email)
     if user is None or not user.is_active:
+        verify_password(password, _DUMMY_HASH)
         return None
     if not verify_password(password, user.password_hash):
         return None
 
-    # Opportunistic rehash if Argon2 parameters have been upgraded.
     if needs_rehash(user.password_hash):
         user.password_hash = hash_password(password)
 
