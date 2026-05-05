@@ -142,7 +142,7 @@ persistence:
 #
 externalSecret:
   enabled: false
-  refreshInterval: 1h
+  refreshInterval: 5m
   secretStore:
     name: vault-backend
     kind: ClusterSecretStore
@@ -220,7 +220,7 @@ postgres:
     credentialsSecret: k-fin-postgres-backup-s3
   externalSecret:
     enabled: true
-    refreshInterval: 1h
+    refreshInterval: 5m
     secretStore:
       name: vault-backend
       kind: ClusterSecretStore

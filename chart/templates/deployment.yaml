@@ -5,6 +5,11 @@ metadata:
   labels:
     {{- include "k-fin.labels" . | nindent 4 }}
     app.kubernetes.io/component: api
+  annotations:
+    # Roll the deployment when the referenced infra-secrets / postgres
+    # secret changes (e.g. ESO syncs a rotated Vault key). Requires the
+    # Stakater Reloader operator in-cluster — no-op without it.
+    reloader.stakater.com/auto: "true"
 spec:
   replicas: {{ .Values.api.replicaCount }}
   selector:
