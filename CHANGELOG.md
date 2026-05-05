@@ -1,3 +1,11 @@
+# [1.31.0](https://github.com/max5800/k-fin/compare/v1.30.0...v1.31.0) (2026-05-05)
+
+
+### Features
+
+* **api:** add GET /transactions/export for CSV/JSON download ([8a73ef5](https://github.com/max5800/k-fin/commit/8a73ef5a1ac1ac8e076bccd3bcc6f73c88b2521a))
+* **api:** add POST /runs/{id}/rerun for failed agent runs ([0a62cbd](https://github.com/max5800/k-fin/commit/0a62cbd7f70a4688bf4c9d6d8a5c2ae391d2e02f))
+
 # [1.30.0](https://github.com/max5800/k-fin/compare/v1.29.3...v1.30.0) (2026-05-05)
 
 
