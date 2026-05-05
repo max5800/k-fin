@@ -1,3 +1,10 @@
+# [1.30.0](https://github.com/max5800/k-fin/compare/v1.29.3...v1.30.0) (2026-05-05)
+
+
+### Features
+
+* **api:** expose GET /sync/runs for the run-history UI ([c12c4bf](https://github.com/max5800/k-fin/commit/c12c4bf42b74678fecbb46849d119cb1567da08e))
+
 ## [1.29.3](https://github.com/max5800/k-fin/compare/v1.29.2...v1.29.3) (2026-05-05)
 
 
