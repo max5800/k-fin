@@ -1,3 +1,10 @@
+## [1.29.2](https://github.com/max5800/k-fin/compare/v1.29.1...v1.29.2) (2026-05-05)
+
+
+### Bug Fixes
+
+* **mcp:** fallback to curl for homelab API access ([#31](https://github.com/max5800/k-fin/issues/31)) ([3d86ad7](https://github.com/max5800/k-fin/commit/3d86ad72259b5b3338e28f4f6545000c85d59165))
+
 ## [1.29.1](https://github.com/max5800/k-fin/compare/v1.29.0...v1.29.1) (2026-05-03)
 
 
