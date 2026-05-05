@@ -273,3 +273,15 @@ class PerformancePointOut(BaseModel):
     snapshot_date: date
     total_value: Decimal
     total_purchase_value: Decimal
+
+
+class SyncRunOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    source: str
+    status: str
+    started_at: datetime
+    finished_at: datetime | None = None
+    rows_processed: int
+    error: str | None = None

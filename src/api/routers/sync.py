@@ -1,11 +1,14 @@
 """Sync proxy — forwards sync requests to the internal worker service."""
 
 import httpx
-from fastapi import APIRouter, Body, HTTPException
+from fastapi import APIRouter, Body, HTTPException, Query
 from pydantic import BaseModel, Field
+from sqlalchemy import select
 
-from src.api.deps import Auth
+from src.api.deps import Auth, Db
+from src.api.schemas import SyncRunOut
 from src.core.config import settings
+from src.core.db.models import SyncRun
 
 router = APIRouter(prefix="/sync", tags=["sync"], dependencies=[Auth])
 
@@ -159,3 +162,21 @@ async def backfill_run_status(run_id: str):
         raise HTTPException(status_code=503, detail="Worker service unreachable")
     except httpx.HTTPError as e:
         raise HTTPException(status_code=503, detail=f"Worker communication failed: {e}")
+
+
+# ---------------------------------------------------------------------------
+# Sync run history — read-only listing of past sync runs for the UI.
+# ---------------------------------------------------------------------------
+
+
+@router.get("/runs", response_model=list[SyncRunOut])
+def list_sync_runs(
+    db: Db,
+    limit: int = Query(50, ge=1, le=500),
+    source: str | None = Query(None),
+):
+    """Return the most recent sync runs, newest first."""
+    stmt = select(SyncRun).order_by(SyncRun.started_at.desc()).limit(limit)
+    if source is not None:
+        stmt = stmt.where(SyncRun.source == source)
+    return db.execute(stmt).scalars().all()
