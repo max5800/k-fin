@@ -155,6 +155,79 @@ def start_run(
     return run
 
 
+@router.post(
+    "/{run_id}/rerun",
+    response_model=RunOut,
+    status_code=status.HTTP_201_CREATED,
+    summary="Re-trigger a failed or cancelled agent run",
+)
+def rerun_run(
+    run_id: str,
+    db: Session = Depends(get_db),
+):
+    """Spawn a fresh AgentRun mirroring the original's `agent_name`.
+
+    Only allowed for terminal-but-incomplete runs (`failed`, `cancelled`) —
+    rerunning a `succeeded` run would be wasted spend, and rerunning a
+    `pending`/`running` row would race the worker.
+
+    The pipeline is idempotent by design: the categorization agent only
+    queries `category_id IS NULL`, and the synthesis agents are cheap to
+    re-execute. Already-categorized transactions are not touched.
+    """
+    original = db.get(AgentRun, run_id)
+    if original is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Run not found",
+        )
+
+    if original.status not in (RunStatus.FAILED, RunStatus.CANCELLED):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"Run is {original.status.value}; only failed or cancelled "
+                "runs can be rerun"
+            ),
+        )
+
+    agent_name = original.agent_name
+    new_run = AgentRun(
+        id=uuid.uuid4().hex,
+        agent_name=agent_name,
+        status=RunStatus.PENDING,
+        trigger=RunTrigger.MANUAL,
+        started_at=datetime.now(timezone.utc),
+    )
+    db.add(new_run)
+    db.commit()
+    db.refresh(new_run)
+
+    # Match the dispatch path of the original start endpoint — the worker
+    # has separate routes for the full pipeline vs. a single agent.
+    if agent_name == "full":
+        dispatch_path = "/internal/runs/start-full"
+    else:
+        dispatch_path = f"/internal/runs/start?agent_name={agent_name}"
+
+    try:
+        _dispatch_to_worker(dispatch_path, {"run_id": new_run.id})
+    except HTTPException:
+        db.execute(
+            update(AgentRun)
+            .where(AgentRun.id == new_run.id)
+            .values(
+                status=RunStatus.FAILED,
+                finished_at=datetime.now(timezone.utc),
+                error="Worker dispatch failed",
+            )
+        )
+        db.commit()
+        raise
+
+    return new_run
+
+
 @router.get("", response_model=RunListOut)
 def list_runs(
     db: Session = Depends(get_db),

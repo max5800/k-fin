@@ -237,3 +237,163 @@ class TestDeleteRun:
     def test_cancel_unknown_returns_404(self, api_client):
         resp = api_client.delete("/api/v1/runs/does-not-exist", headers=AUTH)
         assert resp.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# POST /runs/{run_id}/rerun
+# ---------------------------------------------------------------------------
+
+
+class TestRerunRun:
+    def test_rerun_unknown_returns_404(self, api_client):
+        resp = api_client.post(
+            "/api/v1/runs/does-not-exist/rerun", headers=AUTH
+        )
+        assert resp.status_code == 404
+
+    def test_rerun_running_returns_400(self, api_client, db_engine):
+        run_id = "running-rerun"
+        _seed_run(db_engine, run_id=run_id, status=RunStatus.RUNNING)
+
+        resp = api_client.post(f"/api/v1/runs/{run_id}/rerun", headers=AUTH)
+        assert resp.status_code == 400
+        assert "running" in resp.json()["detail"]
+
+    def test_rerun_succeeded_returns_400(self, api_client, db_engine):
+        run_id = "succeeded-rerun"
+        _seed_run(
+            db_engine,
+            run_id=run_id,
+            status=RunStatus.SUCCEEDED,
+            finished_at=datetime.now(timezone.utc),
+        )
+
+        resp = api_client.post(f"/api/v1/runs/{run_id}/rerun", headers=AUTH)
+        assert resp.status_code == 400
+        assert "succeeded" in resp.json()["detail"]
+
+    def test_rerun_failed_dispatches_new_run(
+        self, api_client, db_engine, monkeypatch, runs_router
+    ):
+        run_id = "failed-rerun"
+        _seed_run(
+            db_engine,
+            run_id=run_id,
+            status=RunStatus.FAILED,
+            finished_at=datetime.now(timezone.utc),
+        )
+
+        calls: list[tuple[str, dict]] = []
+        monkeypatch.setattr(
+            runs_router,
+            "_dispatch_to_worker",
+            lambda p, payload: calls.append((p, payload)),
+        )
+
+        resp = api_client.post(f"/api/v1/runs/{run_id}/rerun", headers=AUTH)
+        assert resp.status_code == 201
+        body = resp.json()
+        new_id = body["id"]
+        assert new_id != run_id
+        assert body["agent_name"] == "categorization"
+        assert body["status"] == "pending"
+        assert body["trigger"] == "manual"
+
+        # Original row is untouched.
+        with Session(db_engine) as s:
+            original = s.get(AgentRun, run_id)
+            assert original.status == RunStatus.FAILED
+
+            new_row = s.get(AgentRun, new_id)
+            assert new_row is not None
+            assert new_row.agent_name == "categorization"
+            assert new_row.status == RunStatus.PENDING
+
+        assert calls == [
+            ("/internal/runs/start?agent_name=categorization", {"run_id": new_id})
+        ]
+
+    def test_rerun_cancelled_dispatches_new_run(
+        self, api_client, db_engine, monkeypatch, runs_router
+    ):
+        run_id = "cancelled-rerun"
+        _seed_run(
+            db_engine,
+            run_id=run_id,
+            status=RunStatus.CANCELLED,
+            finished_at=datetime.now(timezone.utc),
+        )
+
+        calls: list[tuple[str, dict]] = []
+        monkeypatch.setattr(
+            runs_router,
+            "_dispatch_to_worker",
+            lambda p, payload: calls.append((p, payload)),
+        )
+
+        resp = api_client.post(f"/api/v1/runs/{run_id}/rerun", headers=AUTH)
+        assert resp.status_code == 201
+        new_id = resp.json()["id"]
+
+        assert calls == [
+            ("/internal/runs/start?agent_name=categorization", {"run_id": new_id})
+        ]
+
+    def test_rerun_full_run_uses_start_full_path(
+        self, api_client, db_engine, monkeypatch, runs_router
+    ):
+        run_id = "failed-full"
+        with Session(db_engine) as s:
+            s.add(
+                AgentRun(
+                    id=run_id,
+                    agent_name="full",
+                    status=RunStatus.FAILED,
+                    trigger=RunTrigger.MANUAL,
+                    started_at=datetime.now(timezone.utc),
+                    finished_at=datetime.now(timezone.utc),
+                )
+            )
+            s.commit()
+
+        calls: list[tuple[str, dict]] = []
+        monkeypatch.setattr(
+            runs_router,
+            "_dispatch_to_worker",
+            lambda p, payload: calls.append((p, payload)),
+        )
+
+        resp = api_client.post(f"/api/v1/runs/{run_id}/rerun", headers=AUTH)
+        assert resp.status_code == 201
+        new_id = resp.json()["id"]
+        assert resp.json()["agent_name"] == "full"
+
+        assert calls == [("/internal/runs/start-full", {"run_id": new_id})]
+
+    def test_rerun_dispatch_failure_marks_new_row_failed(
+        self, api_client, db_engine, monkeypatch, runs_router
+    ):
+        run_id = "failed-then-fail"
+        _seed_run(
+            db_engine,
+            run_id=run_id,
+            status=RunStatus.FAILED,
+            finished_at=datetime.now(timezone.utc),
+        )
+
+        def fake_post(*_a, **_kw):
+            raise httpx.ConnectError("worker offline")
+
+        monkeypatch.setattr(runs_router.httpx, "post", fake_post)
+
+        resp = api_client.post(f"/api/v1/runs/{run_id}/rerun", headers=AUTH)
+        assert resp.status_code == 502
+
+        with Session(db_engine) as s:
+            rows = s.query(AgentRun).order_by(AgentRun.id).all()
+            # Original + new failed row.
+            assert len(rows) == 2
+            new_row = next(r for r in rows if r.id != run_id)
+            assert new_row.status == RunStatus.FAILED
+            assert new_row.error == "Worker dispatch failed"
+            assert new_row.finished_at is not None
