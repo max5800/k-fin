@@ -1,10 +1,22 @@
-"""Transform an OpenAPI spec into MCP tool descriptors. Read-only scope."""
+"""Transform an OpenAPI spec into MCP tool descriptors.
 
-from dataclasses import dataclass
+Read-only by default. A tiny `WRITE_ALLOWLIST` opts specific non-GET operations
+into the tool registry — keep it minimal and explicit; this server must never
+expose arbitrary writes against the Finance API.
+"""
+
+from dataclasses import dataclass, field
 from typing import Any
 
 SKIP_PATHS = {"/health", "/openapi.json", "/docs", "/redoc"}
 SKIP_PATH_PREFIXES = ("/internal/",)
+
+# Explicit allowlist for non-GET operations. Anything not listed here is
+# rejected even if the caller passes a broader `methods` tuple — this keeps
+# accidental writes from sneaking in via OpenAPI changes.
+WRITE_ALLOWLIST: set[tuple[str, str]] = {
+    ("put", "/api/v1/categories/budgets/{category_id}"),
+}
 
 
 @dataclass
@@ -15,6 +27,7 @@ class ToolSpec:
     path_template: str
     parameters: list[dict[str, Any]]
     input_schema: dict[str, Any]
+    body_fields: list[str] = field(default_factory=list)
 
 
 def _skip_operation(path: str, op: dict[str, Any]) -> bool:
@@ -55,6 +68,32 @@ def _input_schema_from_params(parameters: list[dict[str, Any]]) -> dict[str, Any
     return obj
 
 
+def _resolve_ref(spec: dict[str, Any], ref: str) -> dict[str, Any]:
+    if not ref.startswith("#/"):
+        return {}
+    node: Any = spec
+    for part in ref[2:].split("/"):
+        if not isinstance(node, dict) or part not in node:
+            return {}
+        node = node[part]
+    return node if isinstance(node, dict) else {}
+
+
+def _request_body_schema(
+    spec: dict[str, Any], op: dict[str, Any]
+) -> tuple[dict[str, Any], list[str]]:
+    """Return (properties, required) for the JSON request body, resolving $ref."""
+    request_body = op.get("requestBody") or {}
+    content = request_body.get("content") or {}
+    json_content = content.get("application/json") or {}
+    schema = json_content.get("schema") or {}
+    if "$ref" in schema:
+        schema = _resolve_ref(spec, schema["$ref"])
+    properties = schema.get("properties") or {}
+    required = list(schema.get("required") or [])
+    return properties, required
+
+
 def build_tools_from_openapi(
     spec: dict[str, Any],
     methods: tuple[str, ...] = ("get",),
@@ -64,13 +103,27 @@ def build_tools_from_openapi(
         if not isinstance(path_item, dict):
             continue
         for method, op in path_item.items():
-            if method.lower() not in methods:
+            method_l = method.lower()
+            allow_via_methods = method_l in methods
+            allow_via_writelist = (method_l, path) in WRITE_ALLOWLIST
+            if not (allow_via_methods or allow_via_writelist):
                 continue
             if not isinstance(op, dict):
                 continue
             if _skip_operation(path, op):
                 continue
             parameters = op.get("parameters") or []
+            input_schema = _input_schema_from_params(parameters)
+            body_props, body_required = _request_body_schema(spec, op)
+            if body_props:
+                properties = input_schema.setdefault("properties", {})
+                for name, schema in body_props.items():
+                    properties[name] = schema
+            if body_required:
+                required = input_schema.setdefault("required", [])
+                for name in body_required:
+                    if name not in required:
+                        required.append(name)
             tools.append(
                 ToolSpec(
                     name=_tool_name(path, method, op),
@@ -78,7 +131,8 @@ def build_tools_from_openapi(
                     method=method.upper(),
                     path_template=path,
                     parameters=parameters,
-                    input_schema=_input_schema_from_params(parameters),
+                    input_schema=input_schema,
+                    body_fields=list(body_props.keys()),
                 )
             )
     return tools
@@ -86,8 +140,13 @@ def build_tools_from_openapi(
 
 def build_request(
     tool: ToolSpec, arguments: dict[str, Any]
-) -> tuple[str, dict[str, Any]]:
-    """Split arguments into a substituted path and query dict."""
+) -> tuple[str, dict[str, Any], dict[str, Any] | None]:
+    """Split arguments into a substituted path, query dict, and JSON body.
+
+    `body` is `None` for tools without a request body (e.g. plain GETs); for
+    tools with body fields it is a dict containing only those fields actually
+    supplied by the caller.
+    """
     path = tool.path_template
     query: dict[str, Any] = {}
     for p in tool.parameters:
@@ -100,4 +159,7 @@ def build_request(
             path = path.replace("{" + name + "}", str(value))
         elif where == "query":
             query[name] = value
-    return path, query
+    body: dict[str, Any] | None = None
+    if tool.body_fields:
+        body = {name: arguments[name] for name in tool.body_fields if name in arguments}
+    return path, query, body
