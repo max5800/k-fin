@@ -19,10 +19,17 @@ from src.mcp_server.openapi_tools import (
 logger = logging.getLogger(__name__)
 
 
-def _curl_request(url: str, headers: dict[str, str] | None = None) -> str:
-    cmd = ["curl", "-fsSL", url]
+def _curl_request(
+    url: str,
+    headers: dict[str, str] | None = None,
+    method: str = "GET",
+    data: str | None = None,
+) -> str:
+    cmd = ["curl", "-fsSL", "-X", method, url]
     for key, value in (headers or {}).items():
         cmd += ["-H", f"{key}: {value}"]
+    if data is not None:
+        cmd += ["--data", data]
     try:
         return subprocess.check_output(cmd, text=True, stderr=subprocess.STDOUT)
     except subprocess.CalledProcessError as exc:
@@ -69,19 +76,32 @@ def build_server(tools: list[ToolSpec], client: httpx.AsyncClient) -> Server:
         if tool is None:
             return [TextContent(type="text", text=f"Unknown tool: {name}")]
 
-        path, query = build_request(tool, arguments or {})
+        path, query, body = build_request(tool, arguments or {})
         url = f"{settings.finance_api_url}{path}"
+        request_kwargs: dict = {"params": query, "headers": _auth_headers()}
+        if body is not None:
+            request_kwargs["json"] = body
         try:
-            resp = await client.request(tool.method, url, params=query, headers=_auth_headers())
+            resp = await client.request(tool.method, url, **request_kwargs)
         except httpx.HTTPError as exc:
             logger.warning("httpx failed for %s, trying curl fallback: %s", url, exc)
             query_suffix = f"?{httpx.QueryParams(query)}" if query else ""
-            body = _curl_request(f"{url}{query_suffix}", headers=_auth_headers())
+            curl_headers = dict(_auth_headers())
+            curl_data: str | None = None
+            if body is not None:
+                curl_headers["Content-Type"] = "application/json"
+                curl_data = json.dumps(body)
+            text = _curl_request(
+                f"{url}{query_suffix}",
+                headers=curl_headers,
+                method=tool.method,
+                data=curl_data,
+            )
             try:
-                pretty = json.dumps(json.loads(body), indent=2, ensure_ascii=False)
+                pretty = json.dumps(json.loads(text), indent=2, ensure_ascii=False)
                 return [TextContent(type="text", text=_cap_body(pretty))]
             except ValueError:
-                return [TextContent(type="text", text=_cap_body(body))]
+                return [TextContent(type="text", text=_cap_body(text))]
 
         if resp.status_code >= 400:
             return [
