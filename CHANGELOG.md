@@ -1,3 +1,10 @@
+# [1.32.0](https://github.com/max5800/k-fin/compare/v1.31.0...v1.32.0) (2026-05-06)
+
+
+### Features
+
+* **mcp:** allow budget upsert via explicit write allowlist ([#32](https://github.com/max5800/k-fin/issues/32)) ([666b779](https://github.com/max5800/k-fin/commit/666b7794e81373cc1ff50ec7f9d0c2c5d1487587))
+
 # [1.31.0](https://github.com/max5800/k-fin/compare/v1.30.0...v1.31.0) (2026-05-05)
 
 
