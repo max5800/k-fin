@@ -20,6 +20,7 @@ from src.api.routers import (
     dev,
     portfolio,
     reports,
+    rules,
     runs,
     settings as settings_router,
     sync,
@@ -111,6 +112,10 @@ def create_app() -> FastAPI:
 
     app.include_router(auth.router, prefix="/api/v1")
     app.include_router(transactions.router, prefix="/api/v1")
+    # Rules router shares the /categories/* prefix space — mount it
+    # before the broader categories CRUD router so the more specific
+    # /categories/rules paths take precedence in the route table.
+    app.include_router(rules.router, prefix="/api/v1")
     app.include_router(categories.router, prefix="/api/v1")
     app.include_router(runs.router, prefix="/api/v1")
     app.include_router(aggregates.router, prefix="/api/v1")

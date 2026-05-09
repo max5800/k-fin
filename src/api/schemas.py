@@ -75,6 +75,36 @@ class TransactionListOut(BaseModel):
     offset: int
 
 
+# ── Categorization rules ────────────────────────────────────────
+
+
+class RuleOut(BaseModel):
+    """A single auto-categorization rule.
+
+    Schema mirrors :class:`src.core.db.models.Rule` and the UI's
+    ``CategoryRule`` type — keep field names in lockstep.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    regex_pattern: str
+    target_category_id: str
+    priority: int
+
+
+class RuleCreate(BaseModel):
+    regex_pattern: str
+    target_category_id: str
+    priority: int = 0
+
+
+class RuleUpdate(BaseModel):
+    regex_pattern: str | None = None
+    target_category_id: str | None = None
+    priority: int | None = None
+
+
 class TransactionUpdate(BaseModel):
     category_id: str | None = None
     tags: list[str] | None = None
