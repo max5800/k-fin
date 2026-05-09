@@ -156,6 +156,20 @@ def httpx_post_spy():
 
 @pytest.fixture
 def api_client(db_engine):
+    """Spin up the api FastAPI app with a TestClient.
+
+    Sets API_TOKEN + DATABASE_URL + JWT_SECRET in env before
+    ``create_app()`` so the Settings refresh has all three available,
+    then walks every still-loaded ``settings`` instance and forces
+    the same values into them. The latter step defends against test
+    pollution from ``tests/auth/test_jwt.py``, which does
+    ``importlib.reload(src.core.config)`` and leaves divergent
+    Settings singletons across modules — without re-syncing them,
+    the request handler in ``src.api.deps`` and ``src.api.auth.jwt``
+    can read different ``jwt_secret`` values for the same request.
+    """
+    import sys
+
     from src.core.db import get_db
 
     def _override_get_db():
@@ -163,10 +177,34 @@ def api_client(db_engine):
             yield session
 
     db_url = db_engine.url.render_as_string(hide_password=False)
-    with patch.dict(os.environ, {"API_TOKEN": "test-secret", "DATABASE_URL": db_url}):
+    api_token = "test-secret"
+    jwt_secret = "test-jwt-secret-min-32chars-long-aaaaaaaa"
+    env = {
+        "API_TOKEN": api_token,
+        "DATABASE_URL": db_url,
+        "JWT_SECRET": jwt_secret,
+    }
+    with patch.dict(os.environ, env):
         from src.api.app import create_app
+        from src.core.config import Settings as _SettingsCls
 
         app = create_app()
+
+        # Sync every loaded module's `settings` instance — needed
+        # because some prior test may have done an importlib.reload
+        # of `src.core.config`, leaving stale references that the
+        # production import graph still uses.
+        seen: set[int] = set()
+        for mod in list(sys.modules.values()):
+            if mod is None:
+                continue
+            cur = getattr(mod, "settings", None)
+            if isinstance(cur, _SettingsCls) and id(cur) not in seen:
+                seen.add(id(cur))
+                cur.api_token = api_token
+                cur.database_url = db_url
+                cur.jwt_secret = jwt_secret
+
         app.dependency_overrides[get_db] = _override_get_db
         client = TestClient(app)
         yield client
@@ -220,12 +258,15 @@ def _set_ticker(db_engine, ticker: str):
 
 
 @pytest.fixture
-def user_auth(db_engine):
+def user_auth(db_engine, api_client):
     """Seed a user row, mint a real JWT, return Authorization headers.
 
-    Activates JWT_SECRET in the environment so both the token issuer
-    and the ``_get_current_user`` verifier see the same secret.
+    Depends on ``api_client`` so the JWT_SECRET that the api fixture
+    bakes into its Settings singleton is the one we sign with — this
+    keeps issuer and verifier in lock-step regardless of test order
+    (other tests in the suite reload ``src.core.config`` mid-run).
     """
+    import sys
     import uuid as _uuid
 
     from src.core.db.models import User
@@ -244,14 +285,23 @@ def user_auth(db_engine):
         )
         s.commit()
 
-    with patch.dict(os.environ, {"JWT_SECRET": secret}):
-        from src.api.auth.jwt import issue_token
-        from src.core.config import Settings, settings as _settings
+    # Make sure every loaded module's `settings` instance carries the
+    # same JWT secret, defending against `importlib.reload` polluters.
+    from src.core.config import Settings as _SettingsCls
 
-        for k, v in Settings().model_dump().items():
-            setattr(_settings, k, v)
-        token = issue_token(user_id)
-        yield {"Authorization": f"Bearer {token}"}
+    seen_ids: set[int] = set()
+    for mod in list(sys.modules.values()):
+        if mod is None:
+            continue
+        cur = getattr(mod, "settings", None)
+        if isinstance(cur, _SettingsCls) and id(cur) not in seen_ids:
+            seen_ids.add(id(cur))
+            cur.jwt_secret = secret
+
+    from src.api.auth.jwt import issue_token
+
+    token = issue_token(user_id)
+    yield {"Authorization": f"Bearer {token}"}
 
 
 # ---------------------------------------------------------------------------
