@@ -620,7 +620,26 @@ class AgentOrchestrator:
                 .where(AgentRun.id == run_id)
                 .values(**values)
             )
+            # Capture the agent_name *while we hold the session* so the
+            # webhook payload can label the run kind correctly.
+            agent_name: str | None = None
+            if status == RunStatus.FAILED:
+                agent_name = session.execute(
+                    select(AgentRun.agent_name).where(AgentRun.id == run_id)
+                ).scalar_one_or_none()
             session.commit()
+
+        # Best-effort failure ping. Runs *after* the commit so a slow
+        # Discord can't extend the failure path beyond its 5s timeout.
+        if status == RunStatus.FAILED:
+            from src.core.notifier import notify_failure_from_db
+
+            notify_failure_from_db(
+                self.engine,
+                run_kind=f"agent:{agent_name or 'unknown'}",
+                run_id=run_id,
+                error_message=error or "(no error message)",
+            )
 
     def _persist_report(self, agent_type: str, result: Any) -> None:
         """Save an agent result as a Report row (agent memory loop).
