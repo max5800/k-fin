@@ -4,6 +4,8 @@
 
 k-fin — Personal Finance Intelligence Platform. Read-only financial data export from the Comdirect REST API — as CSV, Finance API, and normalization pipeline into Postgres. This is a personal banking application handling highly sensitive financial data.
 
+**Public OSS repo, single maintainer.** Source ships on GitHub under MIT — anything that lands on `main` is world-readable. Treat every commit as published: no real IBANs, balances, hostnames, tokens, or personal infra paths in code, fixtures, comments, configs, or chart defaults. Maintainer-only Helm values live in `dev/values.local.yaml` (git-ignored); `dev/values.remote.example.yaml` and `chart/values.yaml` are the public-facing templates.
+
 ## Identity
 
 `k-fin` resolves internally to "Klaus Fin" (fish-fin). Klaus is the user's OpenClaw AI assistant — a talking goldfish, former GDR figure-skating champion, living on the home network. k-fin is his finance workbench. **Always write the product as `k-fin`** (lowercase, hyphenated) — never spell out "Klaus Finanzen" or "Klaus Finance" in code, UI, logs, commits, or docs. Keep banking code serious; identity stays subtle. Full lore: user's Obsidian vault at `Tech/Firefly & Finanz Sync/IDENTITY.md`.

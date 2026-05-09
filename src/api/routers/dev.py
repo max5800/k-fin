@@ -1,13 +1,15 @@
 """Dev-only DB tools — wipe transactions and seed a fake dataset.
 
-DANGER: every endpoint here is destructive. Mounted only when
-`settings.dev_tools_enabled` is True (off by default, hard-disabled in
-production by `_normalize_settings`). Helm sets the flag to True in
+DANGER: every endpoint here is destructive. Gated by
+`settings.dev_tools_enabled` (off by default; force-disabled in production
+by `Settings._normalize_settings`). The gate is enforced at router level
+via `Depends(require_dev_enabled)` so any endpoint added later inherits
+the 404 behaviour automatically. Helm sets the flag to True in
 `dev/values.local.yaml`; the public template leaves it false.
 
 Use cases:
   - Reset the dev database between feature tests so behaviour with
-    fake-but-realistic data isn't shadowed by my real bank history.
+    fake-but-realistic data isn't shadowed by real bank history.
   - Trial the refund-aware aggregates / budget-spending UI with edge-case
     transactions (Krankenkassen-Erstattung, Splitwise-Ausgleich, Steuer-
     Rückzahlung, internal transfer, outlier) without waiting on the next
@@ -16,12 +18,13 @@ Use cases:
 
 from __future__ import annotations
 
+import calendar
 import hashlib
 import logging
 import random
 import uuid
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, timezone
 from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -31,6 +34,7 @@ from sqlalchemy.orm import Session
 
 from src.api.deps import get_db, require_token
 from src.core.config import settings
+from src.core.db.categories import INCOME_CATCHALL_CATEGORY_ID
 from src.core.db.models import (
     Category,
     NormalizedTransaction,
@@ -43,7 +47,27 @@ from src.core.db.models import (
 logger = logging.getLogger(__name__)
 
 
-router = APIRouter(prefix="/dev", tags=["dev"])
+def require_dev_enabled() -> None:
+    """Router-level guard. Returns 404 (not 401/403) so the dev surface is
+    indistinguishable from a non-existent route when the flag is off — the
+    response posture is identical for unauthenticated and authenticated
+    callers, which prevents fingerprinting whether wipe/seed are armed.
+    """
+    if not settings.dev_tools_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Not Found"
+        )
+
+
+# `/status` is exempt from `require_dev_enabled` so the UI can probe the
+# flag without 404'ing; it lives on a sub-router with no guard. The main
+# router enforces the guard for every (current and future) endpoint.
+status_router = APIRouter(prefix="/dev", tags=["dev"])
+router = APIRouter(
+    prefix="/dev",
+    tags=["dev"],
+    dependencies=[Depends(require_dev_enabled)],
+)
 
 
 # Tables flushed by `/dev/wipe`. Order matters only on the diagnostic
@@ -64,7 +88,6 @@ _WIPE_TABLES = (
 
 class DevStatus(BaseModel):
     enabled: bool
-    app_env: str
 
 
 class WipeResult(BaseModel):
@@ -82,23 +105,21 @@ class SeedResult(BaseModel):
     outlier_count: int
 
 
-@router.get("/status", response_model=DevStatus)
+@status_router.get(
+    "/status",
+    response_model=DevStatus,
+    dependencies=[Depends(require_token)],
+)
 def dev_status():
-    """Always-mounted lightweight check — UI reads this to decide whether
-    to show the dev panel. Returns enabled=False when the flag is off
-    instead of 404 so the UI gets a clean negative answer.
+    """Authenticated probe — UI reads this to decide whether to show the
+    dev panel. Returns enabled=False when the flag is off instead of 404
+    so the UI gets a clean negative answer. Auth-gated to avoid leaking
+    deployment posture (`app_env`, dev-tools state) to anonymous callers.
+    The response intentionally omits `app_env` — the UI only needs the
+    boolean, and the env string would tell an attacker whether wipe is
+    armed.
     """
-    return DevStatus(enabled=settings.dev_tools_enabled, app_env=settings.app_env)
-
-
-def _require_enabled():
-    """Guard for destructive endpoints. Returns 404 to keep the surface
-    invisible when the flag is off — same posture as a non-existent route.
-    """
-    if not settings.dev_tools_enabled:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Not Found"
-        )
+    return DevStatus(enabled=settings.dev_tools_enabled)
 
 
 @router.post("/wipe", response_model=WipeResult, dependencies=[Depends(require_token)])
@@ -108,7 +129,6 @@ def wipe_transactions(db: Session = Depends(get_db)):
     Keeps: categories, budgets, users, app_settings, depots, instruments,
     positions, depot_transactions, portfolio_snapshots, alembic_version.
     """
-    _require_enabled()
     before = db.query(NormalizedTransaction).count()
     table_list = ", ".join(_WIPE_TABLES)
     # Single CASCADE statement — Postgres handles FK ordering. RESTART
@@ -143,6 +163,11 @@ class _TxSpec:
     is_recurring: bool = False
     is_outlier: bool = False
     internal_transfer: bool = False
+    # Optional IBAN overrides — only used by internal-transfer rows so the
+    # two legs sit on different accounts (Giro vs Tagesgeld). All other
+    # rows default to `_OWN_IBAN` based on the amount sign.
+    sender_iban: str | None = None
+    recipient_iban: str | None = None
 
 
 _OWN_NAME = "John Doe"
@@ -156,11 +181,12 @@ def _hash(seed: str, n: int) -> str:
 
 
 def _add_month(d: date, delta: int) -> date:
-    """Naive month-arithmetic that clamps day-of-month to month length."""
+    """Add `delta` months, clamping day-of-month to the new month's length
+    (so Jan 31 + 1 month → Feb 28/29, not invalid).
+    """
     m = d.month - 1 + delta
-    y = d.year + m // 12
-    m = m % 12 + 1
-    last = (date(y, m % 12 + 1, 1) - timedelta(days=1)).day if m < 12 else 31
+    y, m = d.year + m // 12, m % 12 + 1
+    last = calendar.monthrange(y, m)[1]
     return date(y, m, min(d.day, last))
 
 
@@ -368,7 +394,7 @@ def _build_seed(today: date) -> list[_TxSpec]:
             sender="Visa Cashback Programm",
             recipient=_OWN_NAME,
             description="Cashback",
-            category_id="erstattungen",
+            category_id=INCOME_CATCHALL_CATEGORY_ID,
         ))
 
     # --- Special events: spread across the 6-month window -------------------
@@ -380,7 +406,7 @@ def _build_seed(today: date) -> list[_TxSpec]:
         sender="Finanzamt München",
         recipient=_OWN_NAME,
         description="Einkommensteuer 2025",
-        category_id="erstattungen",
+        category_id=INCOME_CATCHALL_CATEGORY_ID,
     ))
 
     # Amazon retoure — refund on original kleidung purchase.
@@ -425,7 +451,9 @@ def _build_seed(today: date) -> list[_TxSpec]:
         is_outlier=True,
     ))
 
-    # Internal transfer pair: -500 from Giro, +500 to Tagesgeld.
+    # Internal transfer pair: -500 from Giro, +500 to Tagesgeld. The two
+    # legs need distinct IBANs so a future internal-transfer-by-IBAN
+    # detector sees a real Giro→Tagesgeld move rather than a self-loop.
     transfer_month = months[3]
     transfer_day = transfer_month.replace(day=18)
     txs.append(_TxSpec(
@@ -436,6 +464,8 @@ def _build_seed(today: date) -> list[_TxSpec]:
         description="Umbuchung Tagesgeld",
         category_id="umbuchung",
         internal_transfer=True,
+        sender_iban=_OWN_IBAN,
+        recipient_iban=_OWN_TAGESGELD_IBAN,
     ))
     txs.append(_TxSpec(
         booking_date=transfer_day,
@@ -445,6 +475,8 @@ def _build_seed(today: date) -> list[_TxSpec]:
         description="Umbuchung Tagesgeld",
         category_id="umbuchung",
         internal_transfer=True,
+        sender_iban=_OWN_TAGESGELD_IBAN,
+        recipient_iban=_OWN_IBAN,
     ))
 
     # Sort by date so the DB layout matches a real sync.
@@ -460,15 +492,13 @@ def seed_dataset(db: Session = Depends(get_db)):
     `seed_run_id`, so content_hashes never collide with previous seeds. To
     start clean, call `/dev/wipe` first.
     """
-    _require_enabled()
-
     # Sanity: the categories must exist (they're seeded by migration 0005).
     # If somebody nuked them, fail loudly rather than producing orphan tx.
     expected = {
         "gehalt", "miete", "internet-telefon", "strom-gas", "abos-streaming",
         "versicherungen", "etf-sparplan", "gez", "lebensmittel", "drogerie",
-        "tanken", "restaurant-cafe", "gesundheit", "erstattungen", "kleidung",
-        "reisen", "elektronik", "umbuchung",
+        "tanken", "restaurant-cafe", "gesundheit", INCOME_CATCHALL_CATEGORY_ID,
+        "kleidung", "reisen", "elektronik", "umbuchung",
     }
     have = {c.id for c in db.query(Category).all()}
     missing = expected - have
@@ -519,8 +549,12 @@ def seed_dataset(db: Session = Depends(get_db)):
             currency="EUR",
             sender=spec.sender,
             recipient=spec.recipient,
-            sender_iban=_OWN_IBAN if spec.amount < 0 else None,
-            recipient_iban=_OWN_IBAN if spec.amount > 0 else None,
+            sender_iban=spec.sender_iban
+            if spec.sender_iban is not None
+            else (_OWN_IBAN if spec.amount < 0 else None),
+            recipient_iban=spec.recipient_iban
+            if spec.recipient_iban is not None
+            else (_OWN_IBAN if spec.amount > 0 else None),
             description=spec.description,
             category_id=spec.category_id,
             is_recurring=spec.is_recurring,

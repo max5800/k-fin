@@ -28,6 +28,7 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
 from src.core.config import settings
+from src.core.db.categories import INCOME_CATCHALL_CATEGORY_ID
 from src.core.db.models import NormalizedTransaction
 
 
@@ -73,8 +74,8 @@ def main() -> int:
     parser.add_argument("--json", action="store_true", help="Emit JSON instead of human-readable text")
     parser.add_argument(
         "--category-id",
-        default="erstattungen",
-        help="Category to inspect (default: erstattungen)",
+        default=INCOME_CATCHALL_CATEGORY_ID,
+        help=f"Category to inspect (default: {INCOME_CATCHALL_CATEGORY_ID})",
     )
     args = parser.parse_args()
 

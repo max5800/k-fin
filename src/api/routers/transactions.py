@@ -95,11 +95,19 @@ def _apply_filters(
     if is_refund is not None:
         stmt = stmt.where(NormalizedTransaction.is_refund == is_refund)
     if search:
-        pattern = f"%{search}%"
+        # Escape LIKE wildcards from the user-supplied search box so a
+        # query like "50%" or "OS_2024" matches the literal characters
+        # instead of expanding into a wildcard pattern.
+        escaped = (
+            search.replace("\\", "\\\\")
+            .replace("%", "\\%")
+            .replace("_", "\\_")
+        )
+        pattern = f"%{escaped}%"
         clause = (
-            NormalizedTransaction.recipient.ilike(pattern)
-            | NormalizedTransaction.sender.ilike(pattern)
-            | NormalizedTransaction.description.ilike(pattern)
+            NormalizedTransaction.recipient.ilike(pattern, escape="\\")
+            | NormalizedTransaction.sender.ilike(pattern, escape="\\")
+            | NormalizedTransaction.description.ilike(pattern, escape="\\")
         )
         stmt = stmt.where(clause)
     return stmt

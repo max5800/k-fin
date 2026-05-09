@@ -4,6 +4,7 @@ Runs on port 8000, serves all read/write capabilities as HTTP endpoints.
 No bank secrets — those stay in the worker (port 8001).
 """
 
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 
@@ -30,39 +31,49 @@ from src.core.config import Settings, settings
 logger = logging.getLogger(__name__)
 
 
+def _run_refund_audit_startup() -> None:
+    """Sync refund-audit pass invoked from the async lifespan hook via
+    `asyncio.to_thread`. Kept as a module-level function so it can be
+    swapped or unit-tested without touching the FastAPI app factory.
+    """
+    if not settings.database_url:
+        return
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import Session as SqlSession
+
+    from src.api.routers.aggregates import apply_refund_heuristic
+
+    engine = create_engine(settings.database_url)
+    try:
+        with SqlSession(engine) as session:
+            counts = apply_refund_heuristic(session)
+        if any(counts.values()):
+            logger.info(
+                "refund_audit auto-apply: refund=%d income=%d review=%d",
+                counts["applied_refund"],
+                counts["applied_income"],
+                counts["left_for_review"],
+            )
+    finally:
+        engine.dispose()
+
+
 @asynccontextmanager
 async def _lifespan(_app: FastAPI):
     """Lifespan: refund-audit auto-apply pass.
 
     The categorization agent already auto-applies high-confidence refund
     suggestions for *new* tx as they come through. Historical erstattungen-
-    rows (pre-2026-05-08) sit unflagged in the DB — running the heuristic
-    once at startup catches the unambiguous ones (Krankenkasse, Finanzamt,
-    Booking, …) so the manual review queue only shows genuinely uncertain
-    cases. Idempotent: a clean DB does no work.
+    rows sit unflagged in the DB — running the heuristic once at startup
+    catches the unambiguous ones (Krankenkasse, Finanzamt, Booking, …) so
+    the manual review queue only shows genuinely uncertain cases.
+    Idempotent: a clean DB does no work.
 
-    Run-lifecycle cleanup stays in the worker (`src/agents/reaper.py`).
+    The work is sync (SQLAlchemy `Session`); offload to a worker thread so
+    the event loop stays free for the readiness probe.
     """
     try:
-        if settings.database_url:
-            from sqlalchemy import create_engine
-            from sqlalchemy.orm import Session as SqlSession
-
-            from src.api.routers.aggregates import apply_refund_heuristic
-
-            engine = create_engine(settings.database_url)
-            try:
-                with SqlSession(engine) as session:
-                    counts = apply_refund_heuristic(session)
-                if any(counts.values()):
-                    logger.info(
-                        "refund_audit auto-apply: refund=%d income=%d review=%d",
-                        counts["applied_refund"],
-                        counts["applied_income"],
-                        counts["left_for_review"],
-                    )
-            finally:
-                engine.dispose()
+        await asyncio.to_thread(_run_refund_audit_startup)
     except Exception:  # noqa: BLE001 — never block API startup on cleanup
         logger.exception("refund_audit auto-apply skipped on startup")
     yield
@@ -110,9 +121,11 @@ def create_app() -> FastAPI:
     app.include_router(categorization.router, prefix="/api/v1")
     app.include_router(depots.router, prefix="/api/v1")
     app.include_router(portfolio.router, prefix="/api/v1")
-    # Dev router is always mounted so the UI can call /dev/status to detect
-    # the environment. Destructive sub-endpoints (/wipe, /seed) self-guard
-    # via `_require_enabled` and 404 when settings.dev_tools_enabled is off.
+    # Dev tools — `/dev/status` is always mounted (auth-gated, used by the
+    # UI to detect the environment). Destructive endpoints live on a
+    # router whose `Depends(require_dev_enabled)` returns 404 when
+    # settings.dev_tools_enabled is off, so they're invisible in prod.
+    app.include_router(dev.status_router, prefix="/api/v1")
     app.include_router(dev.router, prefix="/api/v1")
 
     return app

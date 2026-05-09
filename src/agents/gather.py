@@ -112,9 +112,13 @@ def get_similar_categorized_transactions(
 
     ilike_clauses = []
     for key in keys:
-        pattern = f"%{key}%"
-        ilike_clauses.append(NormalizedTransaction.sender.ilike(pattern))
-        ilike_clauses.append(NormalizedTransaction.recipient.ilike(pattern))
+        # Escape SQL LIKE wildcards: a sender like "%PROMO%" or
+        # "Verein A_B" would otherwise expand to a wildcard match and pull
+        # unrelated few-shot examples into the prompt.
+        escaped = key.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        pattern = f"%{escaped}%"
+        ilike_clauses.append(NormalizedTransaction.sender.ilike(pattern, escape="\\"))
+        ilike_clauses.append(NormalizedTransaction.recipient.ilike(pattern, escape="\\"))
 
     stmt = (
         select(
@@ -279,7 +283,13 @@ def get_recurring_patterns(engine: Engine) -> list[dict]:
 def get_period_transactions(
     engine: Engine, date_from: date, date_to: date
 ) -> list[dict]:
-    """All transactions in a date range, with category info."""
+    """All transactions in a date range, with category info.
+
+    Includes `is_refund` so the analysis/anomaly agents can distinguish a
+    Krankenkassen-Erstattung (positive amount, refund of a prior
+    `gesundheit` expense) from genuine income — without it, refunds
+    surface as "anomalous positive amounts" or "new income events".
+    """
     stmt = (
         select(
             NormalizedTransaction.id,
@@ -290,6 +300,7 @@ def get_period_transactions(
             NormalizedTransaction.is_outlier,
             NormalizedTransaction.is_recurring,
             NormalizedTransaction.internal_transfer,
+            NormalizedTransaction.is_refund,
             Category.name.label("category_name"),
         )
         .outerjoin(Category, NormalizedTransaction.category_id == Category.id)
@@ -309,6 +320,7 @@ def get_period_transactions(
             "is_outlier": r.is_outlier,
             "is_recurring": r.is_recurring,
             "internal_transfer": r.internal_transfer,
+            "is_refund": r.is_refund,
             "category": r.category_name or "Unkategorisiert",
         }
         for r in rows
@@ -335,7 +347,9 @@ def get_new_counterparties(engine: Engine, since_date: date) -> list[str]:
 def get_outlier_transactions(
     engine: Engine, date_from: date, date_to: date
 ) -> list[dict]:
-    """Outlier-flagged transactions in a date range."""
+    """Outlier-flagged transactions in a date range. `is_refund` is
+    surfaced so anomaly scoring can dampen positive-amount refunds.
+    """
     stmt = (
         select(
             NormalizedTransaction.id,
@@ -343,6 +357,7 @@ def get_outlier_transactions(
             NormalizedTransaction.amount,
             NormalizedTransaction.recipient,
             NormalizedTransaction.description,
+            NormalizedTransaction.is_refund,
             Category.name.label("category_name"),
         )
         .outerjoin(Category, NormalizedTransaction.category_id == Category.id)
@@ -359,6 +374,7 @@ def get_outlier_transactions(
             "amount": _to_float(r.amount),
             "recipient": r.recipient or "",
             "description": r.description or "",
+            "is_refund": r.is_refund,
             "category": r.category_name or "Unkategorisiert",
         }
         for r in rows

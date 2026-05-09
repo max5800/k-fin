@@ -37,6 +37,12 @@ api:
     # Vault via infraSecrets ESO. Display name is static.
     BOOTSTRAP_USER_DISPLAY_NAME: "Your Name"
     CORS_ORIGINS: "http://k-fin-dev.example.com,http://localhost:3000,http://localhost:5173"
+    # Dev-only DB tools (/api/v1/dev/wipe, /api/v1/dev/seed).
+    # Default unset (off). NEVER enable in a deployment that holds real
+    # bank data — `wipe` issues TRUNCATE … CASCADE on every transaction
+    # table. Force-disabled at runtime when APP_ENV=production, so the
+    # line below is also a no-op while APP_ENV stays at "production".
+    # DEV_TOOLS_ENABLED: "false"
 
 worker:
   image:

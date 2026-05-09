@@ -58,9 +58,12 @@ def disabled_client(db_engine):
 
 @pytest.fixture
 def prod_client(db_engine):
-    # In a real prod deployment the env var simply isn't set, so the flag
-    # defaults to False. We model that here by passing dev_enabled=False.
-    yield from _make_client(db_engine, dev_enabled=False, app_env="production")
+    # The dangerous combination: dev_tools_enabled=true together with
+    # APP_ENV=production. `Settings._normalize_settings` must clamp the
+    # flag back to False so /dev/wipe and /dev/seed stay 404. A test that
+    # only exercised dev_enabled=False would pass even if the override
+    # were missing — see the v1.33.0 review.
+    yield from _make_client(db_engine, dev_enabled=True, app_env="production")
 
 
 @pytest.fixture
@@ -97,21 +100,39 @@ def seed_categories(db_engine):
 
 class TestStatus:
     def test_status_reports_enabled(self, dev_client):
-        resp = dev_client.get("/api/v1/dev/status")
+        resp = dev_client.get("/api/v1/dev/status", headers=AUTH)
         assert resp.status_code == 200
         body = resp.json()
         assert body["enabled"] is True
-        assert body["app_env"] == "development"
+        # `app_env` must NOT be exposed — it leaks deployment posture.
+        assert "app_env" not in body
 
     def test_status_reports_disabled(self, disabled_client):
-        resp = disabled_client.get("/api/v1/dev/status")
+        resp = disabled_client.get("/api/v1/dev/status", headers=AUTH)
         assert resp.status_code == 200
         assert resp.json()["enabled"] is False
 
+    def test_status_requires_auth(self, dev_client):
+        resp = dev_client.get("/api/v1/dev/status")
+        assert resp.status_code == 401
+
     def test_status_reports_production_force_disabled(self, prod_client):
-        resp = prod_client.get("/api/v1/dev/status")
+        # prod_client requests dev_tools_enabled=true with app_env=production;
+        # the production override in Settings._normalize_settings must clamp
+        # the flag, so /dev/status reports enabled=False regardless of input.
+        resp = prod_client.get("/api/v1/dev/status", headers=AUTH)
         assert resp.status_code == 200
         assert resp.json()["enabled"] is False
+
+    def test_destructive_endpoints_404_in_production(self, prod_client):
+        # End-to-end: even with DEV_TOOLS_ENABLED=true in env,
+        # APP_ENV=production must close the destructive surface.
+        assert (
+            prod_client.post("/api/v1/dev/wipe", headers=AUTH).status_code == 404
+        )
+        assert (
+            prod_client.post("/api/v1/dev/seed", headers=AUTH).status_code == 404
+        )
 
 
 class TestWipeGuards:

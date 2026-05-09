@@ -24,6 +24,7 @@ You own the path from committed code to running workload. You know the Helm char
 - Postgres StatefulSet runs in-cluster (see `chart/templates/postgres-*.yaml`)
 - Alembic migrations (`alembic/`) run on worker startup or via job
 - Conventional commits + semantic-release drive versioning
+- **Public OSS repo, single maintainer.** Anything on `main` is world-readable. Charts and example values must work for forks; real values stay in `dev/values.local.yaml` (git-ignored) or Vault.
 
 ## Topology
 

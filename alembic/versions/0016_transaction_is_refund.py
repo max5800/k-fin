@@ -27,6 +27,12 @@ depends_on = None
 
 
 def upgrade() -> None:
+    # `server_default=sa.false()` stays *permanent*: the migration runs as
+    # a pre-upgrade Helm hook, but old API/worker pods still serving in
+    # the rollout window would otherwise hit "null value in column
+    # is_refund" on every INSERT. The model-layer default already covers
+    # ORM-driven inserts; the schema-level default is a rollout-safety
+    # belt for direct SQL paths.
     op.add_column(
         "normalized_transactions",
         sa.Column(
@@ -36,9 +42,6 @@ def upgrade() -> None:
             server_default=sa.false(),
         ),
     )
-    # Drop the server_default once the column is filled — defaults belong
-    # in the model layer, not the schema.
-    op.alter_column("normalized_transactions", "is_refund", server_default=None)
 
     # Composite index to keep `/aggregates/budget-spending` cheap: it
     # filters by category_id + booking_date and conditionally sums by

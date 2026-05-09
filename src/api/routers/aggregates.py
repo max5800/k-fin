@@ -29,6 +29,7 @@ from src.api.schemas import (
     RefundAuditOut,
     RefundAutoApplyResult,
 )
+from src.core.db.categories import INCOME_CATCHALL_CATEGORY_ID
 from src.core.db.models import Budget, Category, NormalizedTransaction
 
 router = APIRouter(
@@ -302,7 +303,10 @@ _REFUND_HEURISTICS: tuple[tuple[str, str | None, str, bool], ...] = (
     # Splitwise tx default to restaurant-cafe but could be groceries / travel
     # / shared rent — show in audit so user picks the right cat.
     ("splitwise", "restaurant-cafe", "Splitwise-Ausgleich (Kategorie prüfen)", False),
-    ("paypal.*friends", "restaurant-cafe", "PayPal-Friends-Ausgleich", False),
+    # Multi-token patterns: every space-separated token must appear in the
+    # haystack (PayPal-Friends booking text varies — "PayPal *Anna Müller
+    # Friends*", "PAYPAL.Anna Müller.Friends", etc.).
+    ("paypal friends", "restaurant-cafe", "PayPal-Friends-Ausgleich", False),
     # Amazon spans elektronik / kleidung / haushalt — heuristic guesses
     # kleidung but the user should confirm.
     ("amazon", "kleidung", "Amazon-Retoure (Kategorie prüfen)", False),
@@ -339,7 +343,11 @@ def _suggest_refund_category(
     if not haystack:
         return (None, None, False)
     for needle, suggested, reason, auto_apply in _REFUND_HEURISTICS:
-        if needle in haystack:
+        # A space in the needle means "all tokens must be present" — lets
+        # us match e.g. "PayPal *Anna Müller* Friends" without writing a
+        # full regex.
+        tokens = needle.split()
+        if all(tok in haystack for tok in tokens):
             return (suggested, reason, auto_apply)
     return (None, None, False)
 
@@ -354,7 +362,7 @@ def apply_refund_heuristic(session: Session) -> dict[str, int]:
     """
     rows = session.execute(
         select(NormalizedTransaction)
-        .where(NormalizedTransaction.category_id == "erstattungen")
+        .where(NormalizedTransaction.category_id == INCOME_CATCHALL_CATEGORY_ID)
         .where(NormalizedTransaction.is_refund.is_(False))
         .where(NormalizedTransaction.amount > 0)
         .where(NormalizedTransaction.internal_transfer.is_(False))
@@ -405,7 +413,7 @@ def refund_audit(db: Session = Depends(get_db)):
     """
     rows = db.execute(
         select(NormalizedTransaction)
-        .where(NormalizedTransaction.category_id == "erstattungen")
+        .where(NormalizedTransaction.category_id == INCOME_CATCHALL_CATEGORY_ID)
         .where(NormalizedTransaction.is_refund.is_(False))
         .where(NormalizedTransaction.amount > 0)
         .where(NormalizedTransaction.internal_transfer.is_(False))

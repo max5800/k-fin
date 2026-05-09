@@ -105,6 +105,31 @@ uv run uvicorn main:app --reload
 
 The API serves the exported CSVs at `http://localhost:8000`.
 
+### One-off ops scripts
+
+#### Refund-audit backfill report
+
+After upgrading past `v1.33.0` (refund-aware accounting), run this once
+to list historical positive-amount rows in the `erstattungen` bucket so
+you can decide which are real income (Steuerrückzahlung, Cashback) and
+which are misclassified refunds of a prior expense (Krankenkasse,
+Splitwise, Retouren). The script is **read-only**.
+
+```bash
+# Local
+uv run python scripts/refund_backfill_report.py
+uv run python scripts/refund_backfill_report.py --json
+
+# In-cluster (worker pod has the venv + DATABASE_URL ready)
+kubectl exec deploy/k-fin-worker -- \
+    /app/.venv/bin/python scripts/refund_backfill_report.py
+```
+
+Most rows are auto-decided by `apply_refund_heuristic` on API startup
+and via `POST /api/v1/aggregates/refund-audit/auto-apply`. Use the
+script when you want a printable list before doing manual `PATCH`es via
+`/api/v1/transactions/{id}`.
+
 ## Deployment
 
 Three supported paths, ordered by setup effort:

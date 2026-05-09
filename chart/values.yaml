@@ -25,9 +25,16 @@ api:
     APP_ENV: "production"
     LOG_LEVEL: "INFO"
     EXPORTS_DIR: "/data/exports"
-    # Bootstrap login — DEV ONLY. Hard-disabled when APP_ENV=production.
+    # Bootstrap login — DEV ONLY. Force-disabled at runtime when
+    # APP_ENV=production, regardless of this flag.
     BOOTSTRAP_LOGIN_ENABLED: "false"
     BOOTSTRAP_EMAIL: ""
+    # Dev-only DB tools (/api/v1/dev/wipe, /api/v1/dev/seed). Default off.
+    # NEVER enable on a deployment that holds real bank data — `wipe`
+    # issues TRUNCATE … CASCADE on every transaction table, `seed`
+    # injects ~150 fake rows alongside real ones. Force-disabled at
+    # runtime when APP_ENV=production.
+    DEV_TOOLS_ENABLED: "false"
     # CORS origins — comma-separated. Empty omits the middleware entirely.
     # Override per-environment in dev/values.remote.yaml.
     CORS_ORIGINS: ""
