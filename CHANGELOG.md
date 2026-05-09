@@ -1,3 +1,10 @@
+## [1.34.1](https://github.com/max5800/k-fin/compare/v1.34.0...v1.34.1) (2026-05-09)
+
+
+### Bug Fixes
+
+* trigger semantic-release for wave-0 critical fixes ([#42](https://github.com/max5800/k-fin/issues/42)) ([b5aa0cf](https://github.com/max5800/k-fin/commit/b5aa0cf7bf0d6a32777f7323be46c289b97bbe2c))
+
 # [1.34.0](https://github.com/max5800/k-fin/compare/v1.33.0...v1.34.0) (2026-05-09)
 
 
