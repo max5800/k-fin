@@ -10,7 +10,35 @@ which is enough to verify the date arithmetic without spending tokens.
 from __future__ import annotations
 
 from datetime import date, timedelta
+from types import SimpleNamespace
 from unittest.mock import patch
+
+from src.agents.types import AnomalyResult
+
+
+def _fake_anomaly_run(_coro):
+    """Minimal `run_in_fresh_loop` stub for the anomaly path.
+
+    The anomaly runner has no early-return on empty pre-filters, so the
+    period-days tests now reach `run_in_fresh_loop`. Returning a stub
+    AgentRunResult-shaped object keeps the assertions focused on date
+    arithmetic without needing a live LLM or DB session.
+    """
+    try:
+        _coro.close()
+    except Exception:
+        pass
+    output = AnomalyResult(
+        anomalies=[], period="stub", total_anomalies=0, new_counterparties=[]
+    )
+    usage = SimpleNamespace(
+        input_tokens=0,
+        output_tokens=0,
+        request_tokens=0,
+        response_tokens=0,
+        total_tokens=0,
+    )
+    return SimpleNamespace(output=output, usage=lambda: usage)
 
 
 class TestWeeklyPeriodDays:
@@ -111,6 +139,8 @@ class TestAnomalyPeriodDays:
             patch.object(mod, "get_outlier_transactions", fake_get_outliers),
             patch.object(mod, "get_new_counterparties", lambda *a, **kw: []),
             patch.object(mod, "get_period_transactions", lambda *a, **kw: []),
+            patch.object(mod, "get_recent_reports", lambda *a, **kw: []),
+            patch.object(mod, "run_in_fresh_loop", _fake_anomaly_run),
         ):
             mod.run_anomaly_detection(
                 engine=None, reference_date=date(2026, 5, 6)
@@ -132,6 +162,8 @@ class TestAnomalyPeriodDays:
             patch.object(mod, "get_outlier_transactions", fake_get_outliers),
             patch.object(mod, "get_new_counterparties", lambda *a, **kw: []),
             patch.object(mod, "get_period_transactions", lambda *a, **kw: []),
+            patch.object(mod, "get_recent_reports", lambda *a, **kw: []),
+            patch.object(mod, "run_in_fresh_loop", _fake_anomaly_run),
         ):
             mod.run_anomaly_detection(
                 engine=None,
