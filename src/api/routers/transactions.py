@@ -351,14 +351,22 @@ def update_transaction(
     if not tx:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Transaction not found")
 
-    if body.category_id is not None:
-        cat = db.get(Category, body.category_id)
-        if not cat:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail=f"Category '{body.category_id}' not found",
-            )
-        tx.category_id = body.category_id
+    # Distinguish "field omitted" (no change) from "field set to null"
+    # (clear the category). Pydantic collapses both to None on the model
+    # instance — model_fields_set captures only the keys the client
+    # actually sent in the JSON payload. This is the contract the UI
+    # uses for the manual category-clear path.
+    if "category_id" in body.model_fields_set:
+        if body.category_id is None:
+            tx.category_id = None
+        else:
+            cat = db.get(Category, body.category_id)
+            if not cat:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=f"Category '{body.category_id}' not found",
+                )
+            tx.category_id = body.category_id
 
     if body.is_refund is not None:
         tx.is_refund = body.is_refund
