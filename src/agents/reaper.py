@@ -20,10 +20,11 @@ import asyncio
 import logging
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import Engine, update
+from sqlalchemy import Engine, select, update
 from sqlalchemy.orm import Session
 
 from src.core.db.models import AgentRun, RunStatus
+from src.core.notifier import notify_failure_from_db
 
 logger = logging.getLogger(__name__)
 
@@ -65,7 +66,26 @@ def reap_stale_runs(
     boot_cutoff = now - timedelta(seconds=boot_grace_s)
 
     reaped = 0
+    # (run_id, agent_name, error) tuples we'll fan out to the webhook
+    # notifier *after* the COMMIT below — the DB write is the source of
+    # truth, the webhook is opportunistic.
+    notify_targets: list[tuple[str, str, str]] = []
     with Session(engine) as session:
+        heartbeat_msg = "reaped: no heartbeat for >{}s".format(stale_heartbeat_s)
+        # Snapshot which rows are about to be reaped so we can notify
+        # by run_id after the commit. Reading first + updating second
+        # is safe here because the reaper is the only writer that
+        # transitions RUNNING → FAILED on this condition; a concurrent
+        # orchestrator finish would race on RowVersion in either order.
+        soon_reaped = session.execute(
+            select(AgentRun.id, AgentRun.agent_name)
+            .where(AgentRun.status == RunStatus.RUNNING)
+            .where(AgentRun.heartbeat_at.is_not(None))
+            .where(AgentRun.heartbeat_at < cutoff)
+        ).all()
+        for rid, aname in soon_reaped:
+            notify_targets.append((rid, aname, heartbeat_msg))
+
         stmt = (
             update(AgentRun)
             .where(AgentRun.status == RunStatus.RUNNING)
@@ -74,7 +94,7 @@ def reap_stale_runs(
             .values(
                 status=RunStatus.FAILED,
                 finished_at=now,
-                error="reaped: no heartbeat for >{}s".format(stale_heartbeat_s),
+                error=heartbeat_msg,
                 last_error=None,
             )
         )
@@ -82,6 +102,16 @@ def reap_stale_runs(
         reaped += result.rowcount or 0
 
         if boot_mode:
+            boot_msg = "reaped: process restarted, no heartbeat ever recorded"
+            soon_reaped_boot = session.execute(
+                select(AgentRun.id, AgentRun.agent_name)
+                .where(AgentRun.status == RunStatus.RUNNING)
+                .where(AgentRun.heartbeat_at.is_(None))
+                .where(AgentRun.started_at < boot_cutoff)
+            ).all()
+            for rid, aname in soon_reaped_boot:
+                notify_targets.append((rid, aname, boot_msg))
+
             stmt = (
                 update(AgentRun)
                 .where(AgentRun.status == RunStatus.RUNNING)
@@ -90,7 +120,7 @@ def reap_stale_runs(
                 .values(
                     status=RunStatus.FAILED,
                     finished_at=now,
-                    error="reaped: process restarted, no heartbeat ever recorded",
+                    error=boot_msg,
                     last_error=None,
                 )
             )
@@ -98,6 +128,18 @@ def reap_stale_runs(
             reaped += result.rowcount or 0
 
         session.commit()
+
+    # Webhook fan-out happens *after* the commit so a stuck Discord
+    # endpoint can never block the reaper's actual job (clearing stale
+    # rows). Each call is itself best-effort and never raises.
+    for run_id, agent_name, err in notify_targets:
+        notify_failure_from_db(
+            engine,
+            run_kind=f"agent:{agent_name}",
+            run_id=run_id,
+            error_message=err,
+            occurred_at=now,
+        )
 
     if reaped:
         logger.warning("Reaper marked %d stale run(s) as failed", reaped)

@@ -37,6 +37,7 @@ from src.connector.yfinance_client import (
 from src.core.config import settings
 from src.core.db.models import Instrument, InstrumentPriceHistory
 from src.core.logging import get_logger, setup_logging
+from src.core.notifier import notify_failure_from_db
 
 setup_logging()
 logger = get_logger("worker")
@@ -538,6 +539,20 @@ async def internal_sync_confirm(session_id: str):
         logger.info("Export completed successfully")
     except Exception as exc:
         logger.exception("Export failed")
+        # Best-effort failure ping. The HTTP 500 below is the source of
+        # truth for the api caller; the webhook is informational. We
+        # surface ``session_id`` as the run-ID since this code path
+        # doesn't create a SyncRun row of its own.
+        _engine = create_engine(settings.database_url)
+        try:
+            notify_failure_from_db(
+                _engine,
+                run_kind="sync",
+                run_id=session_id,
+                error_message=f"Export failed: {exc}",
+            )
+        finally:
+            _engine.dispose()
         raise HTTPException(status_code=500, detail=f"Export failed: {exc}")
 
     return {
@@ -627,6 +642,14 @@ def _execute_backfill_in_worker(
             logger.exception("Backfill %s failed", run_id)
             mark_run_terminal(
                 pipeline, run_id, status=BackfillStatus.FAILED, error=str(exc)
+            )
+            # Best-effort: the terminal status write above already
+            # made the failure visible in the UI. Webhook is a courtesy.
+            notify_failure_from_db(
+                pipeline.engine,
+                run_kind="backfill",
+                run_id=run_id,
+                error_message=str(exc),
             )
 
     _asyncio.run(_drive())
