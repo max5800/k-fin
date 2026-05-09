@@ -279,6 +279,42 @@ class InstrumentOut(BaseModel):
     name: str
     instrument_type: str | None = None
     currency: str
+    ticker_symbol: str | None = None
+
+
+class InstrumentPatch(BaseModel):
+    """User-editable fields on an :class:`Instrument`.
+
+    Only ``ticker_symbol`` is currently mutable — name/type/currency
+    flow from Comdirect and would be overwritten on next sync.
+    """
+
+    ticker_symbol: str | None = None
+
+
+class PriceBackfillRequest(BaseModel):
+    from_date: date
+    to_date: date
+
+
+class PriceBackfillResult(BaseModel):
+    isin: str
+    ticker_symbol: str
+    requested_from: date
+    requested_to: date
+    fetched_points: int
+    inserted_points: int
+    skipped_existing: int
+    source: str = "yfinance"
+
+
+class InstrumentPricePointOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    price_date: date
+    close: Decimal
+    currency: str
+    source: str
 
 
 class PositionOut(BaseModel):
