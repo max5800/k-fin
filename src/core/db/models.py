@@ -179,6 +179,18 @@ class NormalizedTransaction(Base):
     internal_transfer: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False
     )
+    # Positive-amount transaction that *cancels* a prior expense (Krankenkassen-
+    # Erstattung, Splitwise-Ausgleich, Arbeitgeber-Spesen, Amazon-Rückbuchung).
+    # Excluded from income, folded into the *original* category's expenses so
+    # budgets see net spend.
+    is_refund: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # Timestamp set when the user walks the manual refund-audit. Either a
+    # row is reclassified as a refund (is_refund=True, category swapped) or
+    # confirmed as real income (no other change) — both paths set this
+    # timestamp so the audit endpoint stops re-surfacing the row.
+    refund_audit_decided_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
     recurring_pattern_id: Mapped[Optional[int]] = mapped_column(
         ForeignKey("recurring_patterns.id"), nullable=True

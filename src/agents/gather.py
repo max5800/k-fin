@@ -10,7 +10,7 @@ from __future__ import annotations
 from datetime import date
 from decimal import Decimal
 
-from sqlalchemy import Engine, case, func, or_, select
+from sqlalchemy import Engine, and_, case, func, or_, select
 from sqlalchemy.orm import Session
 
 from src.core.db.models import (
@@ -122,6 +122,7 @@ def get_similar_categorized_transactions(
             NormalizedTransaction.recipient,
             NormalizedTransaction.amount,
             NormalizedTransaction.category_id,
+            NormalizedTransaction.is_refund,
             Category.name.label("category_name"),
         )
         .join(Category, NormalizedTransaction.category_id == Category.id)
@@ -151,6 +152,7 @@ def get_similar_categorized_transactions(
                 "amount": _to_float(row.amount),
                 "category_id": row.category_id,
                 "category_name": row.category_name,
+                "is_refund": row.is_refund,
             }
         )
         if len(examples) >= limit_per_batch:
@@ -164,17 +166,31 @@ def get_similar_categorized_transactions(
 
 
 def get_monthly_summary(engine: Engine, months: int = 6) -> list[dict]:
-    """Monthly income/expenses/net time series."""
+    """Monthly income/expenses/net time series.
+
+    Refund-aware: positive `is_refund` amounts are folded into expenses
+    (they cancel a prior expense), not income. Mirrors the SQL in
+    src/api/routers/aggregates.py.
+    """
     month_col = func.to_char(NormalizedTransaction.booking_date, "YYYY-MM").label("month")
+    income_case = case(
+        (
+            and_(
+                NormalizedTransaction.amount > 0,
+                NormalizedTransaction.is_refund.is_(False),
+            ),
+            NormalizedTransaction.amount,
+        )
+    )
+    expense_case = case(
+        (NormalizedTransaction.amount < 0, NormalizedTransaction.amount),
+        (NormalizedTransaction.is_refund.is_(True), NormalizedTransaction.amount),
+    )
     stmt = (
         select(
             month_col,
-            func.coalesce(
-                func.sum(case((NormalizedTransaction.amount > 0, NormalizedTransaction.amount))), 0
-            ).label("income"),
-            func.coalesce(
-                func.sum(case((NormalizedTransaction.amount < 0, NormalizedTransaction.amount))), 0
-            ).label("expenses"),
+            func.coalesce(func.sum(income_case), 0).label("income"),
+            func.coalesce(func.sum(expense_case), 0).label("expenses"),
             func.coalesce(func.sum(NormalizedTransaction.amount), 0).label("net"),
             func.count().label("count"),
         )
@@ -350,15 +366,27 @@ def get_outlier_transactions(
 
 
 def get_savings_rate(engine: Engine, date_from: date, date_to: date) -> dict:
-    """Compute savings rate: (income - expenses) / income for a period."""
+    """Compute savings rate: (income - expenses) / income for a period.
+
+    Refund-aware: `is_refund=True` rows reduce expenses, not boost income.
+    """
+    income_case = case(
+        (
+            and_(
+                NormalizedTransaction.amount > 0,
+                NormalizedTransaction.is_refund.is_(False),
+            ),
+            NormalizedTransaction.amount,
+        )
+    )
+    expense_case = case(
+        (NormalizedTransaction.amount < 0, NormalizedTransaction.amount),
+        (NormalizedTransaction.is_refund.is_(True), NormalizedTransaction.amount),
+    )
     stmt = (
         select(
-            func.coalesce(
-                func.sum(case((NormalizedTransaction.amount > 0, NormalizedTransaction.amount))), 0
-            ).label("income"),
-            func.coalesce(
-                func.sum(case((NormalizedTransaction.amount < 0, NormalizedTransaction.amount))), 0
-            ).label("expenses"),
+            func.coalesce(func.sum(income_case), 0).label("income"),
+            func.coalesce(func.sum(expense_case), 0).label("expenses"),
         )
         .where(NormalizedTransaction.internal_transfer == False)  # noqa: E712
         .where(NormalizedTransaction.booking_date >= date_from)

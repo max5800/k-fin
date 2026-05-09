@@ -219,6 +219,7 @@ def _format_user_prompt(
             f'- "{e.get("sender") or e.get("recipient") or ""}" '
             f"| {e['amount']:.2f} EUR "
             f"| Kategorie: {e['category_name']}"
+            f"{' (Erstattung)' if e.get('is_refund') else ''}"
             for e in memory_examples
         )
         memory_block = (
@@ -256,7 +257,7 @@ def apply_high_confidence(
                 update(NormalizedTransaction)
                 .where(NormalizedTransaction.id == s.transaction_id)
                 .where(NormalizedTransaction.category_id.is_(None))
-                .values(category_id=s.suggested_category_id)
+                .values(category_id=s.suggested_category_id, is_refund=s.is_refund)
             ).rowcount
         session.commit()
     return applied

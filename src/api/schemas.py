@@ -63,6 +63,7 @@ class TransactionOut(BaseModel):
     is_recurring: bool
     is_outlier: bool
     internal_transfer: bool
+    is_refund: bool
     created_at: datetime
     updated_at: datetime
 
@@ -77,6 +78,17 @@ class TransactionListOut(BaseModel):
 class TransactionUpdate(BaseModel):
     category_id: str | None = None
     tags: list[str] | None = None
+    is_refund: bool | None = None
+    # Manual override for the heuristic in `_flag_internal_transfers`. The
+    # detector only catches paired transfers when both legs hit our DB; a
+    # one-off DKB-/Tagesgeld-Outflow needs the user to flag it themselves.
+    internal_transfer: bool | None = None
+    # Marks/un-marks the row as audited. `True` stamps `refund_audit_decided_at`
+    # to now() — the row drops out of /aggregates/refund-audit. `False` clears
+    # the timestamp (re-surface for review). Independent of is_refund: marking
+    # as refund auto-stamps it backend-side; the explicit field is for the
+    # "Echtes Einkommen" path that doesn't otherwise touch the row.
+    refund_audit_decided: bool | None = None
 
 
 # ── Runs API (M6) ────────────────────────────────────────────────
@@ -153,6 +165,63 @@ class CashflowPoint(BaseModel):
 class CashflowOverTimeOut(BaseModel):
     series: list[CashflowPoint]
     total_months: int
+
+
+class BudgetSpendingItem(BaseModel):
+    category_id: str
+    category_name: str
+    monthly_limit: Decimal
+    currency: str
+    # `spent_gross` is the negative-amount sum (original expenses).
+    # `refunded` is the positive sum of `is_refund=True` transactions in
+    # the same category. `spent_net = spent_gross + refunded` (still negative
+    # if there is residual spend). `remaining = monthly_limit + spent_net`.
+    spent_gross: Decimal
+    refunded: Decimal
+    spent_net: Decimal
+    remaining: Decimal
+    transaction_count: int
+
+
+class BudgetSpendingOut(BaseModel):
+    year: int
+    month: int
+    items: list[BudgetSpendingItem]
+
+
+class RefundAuditCandidate(BaseModel):
+    """A positive-amount transaction sitting in `erstattungen` with
+    `is_refund=False` — i.e. either a real income (Steuer, Cashback) or
+    an actual refund that the user hasn't reclassified yet.
+
+    `suggested_category_id` is a heuristic-based hint built from the
+    sender / recipient / description; the UI shows it as the default in
+    the category picker but the user always has the final say.
+    """
+
+    id: str
+    booking_date: date
+    amount: Decimal
+    sender: str | None
+    recipient: str | None
+    description: str | None
+    suggested_category_id: str | None
+    suggested_reason: str | None
+
+
+class RefundAuditOut(BaseModel):
+    candidates: list[RefundAuditCandidate]
+    total: int
+
+
+class RefundAutoApplyResult(BaseModel):
+    """Counts produced by `apply_refund_heuristic` — surfaced by the
+    `/aggregates/refund-audit/auto-apply` endpoint and logged on startup.
+    """
+
+    applied_refund: int
+    applied_income: int
+    left_for_review: int
 
 
 # ── Reports API (M6) ────────────────────────────────────────────

@@ -20,6 +20,12 @@ class CategorySuggestion(BaseModel):
     suggested_category_id: str
     confidence: float = Field(ge=0.0, le=1.0)
     reasoning: str
+    # True when the positive-amount transaction reverses a prior expense
+    # (Krankenkassen-Erstattung, Splitwise-Ausgleich, Spesen, Amazon-Refund).
+    # Refund-flagged Tx use the *original* expense category so budgets net
+    # automatically. False for genuine income (Gehalt, Steuerrückzahlung,
+    # Cashback) and for normal expenses.
+    is_refund: bool = False
 
 
 class CategorizationResult(BaseModel):

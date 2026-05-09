@@ -47,6 +47,10 @@ class PendingSuggestion(BaseModel):
     suggested_category_name: str | None
     confidence: float
     reasoning: str
+    # Surfaces the agent's refund hint so the review UI can render a
+    # "Erstattung" indicator and persist it on accept. Defaults False so
+    # historical runs (pre-2026-05-08) that lack the field don't fail.
+    is_refund: bool = False
 
 
 class PendingResponse(BaseModel):
@@ -57,6 +61,9 @@ class PendingResponse(BaseModel):
 
 class AcceptBody(BaseModel):
     category_id: str | None = None  # if omitted, accept the suggested id
+    # Override the refund flag on accept. None = use the agent's value
+    # from the suggestion blob; True/False explicitly sets it.
+    is_refund: bool | None = None
 
 
 def _load_threshold(db: Session) -> float:
@@ -140,6 +147,7 @@ def list_pending(db: Session = Depends(get_db)) -> PendingResponse:
                 suggested_category_name=cat_name_by_id.get(s["suggested_category_id"]),
                 confidence=float(s["confidence"]),
                 reasoning=s.get("reasoning", ""),
+                is_refund=bool(s.get("is_refund", False)),
             )
         )
 
@@ -157,6 +165,7 @@ def accept_pending(
         raise HTTPException(status_code=404, detail="Transaction not found")
 
     chosen_id = body.category_id if (body and body.category_id) else None
+    suggested_is_refund: bool | None = None
     if chosen_id is None:
         # Pull the suggested category from the latest run
         _, suggestions = _latest_categorization_suggestions(db)
@@ -169,15 +178,28 @@ def accept_pending(
                 detail="No pending suggestion for this transaction; pass category_id explicitly",
             )
         chosen_id = match["suggested_category_id"]
+        suggested_is_refund = bool(match.get("is_refund", False))
 
     cat = db.get(Category, chosen_id)
     if cat is None:
         raise HTTPException(status_code=400, detail=f"Unknown category: {chosen_id}")
 
+    # Accept-time refund resolution: explicit body value > agent suggestion
+    # > unchanged. None means "leave the row's existing is_refund alone"
+    # — relevant when the user PATCHes a category but doesn't want to
+    # touch the flag they already set manually.
+    is_refund_value = (
+        body.is_refund if (body and body.is_refund is not None) else suggested_is_refund
+    )
+
+    values: dict = {"category_id": chosen_id}
+    if is_refund_value is not None:
+        values["is_refund"] = is_refund_value
+
     db.execute(
         update(NormalizedTransaction)
         .where(NormalizedTransaction.id == transaction_id)
-        .values(category_id=chosen_id)
+        .values(**values)
     )
     db.commit()
 

@@ -31,14 +31,39 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def _lifespan(_app: FastAPI):
-    """No-op lifespan.
+    """Lifespan: refund-audit auto-apply pass.
 
-    Run lifecycle moved to the worker pod (M11) — `src/agents/reaper.py`
-    handles heartbeat-based stale-run cleanup there, both at boot and on
-    a 5-min loop. The api pod no longer drives runs, so blanket-marking
-    every RUNNING row as FAILED at api startup would now incorrectly kill
-    in-flight runs whenever the api rolled.
+    The categorization agent already auto-applies high-confidence refund
+    suggestions for *new* tx as they come through. Historical erstattungen-
+    rows (pre-2026-05-08) sit unflagged in the DB — running the heuristic
+    once at startup catches the unambiguous ones (Krankenkasse, Finanzamt,
+    Booking, …) so the manual review queue only shows genuinely uncertain
+    cases. Idempotent: a clean DB does no work.
+
+    Run-lifecycle cleanup stays in the worker (`src/agents/reaper.py`).
     """
+    try:
+        if settings.database_url:
+            from sqlalchemy import create_engine
+            from sqlalchemy.orm import Session as SqlSession
+
+            from src.api.routers.aggregates import apply_refund_heuristic
+
+            engine = create_engine(settings.database_url)
+            try:
+                with SqlSession(engine) as session:
+                    counts = apply_refund_heuristic(session)
+                if any(counts.values()):
+                    logger.info(
+                        "refund_audit auto-apply: refund=%d income=%d review=%d",
+                        counts["applied_refund"],
+                        counts["applied_income"],
+                        counts["left_for_review"],
+                    )
+            finally:
+                engine.dispose()
+    except Exception:  # noqa: BLE001 — never block API startup on cleanup
+        logger.exception("refund_audit auto-apply skipped on startup")
     yield
 
 

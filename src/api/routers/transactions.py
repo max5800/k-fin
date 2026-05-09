@@ -62,6 +62,7 @@ def _enrich(tx: NormalizedTransaction, db: Session) -> TransactionOut:
         is_recurring=tx.is_recurring,
         is_outlier=tx.is_outlier,
         internal_transfer=tx.internal_transfer,
+        is_refund=tx.is_refund,
         created_at=tx.created_at,
         updated_at=tx.updated_at,
     )
@@ -76,6 +77,7 @@ def _apply_filters(
     is_recurring: bool | None,
     is_outlier: bool | None,
     internal_transfer: bool | None,
+    is_refund: bool | None,
     search: str | None,
 ) -> Select:
     if date_from:
@@ -90,6 +92,8 @@ def _apply_filters(
         stmt = stmt.where(NormalizedTransaction.is_outlier == is_outlier)
     if internal_transfer is not None:
         stmt = stmt.where(NormalizedTransaction.internal_transfer == internal_transfer)
+    if is_refund is not None:
+        stmt = stmt.where(NormalizedTransaction.is_refund == is_refund)
     if search:
         pattern = f"%{search}%"
         clause = (
@@ -112,6 +116,7 @@ def list_transactions(
     is_recurring: bool | None = Query(None),
     is_outlier: bool | None = Query(None),
     internal_transfer: bool | None = Query(None),
+    is_refund: bool | None = Query(None),
     search: str | None = Query(None),
 ):
     filter_kwargs = dict(
@@ -121,6 +126,7 @@ def list_transactions(
         is_recurring=is_recurring,
         is_outlier=is_outlier,
         internal_transfer=internal_transfer,
+        is_refund=is_refund,
         search=search,
     )
     stmt = _apply_filters(select(NormalizedTransaction), **filter_kwargs)
@@ -239,6 +245,7 @@ def export_transactions(
     is_recurring: bool | None = Query(None),
     is_outlier: bool | None = Query(None),
     internal_transfer: bool | None = Query(None),
+    is_refund: bool | None = Query(None),
     search: str | None = Query(None),
 ):
     """Stream filtered transactions as CSV or JSON.
@@ -254,6 +261,7 @@ def export_transactions(
         is_recurring=is_recurring,
         is_outlier=is_outlier,
         internal_transfer=internal_transfer,
+        is_refund=is_refund,
         search=search,
     ).order_by(NormalizedTransaction.booking_date.desc(), NormalizedTransaction.id).limit(_EXPORT_MAX_ROWS)
 
@@ -305,6 +313,23 @@ def update_transaction(
                 detail=f"Category '{body.category_id}' not found",
             )
         tx.category_id = body.category_id
+
+    if body.is_refund is not None:
+        tx.is_refund = body.is_refund
+        # Reclassifying a row as a refund counts as a deliberate audit
+        # decision — stamp it so the candidate doesn't re-surface in the
+        # /review#refunds queue. Explicit refund_audit_decided=False below
+        # can still override (e.g. a script clearing all decisions).
+        if body.is_refund and body.refund_audit_decided is None:
+            tx.refund_audit_decided_at = datetime.now(timezone.utc)
+
+    if body.internal_transfer is not None:
+        tx.internal_transfer = body.internal_transfer
+
+    if body.refund_audit_decided is not None:
+        tx.refund_audit_decided_at = (
+            datetime.now(timezone.utc) if body.refund_audit_decided else None
+        )
 
     if body.tags is not None:
         db.execute(
