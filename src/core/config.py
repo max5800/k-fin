@@ -67,6 +67,13 @@ class Settings(BaseSettings):
     # Reports
     reports_dir: str = "/data/reports"
 
+    # Dev-only DB tools (wipe transactions, seed mock dataset).
+    # Default False; the dev router's destructive endpoints (/wipe, /seed)
+    # 404 unless this is explicitly True. Helm sets True only in
+    # `dev/values.local.yaml`; chart/values.yaml leaves it unset so prod
+    # never carries the env var at all.
+    dev_tools_enabled: bool = False
+
     model_config = {
         "env_file": ".env",
         "env_file_encoding": "utf-8",

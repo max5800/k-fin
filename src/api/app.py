@@ -16,6 +16,7 @@ from src.api.routers import (
     categories,
     categorization,
     depots,
+    dev,
     portfolio,
     reports,
     runs,
@@ -109,6 +110,10 @@ def create_app() -> FastAPI:
     app.include_router(categorization.router, prefix="/api/v1")
     app.include_router(depots.router, prefix="/api/v1")
     app.include_router(portfolio.router, prefix="/api/v1")
+    # Dev router is always mounted so the UI can call /dev/status to detect
+    # the environment. Destructive sub-endpoints (/wipe, /seed) self-guard
+    # via `_require_enabled` and 404 when settings.dev_tools_enabled is off.
+    app.include_router(dev.router, prefix="/api/v1")
 
     return app
 
