@@ -215,15 +215,55 @@ def _set_ticker(db_engine, ticker: str):
 
 
 # ---------------------------------------------------------------------------
-# PATCH /portfolio/instruments/{isin}
+# User JWT helper — write endpoints require user-only auth.
 # ---------------------------------------------------------------------------
 
 
-def test_patch_instrument_sets_ticker(api_client, seeded, db_engine):
+@pytest.fixture
+def user_auth(db_engine):
+    """Seed a user row, mint a real JWT, return Authorization headers.
+
+    Activates JWT_SECRET in the environment so both the token issuer
+    and the ``_get_current_user`` verifier see the same secret.
+    """
+    import uuid as _uuid
+
+    from src.core.db.models import User
+
+    secret = "test-jwt-secret-min-32chars-long-aaaaaaaa"
+    user_id = _uuid.uuid4().hex
+    with Session(db_engine) as s:
+        s.add(
+            User(
+                id=user_id,
+                email="tester@example.com",
+                password_hash="dummy-not-used",
+                display_name="Tester",
+                is_active=True,
+            )
+        )
+        s.commit()
+
+    with patch.dict(os.environ, {"JWT_SECRET": secret}):
+        from src.api.auth.jwt import issue_token
+        from src.core.config import Settings, settings as _settings
+
+        for k, v in Settings().model_dump().items():
+            setattr(_settings, k, v)
+        token = issue_token(user_id)
+        yield {"Authorization": f"Bearer {token}"}
+
+
+# ---------------------------------------------------------------------------
+# PATCH /portfolio/instruments/{isin} — user-only auth
+# ---------------------------------------------------------------------------
+
+
+def test_patch_instrument_sets_ticker(api_client, seeded, db_engine, user_auth):
     r = api_client.patch(
         f"/api/v1/portfolio/instruments/{FAKE_ISIN}",
         json={"ticker_symbol": "SAP.DE"},
-        headers=AUTH,
+        headers=user_auth,
     )
     assert r.status_code == 200, r.text
     assert r.json()["ticker_symbol"] == "SAP.DE"
@@ -234,37 +274,49 @@ def test_patch_instrument_sets_ticker(api_client, seeded, db_engine):
         assert instr.ticker_symbol == "SAP.DE"
 
 
-def test_patch_instrument_blank_clears_ticker(api_client, seeded):
+def test_patch_instrument_blank_clears_ticker(api_client, seeded, user_auth):
     api_client.patch(
         f"/api/v1/portfolio/instruments/{FAKE_ISIN}",
         json={"ticker_symbol": "SAP.DE"},
-        headers=AUTH,
+        headers=user_auth,
     )
     r = api_client.patch(
         f"/api/v1/portfolio/instruments/{FAKE_ISIN}",
         json={"ticker_symbol": "   "},
-        headers=AUTH,
+        headers=user_auth,
     )
     assert r.status_code == 200
     assert r.json()["ticker_symbol"] is None
 
 
-def test_patch_instrument_unknown_isin_404(api_client):
+def test_patch_instrument_unknown_isin_404(api_client, user_auth):
     r = api_client.patch(
         "/api/v1/portfolio/instruments/DE9999999999",
         json={"ticker_symbol": "X"},
-        headers=AUTH,
+        headers=user_auth,
     )
     assert r.status_code == 404
 
 
+def test_patch_instrument_rejects_service_token(api_client, seeded):
+    """Service-token (static API_TOKEN) callers must be locked out of
+    the write endpoints — they accept user JWTs only.
+    """
+    r = api_client.patch(
+        f"/api/v1/portfolio/instruments/{FAKE_ISIN}",
+        json={"ticker_symbol": "SAP.DE"},
+        headers=AUTH,
+    )
+    assert r.status_code == 403
+
+
 # ---------------------------------------------------------------------------
-# POST /portfolio/instruments/{isin}/backfill-prices — dispatcher
+# POST /portfolio/instruments/{isin}/backfill-prices — user-only dispatcher
 # ---------------------------------------------------------------------------
 
 
 def test_backfill_dispatcher_forwards_to_worker(
-    api_client, seeded, httpx_post_spy
+    api_client, seeded, httpx_post_spy, user_auth
 ):
     httpx_post_spy.return_value = FakeHttpxResponse(
         200,
@@ -283,7 +335,7 @@ def test_backfill_dispatcher_forwards_to_worker(
     r = api_client.post(
         f"/api/v1/portfolio/instruments/{FAKE_ISIN}/backfill-prices",
         json={"from_date": "2026-04-01", "to_date": "2026-04-03"},
-        headers=AUTH,
+        headers=user_auth,
     )
     assert r.status_code == 200, r.text
     body = r.json()
@@ -302,11 +354,12 @@ def test_backfill_dispatcher_forwards_to_worker(
 
 
 def test_backfill_dispatcher_rejects_inverted_range_before_dispatch(
-    api_client, seeded, httpx_post_spy):
+    api_client, seeded, httpx_post_spy, user_auth
+):
     r = api_client.post(
         f"/api/v1/portfolio/instruments/{FAKE_ISIN}/backfill-prices",
         json={"from_date": "2026-04-10", "to_date": "2026-04-01"},
-        headers=AUTH,
+        headers=user_auth,
     )
     assert r.status_code == 400
     # No worker round-trip if the api can already say no.
@@ -314,54 +367,71 @@ def test_backfill_dispatcher_rejects_inverted_range_before_dispatch(
 
 
 def test_backfill_dispatcher_404_for_unknown_isin(
-    api_client, httpx_post_spy):
+    api_client, httpx_post_spy, user_auth
+):
     r = api_client.post(
         "/api/v1/portfolio/instruments/DE9999999999/backfill-prices",
         json={"from_date": "2026-04-01", "to_date": "2026-04-03"},
-        headers=AUTH,
+        headers=user_auth,
     )
     assert r.status_code == 404
     assert httpx_post_spy.calls == []
 
 
 def test_backfill_dispatcher_propagates_worker_400(
-    api_client, seeded, httpx_post_spy):
+    api_client, seeded, httpx_post_spy, user_auth
+):
     httpx_post_spy.return_value = FakeHttpxResponse(
         400, {"detail": "Instrument has no ticker_symbol"}
     )
     r = api_client.post(
         f"/api/v1/portfolio/instruments/{FAKE_ISIN}/backfill-prices",
         json={"from_date": "2026-04-01", "to_date": "2026-04-05"},
-        headers=AUTH,
+        headers=user_auth,
     )
     assert r.status_code == 400
     assert "ticker_symbol" in r.json()["detail"]
 
 
 def test_backfill_dispatcher_propagates_worker_502(
-    api_client, seeded, httpx_post_spy):
+    api_client, seeded, httpx_post_spy, user_auth
+):
     httpx_post_spy.return_value = FakeHttpxResponse(
         502, {"detail": "Upstream price provider failed: rate limited"}
     )
     r = api_client.post(
         f"/api/v1/portfolio/instruments/{FAKE_ISIN}/backfill-prices",
         json={"from_date": "2026-04-01", "to_date": "2026-04-05"},
-        headers=AUTH,
+        headers=user_auth,
     )
     assert r.status_code == 502
     assert "rate limited" in r.json()["detail"]
 
 
 def test_backfill_dispatcher_unreachable_worker_502(
-    api_client, seeded, httpx_post_spy):
+    api_client, seeded, httpx_post_spy, user_auth
+):
     httpx_post_spy.side_effect = httpx.ConnectError("connection refused")
+    r = api_client.post(
+        f"/api/v1/portfolio/instruments/{FAKE_ISIN}/backfill-prices",
+        json={"from_date": "2026-04-01", "to_date": "2026-04-05"},
+        headers=user_auth,
+    )
+    assert r.status_code == 502
+    assert "Worker unreachable" in r.json()["detail"]
+
+
+def test_backfill_dispatcher_rejects_service_token(api_client, seeded, httpx_post_spy):
+    """A service-token caller cannot trigger external traffic via the
+    dispatcher; the request must 403 before any worker round-trip.
+    """
     r = api_client.post(
         f"/api/v1/portfolio/instruments/{FAKE_ISIN}/backfill-prices",
         json={"from_date": "2026-04-01", "to_date": "2026-04-05"},
         headers=AUTH,
     )
-    assert r.status_code == 502
-    assert "Worker unreachable" in r.json()["detail"]
+    assert r.status_code == 403
+    assert httpx_post_spy.calls == []
 
 
 # ---------------------------------------------------------------------------

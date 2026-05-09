@@ -24,7 +24,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from src.api.deps import get_db, require_token
+from src.api.deps import CurrentUser, get_db, require_token
 from src.api.schemas import (
     AllocationBucketOut,
     InstrumentOut,
@@ -249,9 +249,16 @@ def _dividend_yield_pct(db: Session, total_value: Decimal) -> Decimal:
 def patch_instrument(
     isin: str,
     payload: InstrumentPatch,
+    _user: CurrentUser,
     db: Session = Depends(get_db),
 ):
     """Update user-editable fields on an instrument (currently only ticker).
+
+    User-only auth (CurrentUser): a service token (MCP, scheduler) cannot
+    mutate the ticker mapping — only an authenticated browser session can.
+    The router-level :func:`require_token` still gates the request first;
+    this dependency tightens it from "any valid principal" to "a real
+    User row".
 
     Comdirect-sourced fields (name, type, currency) are not patchable
     here — they would just be overwritten on the next sync.
@@ -278,9 +285,13 @@ def patch_instrument(
 def backfill_instrument_prices(
     isin: str,
     payload: PriceBackfillRequest,
+    _user: CurrentUser,
     db: Session = Depends(get_db),
 ):
     """Dispatch a price-backfill request to the worker.
+
+    User-only auth (CurrentUser): kicks off an outbound to yfinance, so
+    a service token (MCP, scheduler) cannot trigger external traffic.
 
     The api pod itself does **not** import yfinance and does **not**
     write to ``instrument_price_history``. The worker handles both — see
