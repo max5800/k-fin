@@ -49,13 +49,15 @@ def run_anomaly_detection(
     new_counterparties = get_new_counterparties(engine, date_from)
     transactions = get_period_transactions(engine, date_from, ref)
 
+    # No early-return on empty signals — the agent runs even when the
+    # statistical pre-filter is quiet so it can still flag subtle patterns
+    # (missing recurring expenses, unusual gaps, etc.). The system prompt
+    # is instructed to return an empty result instead of hallucinating.
     if not outliers and not new_counterparties:
-        logger.info("No anomalies detected for period %s — skipping", period)
-        return AnomalyResult(
-            anomalies=[],
-            period=period,
-            total_anomalies=0,
-            new_counterparties=[],
+        logger.info(
+            "No hard outliers/new counterparties for period %s — running "
+            "anomaly agent on full transaction sample",
+            period,
         )
 
     memory = get_recent_reports(engine, "anomaly", limit=2)

@@ -471,21 +471,32 @@ class ComdirectClient:
         depot_id: str,
         limit: int = 100,
         min_booking_date: str | None = None,
+        *,
+        max_pages: int = 20,
     ) -> list[dict]:
         """Fetch securities transactions for a depot (buys, sells, dividends).
 
+        Pages through the response using ``paging-first`` (offset) and
+        ``paging-count`` until ``paging.matches`` is reached, the server
+        returns an empty page, or ``max_pages`` is hit. The Swagger spec
+        for ``/brokerage/v3/depots/{depotId}/transactions`` does not
+        document either paging param, but the endpoint accepts them in
+        practice (mirroring the Banking transactions endpoint). If the
+        server rejects ``paging-first`` (HTTP 422), we fall back to the
+        first-page result with a WARN — same defensive shape as the
+        account backfill walker (``src/scheduler/backfill.py``).
+
         Args:
-            min_booking_date: Earliest booking date (YYYY-MM-DD or -Xd offset).
-                              Defaults to API default (-180d) if not set.
+            limit: Page size (``paging-count``). Capped server-side at 500.
+            min_booking_date: Earliest booking date (YYYY-MM-DD or -Xd
+                offset). Defaults to API default (-180d) if not set.
+            max_pages: Hard safety cap to bound the loop in adversarial
+                cases (server reports inflated ``matches``, etc.).
         """
         if not (self._secondary_token or self.access_token):
             raise RuntimeError("Not authenticated")
 
         resolved_date = resolve_booking_date(min_booking_date)
-
-        params: dict[str, str | int] = {"paging-count": limit}
-        if resolved_date:
-            params["min-bookingDate"] = resolved_date
 
         logger.info(
             "get_depot_transactions(%s): paging-count=%s, min-bookingDate=%s (raw=%s)",
@@ -495,37 +506,88 @@ class ComdirectClient:
             min_booking_date,
         )
 
+        accumulated: list[dict] = []
+        paging_first = 0
+        matches: int | None = None
+        url = f"{BASE_URL}/api/brokerage/v3/depots/{depot_id}/transactions"
+
         async with httpx.AsyncClient() as client:
-            response = await client.get(
-                f"{BASE_URL}/api/brokerage/v3/depots/{depot_id}/transactions",
-                headers=self._auth_headers(),
-                params=params,
-            )
-            if response.status_code >= 400:
-                logger.error(
-                    "get_depot_transactions(%s) failed: HTTP %d, params=%s, body=%s",
-                    depot_id,
-                    response.status_code,
-                    params,
-                    response.text[:500],
+            for page in range(max_pages):
+                params: dict[str, str | int] = {
+                    "paging-count": limit,
+                    "paging-first": paging_first,
+                }
+                if resolved_date:
+                    params["min-bookingDate"] = resolved_date
+
+                response = await client.get(
+                    url,
+                    headers=self._auth_headers(),
+                    params=params,
                 )
-            response.raise_for_status()
-            data = response.json()
-            values = data.get("values", [])
-            if len(values) >= limit:
-                # Comdirect caps depot paging-count at 500. Without a paging
-                # loop (M11 tech debt) we silently drop anything beyond — log
-                # a WARN so trading-heavy depots make it visible.
+
+                # Some Comdirect endpoints reject paging-first > 0 with 422
+                # (cf. account-tx). In that case stop pagination but keep
+                # whatever we already accumulated from page 0.
+                if response.status_code == 422 and paging_first > 0:
+                    logger.warning(
+                        "get_depot_transactions(%s): HTTP 422 at paging-first=%d — "
+                        "endpoint refuses offset paging; returning first %d rows",
+                        depot_id,
+                        paging_first,
+                        len(accumulated),
+                    )
+                    break
+
+                if response.status_code >= 400:
+                    logger.error(
+                        "get_depot_transactions(%s) failed: HTTP %d, params=%s, body=%s",
+                        depot_id,
+                        response.status_code,
+                        params,
+                        response.text[:500],
+                    )
+                response.raise_for_status()
+
+                data = response.json()
+                values = data.get("values", [])
+                paging = data.get("paging") or {}
+                if matches is None:
+                    matches = paging.get("matches")
+
+                accumulated.extend(values)
+
+                # Termination conditions:
+                #  - empty page: no more data
+                #  - we have matches and have reached/exceeded it
+                #  - server returned fewer rows than the page size
+                if not values:
+                    break
+                if matches is not None and len(accumulated) >= matches:
+                    break
+                if len(values) < limit:
+                    break
+
+                paging_first += limit
+            else:
                 logger.warning(
-                    "get_depot_transactions(%s): hit paging cap (%d rows) — "
-                    "older transactions in the window may be truncated",
+                    "get_depot_transactions(%s): hit max_pages=%d safety cap "
+                    "(rows=%d, matches=%s) — older transactions may be missing",
                     depot_id,
-                    limit,
+                    max_pages,
+                    len(accumulated),
+                    matches,
                 )
-            logger.info(
-                f"get_depot_transactions({depot_id}): {len(values)} transactions"
-            )
-            return values
+
+        logger.info(
+            "get_depot_transactions(%s): %d transactions across %d page(s) "
+            "(matches=%s)",
+            depot_id,
+            len(accumulated),
+            (paging_first // limit) + 1 if limit else 1,
+            matches,
+        )
+        return accumulated
 
     async def get_all_data(
         self,
