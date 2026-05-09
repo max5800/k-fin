@@ -29,6 +29,7 @@ from src.api.routers import (
 )
 from src.connector.comdirect_client import ComdirectClient
 from src.connector.yfinance_client import (
+    CurrencyMismatchError,
     HistoryProvider,
     PriceFetchError,
     YFinanceClient,
@@ -273,7 +274,16 @@ def internal_portfolio_backfill_prices(
                     instrument.ticker_symbol,
                     payload.from_date,
                     payload.to_date,
+                    expected_currency=instrument.currency,
                 )
+            except CurrencyMismatchError as exc:
+                logger.warning(
+                    "backfill-prices(%s, ticker=%s) currency mismatch: %s",
+                    payload.isin,
+                    instrument.ticker_symbol,
+                    exc,
+                )
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
             except PriceFetchError as exc:
                 logger.warning(
                     "backfill-prices(%s, ticker=%s) provider error: %s",
@@ -283,7 +293,7 @@ def internal_portfolio_backfill_prices(
                 )
                 raise HTTPException(
                     status_code=502,
-                    detail=f"Upstream price provider failed: {exc}",
+                    detail="Upstream price provider failed",
                 ) from exc
 
             if not points:

@@ -62,7 +62,12 @@ class FakeProvider:
         self.calls: list[tuple[str, date, date]] = []
 
     def get_history(
-        self, ticker: str, from_date: date, to_date: date
+        self,
+        ticker: str,
+        from_date: date,
+        to_date: date,
+        *,
+        expected_currency: str | None = None,
     ) -> list[PricePoint]:
         self.calls.append((ticker, from_date, to_date))
         if self.error is not None:
@@ -592,7 +597,9 @@ def test_worker_backfill_provider_error_returns_502(
         },
     )
     assert r.status_code == 502
-    assert "rate limited" in r.json()["detail"]
+    # Static detail — upstream exception text is logged but never echoed to
+    # the client (security M2: avoid leaking provider internals via 502).
+    assert r.json()["detail"] == "Upstream price provider failed"
 
 
 def test_worker_backfill_empty_response_succeeds(
