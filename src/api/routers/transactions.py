@@ -74,6 +74,7 @@ def _apply_filters(
     date_from: date | None,
     date_to: date | None,
     category_id: str | None,
+    tag_ids: list[str] | None,
     is_recurring: bool | None,
     is_outlier: bool | None,
     internal_transfer: bool | None,
@@ -86,6 +87,17 @@ def _apply_filters(
         stmt = stmt.where(NormalizedTransaction.booking_date <= date_to)
     if category_id is not None:
         stmt = stmt.where(NormalizedTransaction.category_id == category_id)
+    if tag_ids:
+        # OR-semantics: a tx matches if it has at least one of the
+        # requested tags. EXISTS keeps row counts honest even with
+        # multiple tag rows per tx (a JOIN would multiply rows and
+        # break the count_stmt).
+        stmt = stmt.where(
+            select(TransactionTag.transaction_id)
+            .where(TransactionTag.transaction_id == NormalizedTransaction.id)
+            .where(TransactionTag.tag_id.in_(tag_ids))
+            .exists()
+        )
     if is_recurring is not None:
         stmt = stmt.where(NormalizedTransaction.is_recurring == is_recurring)
     if is_outlier is not None:
@@ -121,6 +133,13 @@ def list_transactions(
     date_from: date | None = Query(None),
     date_to: date | None = Query(None),
     category_id: str | None = Query(None),
+    tag_ids: list[str] | None = Query(
+        None,
+        description=(
+            "Filter to transactions that have at least one of the given tag IDs "
+            "(OR-semantics). Repeat the param: ?tag_ids=a&tag_ids=b."
+        ),
+    ),
     is_recurring: bool | None = Query(None),
     is_outlier: bool | None = Query(None),
     internal_transfer: bool | None = Query(None),
@@ -131,6 +150,7 @@ def list_transactions(
         date_from=date_from,
         date_to=date_to,
         category_id=category_id,
+        tag_ids=tag_ids,
         is_recurring=is_recurring,
         is_outlier=is_outlier,
         internal_transfer=internal_transfer,
@@ -250,6 +270,7 @@ def export_transactions(
     date_from: date | None = Query(None),
     date_to: date | None = Query(None),
     category_id: str | None = Query(None),
+    tag_ids: list[str] | None = Query(None),
     is_recurring: bool | None = Query(None),
     is_outlier: bool | None = Query(None),
     internal_transfer: bool | None = Query(None),
@@ -266,6 +287,7 @@ def export_transactions(
         date_from=date_from,
         date_to=date_to,
         category_id=category_id,
+        tag_ids=tag_ids,
         is_recurring=is_recurring,
         is_outlier=is_outlier,
         internal_transfer=internal_transfer,

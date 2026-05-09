@@ -228,6 +228,64 @@ class TestTransactionEndpoints:
         assert data["total"] == 1
         assert data["items"][0]["category"]["name"] == "Miete"
 
+    def test_list_filter_by_single_tag(self, api_client, seed_data, db_engine):
+        # seed_data already wires txn001 -> important. Add txn002 -> review
+        # so we can exercise OR-semantics across two distinct tags.
+        with Session(db_engine) as s:
+            s.add(TransactionTag(transaction_id="txn002", tag_id="review"))
+            s.commit()
+
+        resp = api_client.get("/api/v1/transactions?tag_ids=important", headers=AUTH)
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["total"] == 1
+        ids = {t["id"] for t in data["items"]}
+        assert ids == {"txn001"}
+
+    def test_list_filter_by_multiple_tags_or_semantics(
+        self, api_client, seed_data, db_engine
+    ):
+        with Session(db_engine) as s:
+            s.add(TransactionTag(transaction_id="txn002", tag_id="review"))
+            s.commit()
+
+        resp = api_client.get(
+            "/api/v1/transactions?tag_ids=important&tag_ids=review",
+            headers=AUTH,
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        # OR-semantics: both txns surface.
+        assert data["total"] == 2
+        ids = {t["id"] for t in data["items"]}
+        assert ids == {"txn001", "txn002"}
+
+    def test_list_filter_by_tag_no_match(self, api_client, seed_data):
+        resp = api_client.get(
+            "/api/v1/transactions?tag_ids=does-not-exist", headers=AUTH
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["total"] == 0
+        assert data["items"] == []
+
+    def test_list_filter_by_tag_no_row_duplication(
+        self, api_client, seed_data, db_engine
+    ):
+        # A tx with multiple matching tags must not be counted twice — this
+        # would happen with a naive JOIN instead of an EXISTS subquery.
+        with Session(db_engine) as s:
+            s.add(TransactionTag(transaction_id="txn001", tag_id="review"))
+            s.commit()
+
+        resp = api_client.get(
+            "/api/v1/transactions?tag_ids=important&tag_ids=review",
+            headers=AUTH,
+        )
+        data = resp.json()
+        assert data["total"] == 1
+        assert data["items"][0]["id"] == "txn001"
+
     def test_list_filter_recurring(self, api_client, seed_data):
         resp = api_client.get("/api/v1/transactions?is_recurring=true", headers=AUTH)
         data = resp.json()
