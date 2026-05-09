@@ -6,6 +6,14 @@ on:
       - main
       - develop
 
+# Serialise releases per branch so a re-run can't race the prior one
+# at the `:latest` image push or the Fleet bundle commit. We do not
+# cancel-in-progress: an in-flight semantic-release that has already
+# tagged + pushed must finish to keep tag and image consistent.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 permissions:
   contents: write
   issues: write
