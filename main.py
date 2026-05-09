@@ -8,11 +8,13 @@ import asyncio
 import re
 import uuid
 from contextlib import asynccontextmanager
+from datetime import date
 
-from fastapi import BackgroundTasks, FastAPI, HTTPException
+from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, field_validator
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, select
+from sqlalchemy.orm import Session
 
 from src.agents.reaper import reap_stale_runs, start_periodic_reaper
 from src.api.routers import (
@@ -26,7 +28,13 @@ from src.api.routers import (
     transactions,
 )
 from src.connector.comdirect_client import ComdirectClient
+from src.connector.yfinance_client import (
+    HistoryProvider,
+    PriceFetchError,
+    YFinanceClient,
+)
 from src.core.config import settings
+from src.core.db.models import Instrument, InstrumentPriceHistory
 from src.core.logging import get_logger, setup_logging
 
 setup_logging()
@@ -186,6 +194,151 @@ def internal_run_start_full(
         _execute_full_run_in_worker, payload.run_id, payload.period_days
     )
     return {"status": "accepted", "run_id": payload.run_id, "agent": "full"}
+
+
+# ---------------------------------------------------------------------------
+# Portfolio price backfill (yfinance) — runs in the worker so the
+# public-facing `api` pod has zero outbound to Yahoo Finance and zero
+# direct DB writes for this code path. The api router is a thin
+# dispatcher that forwards to /internal/portfolio/backfill-prices.
+# ---------------------------------------------------------------------------
+
+
+def _get_history_provider() -> HistoryProvider:
+    """FastAPI dependency for the historical-price provider.
+
+    Mirrors the api-side override hook so worker tests can swap in a
+    fake provider via `app.dependency_overrides`.
+    """
+    return YFinanceClient()
+
+
+class _InternalBackfillRequest(BaseModel):
+    isin: str = Field(min_length=1, max_length=32)
+    from_date: date
+    to_date: date
+
+
+class _InternalBackfillResult(BaseModel):
+    isin: str
+    ticker_symbol: str
+    requested_from: date
+    requested_to: date
+    fetched_points: int
+    inserted_points: int
+    skipped_existing: int
+    source: str = "yfinance"
+
+
+@app.post(
+    "/internal/portfolio/backfill-prices",
+    response_model=_InternalBackfillResult,
+)
+def internal_portfolio_backfill_prices(
+    payload: _InternalBackfillRequest,
+    provider: HistoryProvider = Depends(_get_history_provider),
+):
+    """Fetch missing daily close prices for an instrument from yfinance.
+
+    Internal-only — the api dispatcher (`POST /portfolio/instruments/{isin}/
+    backfill-prices`) has already validated auth and basic input shape.
+    Runs the yfinance call + `instrument_price_history` upsert here so
+    the public api never makes outbound to Yahoo Finance and the api
+    NetworkPolicy can stay tight.
+    """
+    if payload.from_date > payload.to_date:
+        raise HTTPException(
+            status_code=400, detail="from_date must be <= to_date"
+        )
+
+    engine = create_engine(settings.database_url)
+    try:
+        with Session(engine) as db:
+            instrument = db.get(Instrument, payload.isin)
+            if instrument is None:
+                raise HTTPException(
+                    status_code=404, detail="Instrument not found"
+                )
+            if not instrument.ticker_symbol:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        "Instrument has no ticker_symbol; PATCH it first via "
+                        "/portfolio/instruments/{isin}"
+                    ),
+                )
+
+            try:
+                points = provider.get_history(
+                    instrument.ticker_symbol,
+                    payload.from_date,
+                    payload.to_date,
+                )
+            except PriceFetchError as exc:
+                logger.warning(
+                    "backfill-prices(%s, ticker=%s) provider error: %s",
+                    payload.isin,
+                    instrument.ticker_symbol,
+                    exc,
+                )
+                raise HTTPException(
+                    status_code=502,
+                    detail=f"Upstream price provider failed: {exc}",
+                ) from exc
+
+            if not points:
+                return _InternalBackfillResult(
+                    isin=payload.isin,
+                    ticker_symbol=instrument.ticker_symbol,
+                    requested_from=payload.from_date,
+                    requested_to=payload.to_date,
+                    fetched_points=0,
+                    inserted_points=0,
+                    skipped_existing=0,
+                )
+
+            existing_dates = set(
+                db.execute(
+                    select(InstrumentPriceHistory.price_date).where(
+                        InstrumentPriceHistory.isin == payload.isin,
+                        InstrumentPriceHistory.price_date >= payload.from_date,
+                        InstrumentPriceHistory.price_date <= payload.to_date,
+                    )
+                )
+                .scalars()
+                .all()
+            )
+
+            inserted = 0
+            skipped = 0
+            for point in points:
+                if point.price_date in existing_dates:
+                    skipped += 1
+                    continue
+                db.add(
+                    InstrumentPriceHistory(
+                        isin=payload.isin,
+                        price_date=point.price_date,
+                        close=point.close,
+                        currency=point.currency or instrument.currency,
+                        source="yfinance",
+                    )
+                )
+                existing_dates.add(point.price_date)
+                inserted += 1
+            db.commit()
+
+            return _InternalBackfillResult(
+                isin=payload.isin,
+                ticker_symbol=instrument.ticker_symbol,
+                requested_from=payload.from_date,
+                requested_to=payload.to_date,
+                fetched_points=len(points),
+                inserted_points=inserted,
+                skipped_existing=skipped,
+            )
+    finally:
+        engine.dispose()
 
 
 @app.post("/internal/normalize")

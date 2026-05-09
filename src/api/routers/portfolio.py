@@ -6,8 +6,11 @@ Fed by the portfolio tables written by `src.normalization.depot_ingest`:
 - performance: read from the aggregated row (depot_id NULL) in `portfolio_snapshots`
 
 Instrument-level price-history endpoints (M11) live alongside because
-they share the same prefix and the same auth contract; they hit the
-``instrument_price_history`` table populated on demand from yfinance.
+they share the same prefix; the read-side (`GET .../prices`) is served
+straight from Postgres while the write-side (PATCH ticker, POST
+backfill-prices) is **dispatched to the worker** so this public-facing
+api pod never makes outbound calls to Yahoo Finance and so the
+api-pod NetworkPolicy can stay locked down.
 """
 
 from __future__ import annotations
@@ -16,6 +19,7 @@ from datetime import date, timedelta
 from decimal import Decimal
 from typing import Literal
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -31,11 +35,7 @@ from src.api.schemas import (
     PriceBackfillRequest,
     PriceBackfillResult,
 )
-from src.connector.yfinance_client import (
-    HistoryProvider,
-    PriceFetchError,
-    YFinanceClient,
-)
+from src.core.config import settings
 from src.core.db.models import (
     Depot,
     DepotTransaction,
@@ -77,13 +77,48 @@ def _bucket_for(instrument_type: str | None) -> str:
     return BUCKET_MAP.get(instrument_type.upper(), "Sonstiges")
 
 
-def get_history_provider() -> HistoryProvider:
-    """FastAPI dependency for the historical-price provider.
+# Short timeout — yfinance roundtrip is single-digit seconds in the
+# common case; anything longer indicates either a yfinance hang or
+# worker overload, both of which the user wants surfaced quickly.
+_BACKFILL_DISPATCH_TIMEOUT_S = 30.0
 
-    Overridden in tests to swap in a fake provider without monkey-patching
-    yfinance globally.
+
+def _dispatch_backfill_to_worker(payload: dict) -> dict:
+    """Forward a price-backfill request to the worker pod.
+
+    The worker owns the yfinance client + the DB write — see
+    ``main.py::internal_portfolio_backfill_prices``. This wrapper
+    translates worker-side HTTP errors into the same statuses the
+    in-process implementation used to raise (404, 400, 502).
     """
-    return YFinanceClient()
+    url = settings.worker_url.rstrip("/") + "/internal/portfolio/backfill-prices"
+    try:
+        resp = httpx.post(
+            url, json=payload, timeout=_BACKFILL_DISPATCH_TIMEOUT_S
+        )
+    except httpx.HTTPError as exc:
+        logger.error(
+            "Worker dispatch /internal/portfolio/backfill-prices failed: %s", exc
+        )
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Worker unreachable: {exc}",
+        ) from exc
+    if resp.status_code >= 400:
+        # Forward the worker's status code where it carries useful
+        # information (404 unknown ISIN, 400 missing ticker, 502 yfinance
+        # error). Anything else maps to 502 — caller saw a worker fault.
+        try:
+            detail = resp.json().get("detail", resp.text[:200])
+        except ValueError:
+            detail = resp.text[:200] or "Worker error"
+        forward = (
+            resp.status_code
+            if resp.status_code in (400, 404, 502)
+            else status.HTTP_502_BAD_GATEWAY
+        )
+        raise HTTPException(status_code=forward, detail=detail)
+    return resp.json()
 
 
 @router.get("/summary", response_model=PortfolioSummaryOut)
@@ -244,103 +279,37 @@ def backfill_instrument_prices(
     isin: str,
     payload: PriceBackfillRequest,
     db: Session = Depends(get_db),
-    provider: HistoryProvider = Depends(get_history_provider),
 ):
-    """Fetch missing daily close prices for an instrument from yfinance.
+    """Dispatch a price-backfill request to the worker.
 
-    Manual trigger only — no auto-backfill on sync, so the user controls
-    the yfinance request load. Existing rows in the requested window are
-    preserved (idempotent via the unique (isin, price_date) constraint).
+    The api pod itself does **not** import yfinance and does **not**
+    write to ``instrument_price_history``. The worker handles both — see
+    ``main.py::internal_portfolio_backfill_prices``. This keeps the api
+    NetworkPolicy tight (no Yahoo Finance egress) and the api image
+    free of the yfinance dependency surface.
     """
-    instrument = db.get(Instrument, isin)
-    if instrument is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Instrument not found"
-        )
-
-    if not instrument.ticker_symbol:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=(
-                "Instrument has no ticker_symbol; PATCH it first via "
-                "/portfolio/instruments/{isin}"
-            ),
-        )
-
     if payload.from_date > payload.to_date:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="from_date must be <= to_date",
         )
 
-    try:
-        points = provider.get_history(
-            instrument.ticker_symbol, payload.from_date, payload.to_date
-        )
-    except PriceFetchError as exc:
-        logger.warning(
-            "backfill-prices(%s, ticker=%s) provider error: %s",
-            isin,
-            instrument.ticker_symbol,
-            exc,
-        )
+    # Pre-flight existence check so a 404 doesn't have to round-trip
+    # through the worker. Cheap, the row is already cached locally.
+    instrument = db.get(Instrument, isin)
+    if instrument is None:
         raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Upstream price provider failed: {exc}",
-        ) from exc
-
-    if not points:
-        return PriceBackfillResult(
-            isin=isin,
-            ticker_symbol=instrument.ticker_symbol,
-            requested_from=payload.from_date,
-            requested_to=payload.to_date,
-            fetched_points=0,
-            inserted_points=0,
-            skipped_existing=0,
+            status_code=status.HTTP_404_NOT_FOUND, detail="Instrument not found"
         )
 
-    existing_dates = set(
-        db.execute(
-            select(InstrumentPriceHistory.price_date).where(
-                InstrumentPriceHistory.isin == isin,
-                InstrumentPriceHistory.price_date >= payload.from_date,
-                InstrumentPriceHistory.price_date <= payload.to_date,
-            )
-        )
-        .scalars()
-        .all()
+    body = _dispatch_backfill_to_worker(
+        {
+            "isin": isin,
+            "from_date": payload.from_date.isoformat(),
+            "to_date": payload.to_date.isoformat(),
+        }
     )
-
-    inserted = 0
-    skipped = 0
-    for point in points:
-        if point.price_date in existing_dates:
-            skipped += 1
-            continue
-        db.add(
-            InstrumentPriceHistory(
-                isin=isin,
-                price_date=point.price_date,
-                close=point.close,
-                currency=point.currency or instrument.currency,
-                source="yfinance",
-            )
-        )
-        existing_dates.add(point.price_date)
-        inserted += 1
-
-    db.commit()
-
-    return PriceBackfillResult(
-        isin=isin,
-        ticker_symbol=instrument.ticker_symbol,
-        requested_from=payload.from_date,
-        requested_to=payload.to_date,
-        fetched_points=len(points),
-        inserted_points=inserted,
-        skipped_existing=skipped,
-    )
+    return PriceBackfillResult(**body)
 
 
 @router.get(
