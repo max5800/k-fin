@@ -69,6 +69,16 @@ def _dispatch_to_worker(path: str, payload: dict) -> None:
 )
 def start_full_run(
     body: RunCreate | None = None,
+    period_days: int | None = Query(
+        None,
+        ge=1,
+        le=3650,
+        description=(
+            "Optional override for the agent's built-in time window. "
+            "Forwarded to weekly, monthly, and anomaly agents; "
+            "categorization and synthesis ignore it."
+        ),
+    ),
     db: Session = Depends(get_db),
 ):
     trigger = RunTrigger(body.trigger) if body else RunTrigger.MANUAL
@@ -84,8 +94,11 @@ def start_full_run(
     db.commit()
     db.refresh(run)
 
+    payload: dict = {"run_id": run.id}
+    if period_days is not None:
+        payload["period_days"] = period_days
     try:
-        _dispatch_to_worker("/internal/runs/start-full", {"run_id": run.id})
+        _dispatch_to_worker("/internal/runs/start-full", payload)
     except HTTPException:
         # Mark the row as failed so the user sees the dispatch error
         # instead of a phantom RUNNING that the worker never picks up.
@@ -113,6 +126,16 @@ def start_full_run(
 def start_run(
     agent_name: str,
     body: RunCreate | None = None,
+    period_days: int | None = Query(
+        None,
+        ge=1,
+        le=3650,
+        description=(
+            "Optional override for the agent's built-in time window. "
+            "Forwarded to weekly, monthly, and anomaly agents; "
+            "categorization and synthesis ignore it."
+        ),
+    ),
     db: Session = Depends(get_db),
 ):
     if agent_name not in KNOWN_AGENTS:
@@ -134,10 +157,13 @@ def start_run(
     db.commit()
     db.refresh(run)
 
+    payload: dict = {"run_id": run.id}
+    if period_days is not None:
+        payload["period_days"] = period_days
     try:
         _dispatch_to_worker(
             f"/internal/runs/start?agent_name={agent_name}",
-            {"run_id": run.id},
+            payload,
         )
     except HTTPException:
         db.execute(

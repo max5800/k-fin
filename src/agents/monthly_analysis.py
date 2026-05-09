@@ -48,11 +48,25 @@ def run_monthly_analysis(
     engine: Engine,
     reference_date: date | None = None,
     *,
+    period_days: int | None = None,
     usage: AgentUsage | None = None,
 ) -> AnalysisResult:
-    """Gather monthly data and run the analysis agent."""
-    first_day, last_day = _current_month_range(reference_date)
-    period = first_day.strftime("%Y-%m")
+    """Gather monthly data and run the analysis agent.
+
+    By default the agent inspects the previous complete calendar month.
+    When ``period_days`` is set, it instead inspects the last N days
+    ending at ``reference_date`` (or today). The ``period`` label drops
+    to an ISO date range (``YYYY-MM-DD/YYYY-MM-DD``) for non-month
+    windows so downstream report keys stay distinct.
+    """
+    if period_days is not None and period_days > 0:
+        ref = reference_date or date.today()
+        first_day = ref - timedelta(days=period_days - 1)
+        last_day = ref
+        period = f"{first_day.isoformat()}/{last_day.isoformat()}"
+    else:
+        first_day, last_day = _current_month_range(reference_date)
+        period = first_day.strftime("%Y-%m")
 
     transactions = get_period_transactions(engine, first_day, last_day)
     if not transactions:
