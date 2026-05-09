@@ -1,3 +1,10 @@
+# [1.35.0](https://github.com/max5800/k-fin/compare/v1.34.1...v1.35.0) (2026-05-09)
+
+
+### Features
+
+* **notifier:** Discord webhook for failed sync/agent runs (M11 Stream D) ([#44](https://github.com/max5800/k-fin/issues/44)) ([fab18ee](https://github.com/max5800/k-fin/commit/fab18ee61d6c5b8d208be9806f19fc28e7257ba3))
+
 ## [1.34.1](https://github.com/max5800/k-fin/compare/v1.34.0...v1.34.1) (2026-05-09)
 
 
