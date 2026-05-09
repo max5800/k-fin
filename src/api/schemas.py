@@ -1,9 +1,9 @@
 """Pydantic schemas for the Finance API (M6)."""
 
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, model_validator
 
 
 class CategoryOut(BaseModel):
@@ -292,9 +292,33 @@ class InstrumentPatch(BaseModel):
     ticker_symbol: str | None = None
 
 
+# 5 calendar years (rounded up to 1827 days to absorb leap-year wobble) is the
+# upper bound a single backfill request may span. yfinance throttles by IP and
+# rejects long windows on illiquid tickers; without a cap the worker can be
+# pinned for minutes on a 1900-2030 request and risk an IP-level ban.
+_BACKFILL_MAX_DAYS = 5 * 365 + 2
+
+
 class PriceBackfillRequest(BaseModel):
     from_date: date
     to_date: date
+
+    @model_validator(mode="after")
+    def _check_window(self) -> "PriceBackfillRequest":
+        # Note: the *order* of from_date vs to_date is enforced in the
+        # router (HTTP 400 with a friendly message). We only cap the
+        # *width* here, since that's a pure schema concern that needs
+        # to fire regardless of caller. An inverted range falls through
+        # this check (negative delta is < cap) and the router's own
+        # check picks it up downstream.
+        if self.to_date >= self.from_date:
+            delta = self.to_date - self.from_date
+            if delta > timedelta(days=_BACKFILL_MAX_DAYS):
+                raise ValueError(
+                    "Backfill window must not exceed 5 years "
+                    f"(got {delta.days} days, max {_BACKFILL_MAX_DAYS})"
+                )
+        return self
 
 
 class PriceBackfillResult(BaseModel):

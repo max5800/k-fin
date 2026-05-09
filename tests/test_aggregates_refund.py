@@ -9,6 +9,7 @@ Pins the contract introduced 2026-05-08:
 from __future__ import annotations
 
 import os
+import uuid
 from datetime import date
 from decimal import Decimal
 from unittest.mock import patch
@@ -23,9 +24,11 @@ from src.core.db.models import (
     NormalizedTransaction,
     RawTransaction,
     TypeEnum,
+    User,
 )
 
 AUTH = {"Authorization": "Bearer test-secret"}
+JWT_SECRET = "integration-test-secret-minimum-32-chars!!"
 
 
 @pytest.fixture
@@ -37,7 +40,14 @@ def api_client(db_engine):
             yield session
 
     db_url = db_engine.url.render_as_string(hide_password=False)
-    with patch.dict(os.environ, {"API_TOKEN": "test-secret", "DATABASE_URL": db_url}):
+    with patch.dict(
+        os.environ,
+        {
+            "API_TOKEN": "test-secret",
+            "DATABASE_URL": db_url,
+            "JWT_SECRET": JWT_SECRET,
+        },
+    ):
         from src.api.app import create_app
 
         app = create_app()
@@ -45,6 +55,35 @@ def api_client(db_engine):
         client = TestClient(app)
         yield client
         app.dependency_overrides.clear()
+
+
+@pytest.fixture
+def user_auth(db_engine):
+    """Seed a user and return a JWT bearer header.
+
+    Used by tests that hit user-only endpoints (e.g. refund-audit
+    auto-apply) — the static API_TOKEN must be rejected there.
+    """
+    from src.api.auth.passwords import hash_password
+
+    with patch.dict(os.environ, {"JWT_SECRET": JWT_SECRET}):
+        with Session(db_engine) as s:
+            user = User(
+                id=str(uuid.uuid4()),
+                email="max@example.com",
+                display_name="Max",
+                password_hash=hash_password("hunter2hunter2"),
+                is_active=True,
+                role="admin",
+            )
+            s.add(user)
+            s.commit()
+            user_id = user.id
+
+        from src.api.auth.jwt import issue_token
+
+        token = issue_token(user_id)
+    return {"Authorization": f"Bearer {token}"}
 
 
 @pytest.fixture
@@ -473,9 +512,11 @@ class TestRefundAuditAutoApply:
                 ))
             s.commit()
 
-    def test_auto_apply_endpoint_partitions_correctly(self, api_client, mixed_seed):
+    def test_auto_apply_endpoint_partitions_correctly(
+        self, api_client, mixed_seed, user_auth
+    ):
         resp = api_client.post(
-            "/api/v1/aggregates/refund-audit/auto-apply", headers=AUTH
+            "/api/v1/aggregates/refund-audit/auto-apply", headers=user_auth
         )
         assert resp.status_code == 200
         body = resp.json()
@@ -483,8 +524,28 @@ class TestRefundAuditAutoApply:
         assert body["applied_income"] == 1   # Finanzamt
         assert body["left_for_review"] == 2  # Splitwise + Anna Müller
 
-    def test_auto_apply_writes_correct_state(self, api_client, mixed_seed, db_engine):
-        api_client.post("/api/v1/aggregates/refund-audit/auto-apply", headers=AUTH)
+    def test_auto_apply_rejects_service_token(self, api_client, mixed_seed):
+        """The static API_TOKEN must NOT be allowed to flip historical
+        categorizations — only an authenticated User can trigger the
+        auto-apply. Guards against a stray Scheduler / MCP using its
+        service token to silently mutate audit decisions.
+        """
+        resp = api_client.post(
+            "/api/v1/aggregates/refund-audit/auto-apply", headers=AUTH
+        )
+        assert resp.status_code == 403
+        assert "user authentication" in resp.json()["detail"]
+
+    def test_auto_apply_rejects_anonymous(self, api_client, mixed_seed):
+        resp = api_client.post("/api/v1/aggregates/refund-audit/auto-apply")
+        assert resp.status_code == 401
+
+    def test_auto_apply_writes_correct_state(
+        self, api_client, mixed_seed, db_engine, user_auth
+    ):
+        api_client.post(
+            "/api/v1/aggregates/refund-audit/auto-apply", headers=user_auth
+        )
         with Session(db_engine) as s:
             kk = s.get(NormalizedTransaction, "11" * 32)
             steuer = s.get(NormalizedTransaction, "22" * 32)
@@ -507,19 +568,25 @@ class TestRefundAuditAutoApply:
             assert split.refund_audit_decided_at is None
             assert anna.refund_audit_decided_at is None
 
-    def test_audit_endpoint_only_shows_review_candidates(self, api_client, mixed_seed):
-        api_client.post("/api/v1/aggregates/refund-audit/auto-apply", headers=AUTH)
+    def test_audit_endpoint_only_shows_review_candidates(
+        self, api_client, mixed_seed, user_auth
+    ):
+        api_client.post(
+            "/api/v1/aggregates/refund-audit/auto-apply", headers=user_auth
+        )
         resp = api_client.get("/api/v1/aggregates/refund-audit", headers=AUTH)
         ids = {c["id"] for c in resp.json()["candidates"]}
         # Auto-applied rows are gone; only the ambiguous ones remain.
         assert ids == {"33" * 32, "44" * 32}
 
-    def test_idempotent_second_run_changes_nothing(self, api_client, mixed_seed):
+    def test_idempotent_second_run_changes_nothing(
+        self, api_client, mixed_seed, user_auth
+    ):
         first = api_client.post(
-            "/api/v1/aggregates/refund-audit/auto-apply", headers=AUTH
+            "/api/v1/aggregates/refund-audit/auto-apply", headers=user_auth
         ).json()
         second = api_client.post(
-            "/api/v1/aggregates/refund-audit/auto-apply", headers=AUTH
+            "/api/v1/aggregates/refund-audit/auto-apply", headers=user_auth
         ).json()
         assert first["applied_refund"] + first["applied_income"] == 2
         assert second["applied_refund"] == 0

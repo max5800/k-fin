@@ -17,7 +17,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy import and_, case, extract, func, select
 from sqlalchemy.orm import Session
 
-from src.api.deps import get_db, require_token
+from src.api.deps import CurrentUser, get_db, require_token
 from src.api.schemas import (
     BudgetSpendingItem,
     BudgetSpendingOut,
@@ -445,12 +445,23 @@ def refund_audit(db: Session = Depends(get_db)):
 
 
 @router.post("/refund-audit/auto-apply", response_model=RefundAutoApplyResult)
-def refund_audit_auto_apply(db: Session = Depends(get_db)):
+def refund_audit_auto_apply(
+    current_user: CurrentUser,
+    db: Session = Depends(get_db),
+):
     """Run the high-confidence heuristic over all undecided erstattungen-Tx.
 
     Same logic the API runs on startup — exposed manually so the user can
     re-trigger after editing the heuristic / adding new patterns / pulling
     a fresh sync window without waiting for a pod restart.
+
+    User-only auth: this endpoint mutates historical categorizations
+    (sets ``is_refund=True``, swaps the category, stamps the audit
+    decision). A stray scheduler running with the static service token
+    must not be able to flip rows behind the user's back, so we require
+    a JWT-backed :class:`User` principal via :data:`CurrentUser` — the
+    dependency raises HTTP 403 for service tokens.
     """
+    del current_user  # principal already validated by the dependency
     counts = apply_refund_heuristic(db)
     return RefundAutoApplyResult(**counts)

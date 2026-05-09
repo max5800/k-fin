@@ -68,6 +68,14 @@ def _enrich(tx: NormalizedTransaction, db: Session) -> TransactionOut:
     )
 
 
+# Cap the number of tag IDs accepted per request. ``tag_id IN (...)`` against
+# an unbounded list is a cheap-but-effective DoS — 10k tags expand into a
+# huge SQL parameter list and degrade the planner. 50 is well above any
+# realistic UI use (the tag picker lists ~10) and gives a generous margin
+# for power users / scripted exports.
+_MAX_TAG_IDS = 50
+
+
 def _apply_filters(
     stmt: Select,
     *,
@@ -81,6 +89,14 @@ def _apply_filters(
     is_refund: bool | None,
     search: str | None,
 ) -> Select:
+    if tag_ids is not None and len(tag_ids) > _MAX_TAG_IDS:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"tag_ids accepts at most {_MAX_TAG_IDS} values "
+                f"(got {len(tag_ids)})"
+            ),
+        )
     if date_from:
         stmt = stmt.where(NormalizedTransaction.booking_date >= date_from)
     if date_to:

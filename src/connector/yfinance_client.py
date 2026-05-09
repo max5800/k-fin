@@ -7,16 +7,28 @@ we need a daily price series the user can request on demand.
 
 This module wraps `yfinance` behind a small, mockable surface:
 
-* :func:`get_history` — fetch one ticker's adjusted-close series in a
-  date range.
+* :func:`get_history` — fetch one ticker's split- and dividend-adjusted
+  close series in a date range. We pass ``auto_adjust=True`` so a
+  stock split doesn't synthetically halve the chart on the day it
+  happens. Adjusted closes are appropriate for performance views; the
+  bilanzielle Bewertung kommt aus Comdirect-Buchungen, nicht hieraus.
 
 The wrapper deliberately does not maintain its own cache or persist
 anything — that is the responsibility of the caller (see
 ``src/api/routers/portfolio.py``'s backfill endpoint, which writes
 into ``instrument_price_history``). yfinance's own response can be a
 silently empty DataFrame, a pandas error, or a network error;
-everything is normalised here to either a list of :class:`PricePoint`
-or :class:`PriceFetchError`.
+everything is normalised here to either a list of :class:`PricePoint`,
+:class:`PriceFetchError`, or :class:`CurrencyMismatchError`.
+
+Currency-mismatch handling: yfinance returns whatever currency the
+ticker trades in (``AAPL`` → USD, ``SAP.DE`` → EUR). If the caller
+mistakenly maps a USD ticker to a EUR instrument, naive insertion
+into ``instrument_price_history`` would silently mix currencies in
+the chart. ``get_history`` accepts an ``expected_currency`` and
+raises :class:`CurrencyMismatchError` when the provider disagrees;
+the caller surfaces this as a 4xx and tells the user to re-map the
+ticker.
 """
 
 from __future__ import annotations
@@ -48,11 +60,25 @@ class PriceFetchError(RuntimeError):
     """
 
 
+class CurrencyMismatchError(RuntimeError):
+    """Raised when the provider's currency for a ticker disagrees with the
+    instrument's recorded currency.
+
+    Caller is expected to bubble this up as a 4xx — silently writing a
+    USD close into a EUR instrument's history would corrupt every
+    chart that touches the row.
+    """
+
+
 class HistoryProvider(Protocol):
     """Minimal interface so the API layer can mock the provider in tests."""
 
     def get_history(
-        self, ticker: str, from_date: date, to_date: date
+        self,
+        ticker: str,
+        from_date: date,
+        to_date: date,
+        expected_currency: str | None = None,
     ) -> list[PricePoint]: ...
 
 
@@ -65,14 +91,24 @@ class YFinanceClient:
     """
 
     def get_history(
-        self, ticker: str, from_date: date, to_date: date
+        self,
+        ticker: str,
+        from_date: date,
+        to_date: date,
+        expected_currency: str | None = None,
     ) -> list[PricePoint]:
-        """Fetch daily close prices for ``ticker`` between two dates.
+        """Fetch daily split/dividend-adjusted close prices for ``ticker``.
 
         Args:
             ticker: Yahoo-Finance ticker symbol (e.g. ``SAP.DE``).
             from_date: Inclusive start date.
             to_date: Inclusive end date.
+            expected_currency: ISO code (``"EUR"``, ``"USD"``) of the
+                instrument the caller is going to write these prices
+                into. If supplied and the provider disagrees, raises
+                :class:`CurrencyMismatchError` *before* any data is
+                returned — protects ``instrument_price_history`` from
+                quietly accumulating mixed-currency closes.
 
         Returns:
             List of :class:`PricePoint`, ordered by date ascending.
@@ -82,6 +118,8 @@ class YFinanceClient:
 
         Raises:
             PriceFetchError: yfinance threw or rate-limited.
+            CurrencyMismatchError: ``expected_currency`` was supplied
+                and the provider returned a different currency.
         """
         if from_date > to_date:
             raise ValueError(
@@ -106,7 +144,11 @@ class YFinanceClient:
             df = t.history(
                 start=from_date.isoformat(),
                 end=end_param.isoformat(),
-                auto_adjust=False,
+                # Adjusted closes — splits and dividends are folded in,
+                # so a 4-for-1 split day doesn't show up as a synthetic
+                # 75 % drop in the chart. Bilanzielle Bewertung lebt im
+                # Comdirect-Buchungspfad, nicht hier.
+                auto_adjust=True,
                 actions=False,
                 raise_errors=False,
             )
@@ -139,6 +181,16 @@ class YFinanceClient:
         except Exception:
             # fast_info is best-effort; not worth failing the call over.
             pass
+
+        # Validate currency against the caller's expectation *before* we
+        # build any PricePoints — a mismatch invalidates the entire batch.
+        if expected_currency is not None:
+            expected_norm = expected_currency.strip().upper()
+            if expected_norm and currency != expected_norm:
+                raise CurrencyMismatchError(
+                    f"yfinance returns {currency} for ticker {ticker}, "
+                    f"instrument is in {expected_norm}"
+                )
 
         out: list[PricePoint] = []
         for ts, row in df.iterrows():

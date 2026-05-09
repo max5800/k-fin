@@ -19,6 +19,11 @@ Regeln:
 prüfenswerte Anomalien, "alert" für potentiell problematische Buchungen.
 - Falsch-Positive minimieren: Lieber weniger Anomalien mit hoher \
 Relevanz als viele irrelevante.
+- Eine Buchung mit `is_refund=true` neutralisiert eine frühere Ausgabe \
+(Krankenkassen-Erstattung, Retoure, Splitwise-Ausgleich). Werte sie \
+NICHT als Einkommens-Anomalie, auch wenn der Betrag positiv und die \
+Gegenpartei neu ist — sie ist Teil der Kategorie der ursprünglichen \
+Ausgabe und nicht "ungewöhnlich hohes Einkommen".
 - Leere outlier_transactions UND leere new_counterparties sind ein \
 gültiges Ergebnis: Das heißt "keine harten Anomalien gefunden". \
 Schau in dem Fall noch einmal über recent_transactions_sample, ob \
