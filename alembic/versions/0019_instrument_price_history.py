@@ -10,8 +10,8 @@ Adds the M11 external-price-history layer:
   (e.g. ``SAP.DE``) but Comdirect only gives ISINs. The user sets the
   mapping manually; auto-lookup is too unreliable to rely on.
 
-Revision ID: 0018_instrument_price_history
-Revises: 0017_refund_audit_decided
+Revision ID: 0019_instrument_price_history
+Revises: 0018_user_page_size_setting
 Create Date: 2026-05-09
 """
 
@@ -21,8 +21,8 @@ import sqlalchemy as sa
 
 from alembic import op
 
-revision = "0018_instrument_price_history"
-down_revision = "0017_refund_audit_decided"
+revision = "0019_instrument_price_history"
+down_revision = "0018_user_page_size_setting"
 branch_labels = None
 depends_on = None
 
