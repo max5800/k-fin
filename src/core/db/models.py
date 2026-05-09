@@ -394,8 +394,10 @@ class ReviewedSuggestion(Base):
 class AppSettings(Base):
     """User-tunable app settings (singleton row, id=1).
 
-    Currently exposes the auto-apply confidence threshold for categorization.
-    Add more knobs here when they need to be UI-editable rather than env-only.
+    Currently exposes the auto-apply confidence threshold for
+    categorization and the default transaction-list page size.
+    Add more knobs here when they need to be UI-editable rather than
+    env-only.
     """
 
     __tablename__ = "app_settings"
@@ -403,6 +405,12 @@ class AppSettings(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
     auto_apply_confidence: Mapped[Decimal] = mapped_column(
         Numeric(3, 2), nullable=False, default=Decimal("0.60")
+    )
+    # Default rows-per-page for the transactions table. Bounds enforced
+    # at the API layer (10..200) — the column itself stays loose so a
+    # downstream migration can widen the range without a schema change.
+    page_size: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=25, server_default="25"
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

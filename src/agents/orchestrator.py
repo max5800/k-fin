@@ -179,11 +179,24 @@ class AgentOrchestrator:
     # Entry points called from the Runs API (run ID already exists)
     # ------------------------------------------------------------------
 
-    def run_single_for(self, run_id: str, agent_type: str) -> None:
-        """Execute a single agent for an existing run (API-triggered)."""
+    def run_single_for(
+        self,
+        run_id: str,
+        agent_type: str,
+        *,
+        period_days: int | None = None,
+    ) -> None:
+        """Execute a single agent for an existing run (API-triggered).
+
+        ``period_days`` overrides the agent's built-in window (e.g. anomaly's
+        30-day lookback, weekly's current ISO week). Categorization and
+        synthesis ignore the param — they don't operate over a time window.
+        """
         self._mark_running(run_id)
         try:
-            result, usage = self._run_agent(agent_type, run_id=run_id)
+            result, usage = self._run_agent(
+                agent_type, run_id=run_id, period_days=period_days
+            )
             results = {agent_type: result}
             detail = {agent_type: _usage_to_dict(usage, AGENT_MODELS.get(agent_type, "unknown"))} if usage.input_tokens or usage.output_tokens else None
             self._finish_run(run_id, results=results, usage=usage, usage_detail=detail)
@@ -198,11 +211,19 @@ class AgentOrchestrator:
                 run_id, results={}, error=str(exc), status=RunStatus.FAILED
             )
 
-    def run_full_for(self, run_id: str) -> None:
-        """Execute all agents for an existing run (API-triggered)."""
+    def run_full_for(
+        self, run_id: str, *, period_days: int | None = None
+    ) -> None:
+        """Execute all agents for an existing run (API-triggered).
+
+        ``period_days`` is broadcast to every period-aware agent (weekly,
+        monthly, anomaly).
+        """
         self._mark_running(run_id)
         try:
-            results, errors, usage, detail = self._run_all_agents(run_id=run_id)
+            results, errors, usage, detail = self._run_all_agents(
+                run_id=run_id, period_days=period_days
+            )
         except RunCancelled as exc:
             logger.info("Run %s stopped cooperatively: %s", run_id, exc)
             return
@@ -264,7 +285,10 @@ class AgentOrchestrator:
     ]
 
     def _run_all_agents(
-        self, run_id: str | None = None
+        self,
+        run_id: str | None = None,
+        *,
+        period_days: int | None = None,
     ) -> tuple[dict[str, Any], list[str], AgentUsage, dict[str, dict[str, Any]]]:
         """Run all agents, return (results, errors, total_usage, per_agent_detail).
 
@@ -302,11 +326,17 @@ class AgentOrchestrator:
                         usage=agent_usage,
                     )
                 elif agent_type == "weekly_analysis":
-                    result = run_weekly_analysis(self.engine, usage=agent_usage)
+                    result = run_weekly_analysis(
+                        self.engine, period_days=period_days, usage=agent_usage
+                    )
                 elif agent_type == "monthly_analysis":
-                    result = run_monthly_analysis(self.engine, usage=agent_usage)
+                    result = run_monthly_analysis(
+                        self.engine, period_days=period_days, usage=agent_usage
+                    )
                 elif agent_type == "anomaly":
-                    result = run_anomaly_detection(self.engine, usage=agent_usage)
+                    result = run_anomaly_detection(
+                        self.engine, period_days=period_days, usage=agent_usage
+                    )
                 else:
                     raise ValueError(f"Unhandled agent_type {agent_type}")
                 results[agent_type] = result
@@ -380,7 +410,11 @@ class AgentOrchestrator:
         return results, errors, total_usage, per_agent_detail
 
     def _run_agent(
-        self, agent_type: str, run_id: str | None = None
+        self,
+        agent_type: str,
+        run_id: str | None = None,
+        *,
+        period_days: int | None = None,
     ) -> tuple[Any, AgentUsage]:
         """Dispatch to the correct agent runner, return (result, usage)."""
         usage = AgentUsage()
@@ -403,11 +437,26 @@ class AgentOrchestrator:
             )
             self._update_progress(run_id, message=f"{label} läuft…")
         if agent_type == "weekly_analysis":
-            return run_weekly_analysis(self.engine, usage=usage), usage
+            return (
+                run_weekly_analysis(
+                    self.engine, period_days=period_days, usage=usage
+                ),
+                usage,
+            )
         elif agent_type == "monthly_analysis":
-            return run_monthly_analysis(self.engine, usage=usage), usage
+            return (
+                run_monthly_analysis(
+                    self.engine, period_days=period_days, usage=usage
+                ),
+                usage,
+            )
         elif agent_type == "anomaly":
-            return run_anomaly_detection(self.engine, usage=usage), usage
+            return (
+                run_anomaly_detection(
+                    self.engine, period_days=period_days, usage=usage
+                ),
+                usage,
+            )
         elif agent_type == "synthesis":
             return run_synthesizer(engine=self.engine, usage=usage), usage
         raise ValueError(f"Unknown agent type: {agent_type}")

@@ -47,10 +47,22 @@ def run_weekly_analysis(
     engine: Engine,
     reference_date: date | None = None,
     *,
+    period_days: int | None = None,
     usage: AgentUsage | None = None,
 ) -> AnalysisResult:
-    """Gather weekly data and run the analysis agent."""
-    monday, sunday = _current_week_range(reference_date)
+    """Gather weekly data and run the analysis agent.
+
+    By default the agent looks at the current ISO week (Mon..Sun). When
+    ``period_days`` is set, it instead inspects the last N days ending at
+    ``reference_date`` (or today). This is the override path used by the
+    Runs API for ad-hoc weekly triggers covering a non-Monday window.
+    """
+    if period_days is not None and period_days > 0:
+        ref = reference_date or date.today()
+        monday = ref - timedelta(days=period_days - 1)
+        sunday = ref
+    else:
+        monday, sunday = _current_week_range(reference_date)
     iso_week = monday.strftime("%G-W%V")
 
     transactions = get_period_transactions(engine, monday, sunday)

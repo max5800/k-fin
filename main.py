@@ -130,9 +130,14 @@ def health():
 
 class RunDispatchRequest(BaseModel):
     run_id: str = Field(min_length=1, max_length=64)
+    # Optional override for the agent's built-in time window. Forwarded to
+    # weekly/monthly/anomaly agents; categorization + synthesis ignore it.
+    period_days: int | None = Field(default=None, ge=1, le=3650)
 
 
-def _execute_run_in_worker(run_id: str, agent_name: str) -> None:
+def _execute_run_in_worker(
+    run_id: str, agent_name: str, period_days: int | None = None
+) -> None:
     """Background body: dispatch the run via the orchestrator.
 
     Imported lazily so the worker boot doesn't pay the heavy
@@ -141,14 +146,16 @@ def _execute_run_in_worker(run_id: str, agent_name: str) -> None:
     from src.agents.orchestrator import AgentOrchestrator
 
     orchestrator = AgentOrchestrator(database_url=settings.database_url)
-    orchestrator.run_single_for(run_id, agent_name)
+    orchestrator.run_single_for(run_id, agent_name, period_days=period_days)
 
 
-def _execute_full_run_in_worker(run_id: str) -> None:
+def _execute_full_run_in_worker(
+    run_id: str, period_days: int | None = None
+) -> None:
     from src.agents.orchestrator import AgentOrchestrator
 
     orchestrator = AgentOrchestrator(database_url=settings.database_url)
-    orchestrator.run_full_for(run_id)
+    orchestrator.run_full_for(run_id, period_days=period_days)
 
 
 @app.post("/internal/runs/start", status_code=202)
@@ -163,7 +170,9 @@ def internal_run_start(
     (status=pending) by the api before this is invoked. The orchestrator
     flips it to running, drives heartbeats, and writes the terminal status.
     """
-    background_tasks.add_task(_execute_run_in_worker, payload.run_id, agent_name)
+    background_tasks.add_task(
+        _execute_run_in_worker, payload.run_id, agent_name, payload.period_days
+    )
     return {"status": "accepted", "run_id": payload.run_id, "agent": agent_name}
 
 
@@ -173,7 +182,9 @@ def internal_run_start_full(
     background_tasks: BackgroundTasks,
 ):
     """Dispatch a full-pipeline run (all agents, sequentially)."""
-    background_tasks.add_task(_execute_full_run_in_worker, payload.run_id)
+    background_tasks.add_task(
+        _execute_full_run_in_worker, payload.run_id, payload.period_days
+    )
     return {"status": "accepted", "run_id": payload.run_id, "agent": "full"}
 
 

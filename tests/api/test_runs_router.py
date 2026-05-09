@@ -157,6 +157,87 @@ class TestStartRunDispatch:
 
         assert calls == [("/internal/runs/start-full", {"run_id": run_id})]
 
+    def test_dispatch_default_omits_period_days(
+        self, api_client, db_engine, monkeypatch, runs_router
+    ):
+        """Without ?period_days the worker payload stays minimal so agents
+        keep their built-in defaults (anomaly: 30d, weekly: ISO week, …)."""
+        calls: list[tuple[str, dict]] = []
+        monkeypatch.setattr(
+            runs_router,
+            "_dispatch_to_worker",
+            lambda p, payload: calls.append((p, payload)),
+        )
+
+        resp = api_client.post("/api/v1/runs/anomaly", headers=AUTH)
+        assert resp.status_code == 201
+
+        assert len(calls) == 1
+        _, payload = calls[0]
+        assert "period_days" not in payload
+
+    def test_dispatch_forwards_period_days_for_single_agent(
+        self, api_client, db_engine, monkeypatch, runs_router
+    ):
+        calls: list[tuple[str, dict]] = []
+        monkeypatch.setattr(
+            runs_router,
+            "_dispatch_to_worker",
+            lambda p, payload: calls.append((p, payload)),
+        )
+
+        resp = api_client.post(
+            "/api/v1/runs/anomaly?period_days=14", headers=AUTH
+        )
+        assert resp.status_code == 201
+        run_id = resp.json()["id"]
+
+        assert calls == [
+            (
+                "/internal/runs/start?agent_name=anomaly",
+                {"run_id": run_id, "period_days": 14},
+            )
+        ]
+
+    def test_dispatch_forwards_period_days_for_full_run(
+        self, api_client, db_engine, monkeypatch, runs_router
+    ):
+        calls: list[tuple[str, dict]] = []
+        monkeypatch.setattr(
+            runs_router,
+            "_dispatch_to_worker",
+            lambda p, payload: calls.append((p, payload)),
+        )
+
+        resp = api_client.post("/api/v1/runs/full?period_days=90", headers=AUTH)
+        assert resp.status_code == 201
+        run_id = resp.json()["id"]
+
+        assert calls == [
+            (
+                "/internal/runs/start-full",
+                {"run_id": run_id, "period_days": 90},
+            )
+        ]
+
+    def test_period_days_out_of_range_returns_422(
+        self, api_client, db_engine, monkeypatch, runs_router
+    ):
+        # Don't even bother dispatching for an invalid period.
+        monkeypatch.setattr(
+            runs_router, "_dispatch_to_worker", lambda *_a, **_kw: None
+        )
+
+        resp = api_client.post(
+            "/api/v1/runs/weekly_analysis?period_days=0", headers=AUTH
+        )
+        assert resp.status_code == 422
+
+        resp = api_client.post(
+            "/api/v1/runs/weekly_analysis?period_days=99999", headers=AUTH
+        )
+        assert resp.status_code == 422
+
 
 # ---------------------------------------------------------------------------
 # DELETE /runs/{run_id}

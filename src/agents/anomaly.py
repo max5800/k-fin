@@ -38,9 +38,17 @@ def run_anomaly_detection(
     reference_date: date | None = None,
     lookback_days: int = 30,
     *,
+    period_days: int | None = None,
     usage: AgentUsage | None = None,
 ) -> AnomalyResult:
-    """Gather anomaly-relevant data and run the detection agent."""
+    """Gather anomaly-relevant data and run the detection agent.
+
+    ``period_days`` is the API-facing override: when set it replaces the
+    default ``lookback_days``. The dual naming keeps existing callers
+    (orchestrator, scheduler) source-compatible.
+    """
+    if period_days is not None and period_days > 0:
+        lookback_days = period_days
     ref = reference_date or date.today()
     date_from = ref - timedelta(days=lookback_days)
     period = f"{date_from.isoformat()}/{ref.isoformat()}"
