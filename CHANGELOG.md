@@ -1,3 +1,11 @@
+# [1.33.0](https://github.com/max5800/k-fin/compare/v1.32.0...v1.33.0) (2026-05-09)
+
+
+### Features
+
+* **api:** dev-only DB tools — wipe + seed mock dataset ([28d462f](https://github.com/max5800/k-fin/commit/28d462f7eb56ee61a3faeec8820abd9469b87d4f))
+* **api:** refund-aware accounting + audit + auto-apply ([930305e](https://github.com/max5800/k-fin/commit/930305e8b541d86233ba5fc84b3d72fd1c18ef62))
+
 # [1.32.0](https://github.com/max5800/k-fin/compare/v1.31.0...v1.32.0) (2026-05-06)
 
 
