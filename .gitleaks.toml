@@ -103,6 +103,12 @@ paths = [
     '''docs/.*\.md$''',
     # SECURITY.md documents the rule itself
     '''SECURITY\.md$''',
+    # NetworkPolicy egress rules name RFC1918 + link-local CIDRs as the
+    # `except` list to keep external-only egress from being usable as a
+    # cluster-internal pivot. Those CIDRs are the standard private
+    # ranges, not personal-infra references — same canonical list every
+    # K8s NetworkPolicy egress example uses.
+    '''chart/templates/network-policy\.yaml$''',
 ]
 
 [[rules]]

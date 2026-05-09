@@ -12,6 +12,7 @@ spec:
       app.kubernetes.io/component: worker
   policyTypes:
     - Ingress
+    - Egress
   ingress:
     - from:
         - podSelector:
@@ -19,4 +20,114 @@ spec:
               app.kubernetes.io/component: api
       ports:
         - port: 8001
+          protocol: TCP
+  egress:
+    # DNS — kube-dns / coredns. Plain `kube-system` namespaceSelector
+    # plus port 53 covers both UDP and TCP resolvers without locking
+    # us to a specific coredns pod label that varies by distribution.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+    # Postgres — same namespace, label-selected so this rule keeps
+    # working when CloudNativePG renames the underlying pod template.
+    - to:
+        - podSelector:
+            matchLabels:
+              cnpg.io/cluster: {{ include "k-fin.fullname" . }}-postgres
+      ports:
+        - port: 5432
+          protocol: TCP
+    # External HTTPS — Comdirect API, Anthropic API, yfinance/Yahoo
+    # Finance. Restricted to TCP/443 so the worker cannot exfil over
+    # arbitrary ports if a dependency is compromised. We deliberately
+    # do not enumerate IP CIDRs: Comdirect, Yahoo and Anthropic all
+    # serve from rotating fleets behind big provider ASNs that are not
+    # safe to allowlist by-hand.
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            # Block link-local + RFC1918 + cluster-internal so the
+            # worker cannot use this rule to reach other workloads or
+            # the cloud metadata service. Internal traffic that needs
+            # to flow goes through the explicit rules above.
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+              - 169.254.0.0/16
+      ports:
+        - port: 443
+          protocol: TCP
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "k-fin.fullname" . }}-api
+  labels:
+    {{- include "k-fin.labels" . | nindent 4 }}
+    app.kubernetes.io/component: api
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "k-fin.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: api
+  # Egress-only — the api is publicly reachable via the Ingress, which
+  # is controlled outside this policy (Traefik service in
+  # kube-system / ingress-nginx). Ingress rules here would risk
+  # blocking the LB controller and are not load-bearing for the
+  # secret-separation contract.
+  policyTypes:
+    - Egress
+  egress:
+    # DNS
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+    # Worker — internal HTTP, port 8001.
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "k-fin.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: worker
+      ports:
+        - port: 8001
+          protocol: TCP
+    # Postgres
+    - to:
+        - podSelector:
+            matchLabels:
+              cnpg.io/cluster: {{ include "k-fin.fullname" . }}-postgres
+      ports:
+        - port: 5432
+          protocol: TCP
+    # External HTTPS — the api itself talks to Anthropic for
+    # categorization-agent invocations triggered by the user. yfinance
+    # / Comdirect must NOT run here (those live in the worker); the
+    # rule still allows :443 because we do not have a way to allowlist
+    # by hostname at the NetworkPolicy layer, and Anthropic IPs rotate.
+    # Explicit code-level enforcement (no yfinance import in the api
+    # image, no Comdirect client, see Dockerfile.api) is the primary
+    # boundary; this rule is the secondary belt-and-braces.
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+              - 169.254.0.0/16
+      ports:
+        - port: 443
           protocol: TCP
