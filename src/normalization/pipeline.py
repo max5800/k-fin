@@ -13,6 +13,7 @@ from __future__ import annotations
 import logging
 import re
 import uuid
+from typing import Sequence
 from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any, Iterable
@@ -42,6 +43,64 @@ RECURRING_AMOUNT_TOLERANCE = Decimal("0.10")  # ±10 %
 # masking by extreme values — a property mean/stddev-based z-scores lack
 # at small sample sizes.
 OUTLIER_MODIFIED_Z_THRESHOLD = 3.5
+
+
+# ---------------------------------------------------------------------------
+# Rule matching — shared between the normalization pipeline and the
+# `POST /categories/rules/apply-all` endpoint so backend behaviour is
+# guaranteed identical across both call sites. Keep the haystack/regex
+# semantics in lockstep with the UI's RegexPreview component.
+# ---------------------------------------------------------------------------
+
+
+def build_rule_haystack(
+    *,
+    sender: str | None,
+    recipient: str | None,
+    description: str | None,
+) -> str:
+    """Build the case-folded haystack used for rule regex matching.
+
+    Mirrors the UI's `buildHaystack` (k-fin-ui RulesSection.tsx): join
+    sender, recipient, description with single spaces, lowercase the
+    result. The space-joined order is part of the contract — patterns
+    like `^rewe` rely on it. Empty/None fields render as ``""``.
+    """
+    parts = [str(sender or ""), str(recipient or ""), str(description or "")]
+    return " ".join(parts).lower()
+
+
+def sort_rules_by_priority(rules: Sequence[Rule]) -> list[Rule]:
+    """Sort rules so the highest priority (largest int) wins ties first.
+
+    Stable on equal priority so DB insertion order acts as the
+    secondary tie-breaker — predictable for users editing rules in the
+    UI in the order they want them tried.
+    """
+    return sorted(rules, key=lambda r: r.priority, reverse=True)
+
+
+def match_rule(rules_sorted: Sequence[Rule], haystack: str) -> Rule | None:
+    """Return the first rule whose `regex_pattern` matches the haystack.
+
+    Case-insensitive `re.search` (not `match`) — the rule fires when the
+    pattern appears anywhere in the joined sender/recipient/description.
+    Invalid regex from the DB is treated as a non-match so a single bad
+    rule never poisons the whole apply pass; the API rejects invalid
+    patterns at write time so this is a defensive fallback.
+    """
+    for rule in rules_sorted:
+        try:
+            if re.search(rule.regex_pattern, haystack, re.IGNORECASE):
+                return rule
+        except re.error:
+            logger.warning(
+                "rule %s has invalid regex %r; skipped during apply",
+                rule.id,
+                rule.regex_pattern,
+            )
+            continue
+    return None
 
 
 class NormalizationPipeline:
@@ -188,15 +247,16 @@ class NormalizationPipeline:
         rules = session.execute(select(Rule)).scalars().all()
         if not rules or df.empty:
             return df
-        rules_sorted = sorted(rules, key=lambda r: r.priority, reverse=True)
+        rules_sorted = sort_rules_by_priority(rules)
         for idx, row in df.iterrows():
-            text = " ".join(
-                str(row.get(f) or "") for f in ("sender", "recipient", "description")
-            ).lower()
-            for rule in rules_sorted:
-                if re.search(rule.regex_pattern, text, re.IGNORECASE):
-                    df.at[idx, "category_id"] = rule.target_category_id
-                    break
+            text = build_rule_haystack(
+                sender=row.get("sender"),
+                recipient=row.get("recipient"),
+                description=row.get("description"),
+            )
+            match = match_rule(rules_sorted, text)
+            if match is not None:
+                df.at[idx, "category_id"] = match.target_category_id
         return df
 
     @staticmethod

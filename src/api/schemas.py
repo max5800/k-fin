@@ -105,6 +105,25 @@ class RuleUpdate(BaseModel):
     priority: int | None = None
 
 
+class RulesApplyResult(BaseModel):
+    """Response from ``POST /categories/rules/apply-all``.
+
+    Synchronous (HTTP 200) responses populate the count fields.
+    Asynchronous (HTTP 202) responses leave them ``None`` and set
+    ``status='accepted'`` — the UI polls ``GET /categories/rules`` and
+    refetches the transaction list to learn the outcome.
+
+    * ``processed`` — uncategorised transactions scanned.
+    * ``matched`` — transactions a rule fired on.
+    * ``unchanged`` — scanned rows where no rule matched.
+    """
+
+    status: str = "completed"
+    processed: int | None = None
+    matched: int | None = None
+    unchanged: int | None = None
+
+
 class TransactionUpdate(BaseModel):
     category_id: str | None = None
     tags: list[str] | None = None
