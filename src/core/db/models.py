@@ -459,11 +459,52 @@ class Instrument(Base):
         String(32), nullable=True, index=True
     )
     currency: Mapped[str] = mapped_column(String(3), nullable=False, default="EUR")
+    # Yahoo-Finance ticker for the M11 price-history backfill (e.g. ``SAP.DE``).
+    # Set manually by the user via PATCH /portfolio/instruments/{isin} —
+    # auto-mapping ISIN→ticker via yfinance is unreliable enough that we
+    # leave it to the human.
+    ticker_symbol: Mapped[Optional[str]] = mapped_column(
+        String(32), nullable=True, index=True
+    )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),
         onupdate=func.now(),
         nullable=False,
+    )
+
+
+class InstrumentPriceHistory(Base):
+    """Cached daily close prices from an external provider (yfinance for now).
+
+    One row per (instrument, day). Backfilled on demand via
+    ``POST /portfolio/instruments/{isin}/backfill-prices`` and read by
+    the UI for the depot-Rückblick chart. The unique constraint on
+    (isin, price_date) makes repeated backfills idempotent.
+
+    ``source`` is a free-form string (currently always ``"yfinance"``)
+    so a future provider swap doesn't need a schema migration.
+    """
+
+    __tablename__ = "instrument_price_history"
+    __table_args__ = (
+        UniqueConstraint(
+            "isin", "price_date", name="uq_instrument_price_history_isin_date"
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    isin: Mapped[str] = mapped_column(
+        ForeignKey("instruments.isin", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    price_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    close: Mapped[Decimal] = mapped_column(Numeric(14, 4), nullable=False)
+    currency: Mapped[str] = mapped_column(String(3), nullable=False, default="EUR")
+    source: Mapped[str] = mapped_column(String(32), nullable=False, default="yfinance")
+    fetched_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
     )
 
 
