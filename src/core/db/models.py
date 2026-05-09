@@ -412,6 +412,14 @@ class AppSettings(Base):
     page_size: Mapped[int] = mapped_column(
         Integer, nullable=False, default=25, server_default="25"
     )
+    # Optional Discord webhook URL — when set, the worker fires a
+    # best-effort failure notification on FAILED sync/agent runs. Format
+    # validation lives at the API layer (must start with the official
+    # Discord webhook host); the column itself stays loose so future
+    # providers (Slack, ntfy) can land without a schema change.
+    webhook_url: Mapped[Optional[str]] = mapped_column(
+        String(500), nullable=True
+    )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),
