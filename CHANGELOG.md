@@ -1,3 +1,18 @@
+# [1.34.0](https://github.com/max5800/k-fin/compare/v1.33.0...v1.34.0) (2026-05-09)
+
+
+### Bug Fixes
+
+* **api:** production-clamp dev tools + cross-cutting v1.33 review fixes ([d40e605](https://github.com/max5800/k-fin/commit/d40e605e2b1cbf76c8e4e3288e0128bc6be983f2))
+* **tests:** mock get_recent_reports + run_in_fresh_loop in anomaly period tests ([#39](https://github.com/max5800/k-fin/issues/39)) ([9ac7d2d](https://github.com/max5800/k-fin/commit/9ac7d2def7849373048cf0ee912a7f441e626ff5))
+
+
+### Features
+
+* **agents:** anomaly-agent ohne floor + depot-paging-loop ([#36](https://github.com/max5800/k-fin/issues/36)) ([cc2fa70](https://github.com/max5800/k-fin/commit/cc2fa7075dab40ea4e3b8d9a71c85a88cda12267))
+* **api:** tag_ids filter, period param, user page_size setting ([#38](https://github.com/max5800/k-fin/issues/38)) ([7bd1827](https://github.com/max5800/k-fin/commit/7bd1827ae1cee83b9f43101885109ed5ba1acf30))
+* **portfolio:** instrument price-history backfill via yfinance (M11) ([#37](https://github.com/max5800/k-fin/issues/37)) ([e183fdd](https://github.com/max5800/k-fin/commit/e183fdd3a83b3fc5572e840206fde2fed4e1b984)), closes [PR#38](https://github.com/PR/issues/38)
+
 # [1.33.0](https://github.com/max5800/k-fin/compare/v1.32.0...v1.33.0) (2026-05-09)
 
 
