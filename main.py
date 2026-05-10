@@ -10,10 +10,11 @@ import uuid
 from contextlib import asynccontextmanager
 from datetime import date
 
-from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException
+from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import create_engine
+from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
 from src.agents.reaper import reap_stale_runs, start_periodic_reaper
@@ -99,6 +100,48 @@ if _origins:
 # ---------------------------------------------------------------------------
 
 _pending_sessions: dict[str, dict] = {}
+
+
+# ---------------------------------------------------------------------------
+# Shared SQLAlchemy engine — built once in lifespan, reused per request
+# ---------------------------------------------------------------------------
+
+
+def get_engine(request: Request) -> Engine:
+    """FastAPI dependency: return the shared engine attached to app.state.
+
+    Per-request ``create_engine`` was costing 50–200ms per call and
+    discarding the connection pool every time. The lifespan already
+    builds one engine and stows it on ``app.state.engine``; handlers
+    now consume that via this dep so the pool actually serves its
+    purpose.
+
+    Tests that exercise these handlers via TestClient must seed
+    ``app.state.engine`` themselves (the lifespan only runs when
+    ``with TestClient(app):`` is used as a context manager). The
+    helper :func:`set_test_engine` exists for that.
+    """
+    engine = getattr(request.app.state, "engine", None)
+    if engine is None:
+        # Defensive: should never happen in production. Surface as 503
+        # rather than 500 so the api caller can retry once the worker
+        # has finished booting.
+        raise HTTPException(
+            status_code=503,
+            detail="Worker engine not initialised — startup may still be running.",
+        )
+    return engine
+
+
+def set_test_engine(engine: Engine) -> None:
+    """Test helper: bind an engine to ``app.state`` without running lifespan.
+
+    The TestClient swallows lifespan unless used as a context manager,
+    which most existing worker tests don't bother with. Calling this
+    from a fixture preserves the legacy "monkeypatch create_engine"
+    workflow without poking at app internals from each test file.
+    """
+    app.state.engine = engine
 
 # Finance API (M6) — transaction, category & aggregate endpoints
 app.include_router(auth.router, prefix="/api/v1")
@@ -241,6 +284,7 @@ class _InternalBackfillResult(BaseModel):
 def internal_portfolio_backfill_prices(
     payload: _InternalBackfillRequest,
     provider: HistoryProvider = Depends(_get_history_provider),
+    engine: Engine = Depends(get_engine),
 ):
     """Fetch missing daily close prices for an instrument from yfinance.
 
@@ -251,27 +295,23 @@ def internal_portfolio_backfill_prices(
     the public api never makes outbound to Yahoo Finance and the api
     NetworkPolicy can stay tight.
     """
-    engine = create_engine(settings.database_url)
-    try:
-        with Session(engine) as db:
-            try:
-                result = backfill_instrument_prices(
-                    db,
-                    isin=payload.isin,
-                    from_date=payload.from_date,
-                    to_date=payload.to_date,
-                    provider=provider,
-                )
-            except (InvalidPriceRangeError, TickerNotConfiguredError) as exc:
-                raise HTTPException(status_code=400, detail=str(exc)) from exc
-            except InstrumentNotFoundError as exc:
-                raise HTTPException(status_code=404, detail="Instrument not found") from exc
-            except CurrencyMismatchProviderError as exc:
-                raise HTTPException(status_code=400, detail=str(exc)) from exc
-            except PriceProviderError as exc:
-                raise HTTPException(status_code=502, detail=str(exc)) from exc
-    finally:
-        engine.dispose()
+    with Session(engine) as db:
+        try:
+            result = backfill_instrument_prices(
+                db,
+                isin=payload.isin,
+                from_date=payload.from_date,
+                to_date=payload.to_date,
+                provider=provider,
+            )
+        except (InvalidPriceRangeError, TickerNotConfiguredError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except InstrumentNotFoundError as exc:
+            raise HTTPException(status_code=404, detail="Instrument not found") from exc
+        except CurrencyMismatchProviderError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except PriceProviderError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
 
     return _InternalBackfillResult(
         isin=result.isin,
@@ -287,15 +327,24 @@ def internal_portfolio_backfill_prices(
 
 @app.post("/internal/normalize")
 def internal_normalize():
-    """Re-run normalization pipeline over existing raw_transactions."""
+    """Re-run normalization pipeline over existing raw_transactions.
+
+    The pipeline owns its own SQLAlchemy engine internally — we can't
+    reuse ``app.state.engine`` here without changing the pipeline
+    contract. Dispose explicitly so the per-request pool is freed
+    instead of leaking until GC.
+    """
     from src.normalization.pipeline import NormalizationPipeline
 
     pipeline = NormalizationPipeline(
         database_url=settings.database_url,
         own_ibans=settings.get_own_ibans(),
     )
-    df, run_id = pipeline.process_and_normalize()
-    return {"status": "done", "normalized": len(df), "run_id": run_id}
+    try:
+        df, run_id = pipeline.process_and_normalize()
+        return {"status": "done", "normalized": len(df), "run_id": run_id}
+    finally:
+        pipeline.engine.dispose()
 
 
 @app.post("/internal/sync/start")
@@ -322,7 +371,10 @@ async def internal_sync_start(payload: SyncStartRequest | None = None):
 
 
 @app.post("/internal/sync/confirm")
-async def internal_sync_confirm(session_id: str):
+async def internal_sync_confirm(
+    session_id: str,
+    engine: Engine = Depends(get_engine),
+):
     """Step 2: Complete auth after TAN confirmation and run export."""
     if session_id not in _pending_sessions:
         raise HTTPException(status_code=404, detail="Unknown session_id")
@@ -475,17 +527,16 @@ async def internal_sync_confirm(session_id: str):
         # Best-effort failure ping. The HTTP 500 below is the source of
         # truth for the api caller; the webhook is informational. We
         # surface ``session_id`` as the run-ID since this code path
-        # doesn't create a SyncRun row of its own.
-        _engine = create_engine(settings.database_url)
-        try:
-            notify_failure_from_db(
-                _engine,
-                run_kind="sync",
-                run_id=session_id,
-                error_message=f"Export failed: {exc}",
-            )
-        finally:
-            _engine.dispose()
+        # doesn't create a SyncRun row of its own. Reuses the shared
+        # app-state engine — the previous per-call create_engine() was
+        # 50–200ms of throwaway pool setup right at the moment when the
+        # user is already waiting on a failure response.
+        notify_failure_from_db(
+            engine,
+            run_kind="sync",
+            run_id=session_id,
+            error_message=f"Export failed: {exc}",
+        )
         raise HTTPException(status_code=500, detail=f"Export failed: {exc}")
 
     return {
@@ -589,7 +640,10 @@ def _execute_backfill_in_worker(
 
 
 @app.post("/internal/backfill/start", response_model=BackfillStartResponse)
-async def internal_backfill_start(payload: BackfillStartRequest | None = None):
+async def internal_backfill_start(
+    payload: BackfillStartRequest | None = None,
+    engine: Engine = Depends(get_engine),
+):
     """Step 1: Begin backfill auth flow and trigger TAN challenge.
 
     Refuses (409) if any backfill is already running — max one per user.
@@ -601,21 +655,17 @@ async def internal_backfill_start(payload: BackfillStartRequest | None = None):
     config = payload.model_dump() if payload else {"months": 24}
 
     # Concurrency guard: refuse if a run is already in-flight.
-    engine = create_engine(settings.database_url)
-    try:
-        with Session(engine) as s:
-            existing = s.execute(
-                BackfillRun.__table__.select()
-                .where(BackfillRun.status == BackfillStatus.RUNNING)
-                .limit(1)
-            ).first()
-            if existing is not None:
-                raise HTTPException(
-                    status_code=409,
-                    detail="Ein Backfill läuft bereits — bitte warten oder abbrechen.",
-                )
-    finally:
-        engine.dispose()
+    with Session(engine) as s:
+        existing = s.execute(
+            BackfillRun.__table__.select()
+            .where(BackfillRun.status == BackfillStatus.RUNNING)
+            .limit(1)
+        ).first()
+        if existing is not None:
+            raise HTTPException(
+                status_code=409,
+                detail="Ein Backfill läuft bereits — bitte warten oder abbrechen.",
+            )
 
     client = ComdirectClient()
     try:
@@ -639,7 +689,9 @@ async def internal_backfill_start(payload: BackfillStartRequest | None = None):
 
 @app.post("/internal/backfill/confirm", status_code=202)
 async def internal_backfill_confirm(
-    session_id: str, background_tasks: BackgroundTasks
+    session_id: str,
+    background_tasks: BackgroundTasks,
+    engine: Engine = Depends(get_engine),
 ):
     """Step 2: Complete auth, create BackfillRun row, dispatch to BackgroundTasks."""
     from datetime import date as _date
@@ -679,19 +731,15 @@ async def internal_backfill_confirm(
     target = target.replace(year=year, month=month)
 
     run_id = str(uuid.uuid4())
-    engine = create_engine(settings.database_url)
-    try:
-        with Session(engine) as s:
-            s.add(
-                BackfillRun(
-                    id=run_id,
-                    target_start_date=target,
-                    status=BackfillStatus.RUNNING,
-                )
+    with Session(engine) as s:
+        s.add(
+            BackfillRun(
+                id=run_id,
+                target_start_date=target,
+                status=BackfillStatus.RUNNING,
             )
-            s.commit()
-    finally:
-        engine.dispose()
+        )
+        s.commit()
 
     background_tasks.add_task(
         _execute_backfill_in_worker, run_id, client, target.isoformat()
@@ -702,34 +750,33 @@ async def internal_backfill_confirm(
 
 
 @app.get("/internal/backfill/runs/{run_id}", response_model=BackfillRunResponse)
-def internal_backfill_run_status(run_id: str):
+def internal_backfill_run_status(
+    run_id: str,
+    engine: Engine = Depends(get_engine),
+):
     """Return the current state of a backfill run for UI polling."""
     from sqlalchemy.orm import Session
 
     from src.core.db.models import BackfillRun
 
-    engine = create_engine(settings.database_url)
-    try:
-        with Session(engine) as s:
-            row = s.get(BackfillRun, run_id)
-            if row is None:
-                raise HTTPException(status_code=404, detail="Run not found")
-            return BackfillRunResponse(
-                run_id=row.id,
-                status=row.status.value if hasattr(row.status, "value") else str(row.status),
-                target_start_date=row.target_start_date.isoformat(),
-                current_window_start=(
-                    row.current_window_start.isoformat()
-                    if row.current_window_start
-                    else None
-                ),
-                windows_total=row.windows_total,
-                windows_done=row.windows_done,
-                rows_inserted=row.rows_inserted,
-                progress_message=row.progress_message,
-                error=row.error,
-                started_at=row.started_at.isoformat(),
-                finished_at=row.finished_at.isoformat() if row.finished_at else None,
-            )
-    finally:
-        engine.dispose()
+    with Session(engine) as s:
+        row = s.get(BackfillRun, run_id)
+        if row is None:
+            raise HTTPException(status_code=404, detail="Run not found")
+        return BackfillRunResponse(
+            run_id=row.id,
+            status=row.status.value if hasattr(row.status, "value") else str(row.status),
+            target_start_date=row.target_start_date.isoformat(),
+            current_window_start=(
+                row.current_window_start.isoformat()
+                if row.current_window_start
+                else None
+            ),
+            windows_total=row.windows_total,
+            windows_done=row.windows_done,
+            rows_inserted=row.rows_inserted,
+            progress_message=row.progress_message,
+            error=row.error,
+            started_at=row.started_at.isoformat(),
+            finished_at=row.finished_at.isoformat() if row.finished_at else None,
+        )
