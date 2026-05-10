@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import date, timedelta
+from datetime import date
 
 from pydantic_ai import Agent
 from sqlalchemy import Engine
@@ -20,6 +20,7 @@ from src.agents.gather import (
     get_recurring_patterns,
     get_savings_rate,
 )
+from src.agents.period import derive_period_label
 from src.agents.prompts.weekly_analysis import WEEKLY_ANALYSIS_SYSTEM_PROMPT
 from src.agents.types import AnalysisResult
 
@@ -33,14 +34,6 @@ weekly_analysis_agent = Agent(
     system_prompt=WEEKLY_ANALYSIS_SYSTEM_PROMPT,
     retries=2,
 )
-
-
-def _current_week_range(reference: date | None = None) -> tuple[date, date]:
-    """Return (monday, sunday) of the current or given week."""
-    ref = reference or date.today()
-    monday = ref - timedelta(days=ref.weekday())
-    sunday = monday + timedelta(days=6)
-    return monday, sunday
 
 
 def run_weekly_analysis(
@@ -57,13 +50,8 @@ def run_weekly_analysis(
     ``reference_date`` (or today). This is the override path used by the
     Runs API for ad-hoc weekly triggers covering a non-Monday window.
     """
-    if period_days is not None and period_days > 0:
-        ref = reference_date or date.today()
-        monday = ref - timedelta(days=period_days - 1)
-        sunday = ref
-    else:
-        monday, sunday = _current_week_range(reference_date)
-    iso_week = monday.strftime("%G-W%V")
+    ref = reference_date or date.today()
+    iso_week, monday, sunday = derive_period_label("weekly", period_days, ref)
 
     transactions = get_period_transactions(engine, monday, sunday)
     if not transactions:

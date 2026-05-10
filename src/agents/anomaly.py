@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import date, timedelta
+from datetime import date
 
 from pydantic_ai import Agent
 from sqlalchemy import Engine
@@ -18,6 +18,7 @@ from src.agents.gather import (
     get_period_transactions,
     get_recent_reports,
 )
+from src.agents.period import derive_period_label
 from src.agents.prompts.anomaly import ANOMALY_SYSTEM_PROMPT
 from src.agents.types import AnomalyResult
 
@@ -50,8 +51,13 @@ def run_anomaly_detection(
     if period_days is not None and period_days > 0:
         lookback_days = period_days
     ref = reference_date or date.today()
-    date_from = ref - timedelta(days=lookback_days)
-    period = f"{date_from.isoformat()}/{ref.isoformat()}"
+    # `period_days` switches the label to the canonical date-range form
+    # (so report keys stay distinct); a default 30-day call keeps the
+    # legacy date-range label too — anomaly never emitted "YYYY-MM" or
+    # "YYYY-Www" so the format is identical either way.
+    period, date_from, _ = derive_period_label(
+        "anomaly", period_days, ref
+    )
 
     outliers = get_outlier_transactions(engine, date_from, ref)
     new_counterparties = get_new_counterparties(engine, date_from)
