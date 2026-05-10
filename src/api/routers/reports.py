@@ -1,16 +1,14 @@
 """Reports router for the Finance API."""
 
 import json
-from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import Response
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from src.api.deps import get_db, require_token
 from src.api.schemas import ReportListOut, ReportOut
-from src.core.config import settings
 from src.core.db.models import Report, ReportStatus
 
 router = APIRouter(
@@ -18,29 +16,6 @@ router = APIRouter(
     tags=["reports"],
     dependencies=[Depends(require_token)],
 )
-
-MEDIA_TYPES = {
-    "pdf": "application/pdf",
-    "md": "text/markdown; charset=utf-8",
-    "html": "text/html; charset=utf-8",
-}
-
-
-def _resolve_report_path(report: Report) -> Path:
-    """Resolve and validate the report file path against reports_dir."""
-    reports_dir = Path(settings.reports_dir).resolve()
-    path = (reports_dir / report.file_path).resolve()
-    if not path.is_relative_to(reports_dir):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Invalid report path",
-        )
-    if not path.is_file():
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Report file not found on disk",
-        )
-    return path
 
 
 @router.get("", response_model=ReportListOut)
@@ -107,29 +82,17 @@ def download_report(
             detail=f"Report is not ready (status: {report.status.value})",
         )
 
-    # Agent-produced JSON reports live entirely in `Report.content` — there
-    # is no file on disk. Serve them directly so the download button works
-    # without a parallel file-export pipeline.
-    if report.file_path is None and report.content is not None:
-        body = json.dumps(report.content, ensure_ascii=False, indent=2).encode("utf-8")
-        filename = f"{report.report_type}-{report.period_start.isoformat()}.json"
-        return Response(
-            content=body,
-            media_type="application/json; charset=utf-8",
-            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
-        )
-
-    if report.file_path is None:
+    # Agent-produced JSON reports live entirely in `Report.content`.
+    if report.content is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Report has no downloadable payload",
         )
 
-    path = _resolve_report_path(report)
-    media_type = MEDIA_TYPES.get(report.format, "application/octet-stream")
-
-    return FileResponse(
-        path,
-        media_type=media_type,
-        filename=path.name,
+    body = json.dumps(report.content, ensure_ascii=False, indent=2).encode("utf-8")
+    filename = f"{report.report_type}-{report.period_start.isoformat()}.json"
+    return Response(
+        content=body,
+        media_type="application/json; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )

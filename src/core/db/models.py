@@ -306,10 +306,11 @@ class ReportStatus(str, enum.Enum):
 
 
 class Report(Base):
-    """A generated financial report (monthly PDF, Markdown, etc.).
+    """A generated financial report (agent JSON payload).
 
-    Reports are produced by scheduled jobs and stored on disk; this table
-    tracks metadata and the storage path so the API can list and serve them.
+    Reports are produced by scheduled agent runs and persisted entirely as
+    JSON in `content`; this table tracks metadata so the API can list and
+    serve them. The legacy file-backed export path was never wired up.
     """
 
     __tablename__ = "reports"
@@ -323,7 +324,6 @@ class Report(Base):
         String(10), nullable=False
     )  # pdf, md, html, json
     content: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
-    file_path: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     size_bytes: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     status: Mapped[ReportStatus] = mapped_column(
         SQLEnum(ReportStatus, values_callable=lambda e: [m.value for m in e]),
