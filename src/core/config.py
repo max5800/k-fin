@@ -69,9 +69,6 @@ class Settings(BaseSettings):
     database_url: str = ""
     own_ibans: str = ""
 
-    # Reports
-    reports_dir: str = "/data/reports"
-
     # Dev-only DB tools (wipe transactions, seed mock dataset).
     # Default False; the dev router's destructive endpoints (/wipe, /seed)
     # 404 unless this is explicitly True. Force-disabled when

@@ -285,12 +285,10 @@ class ReportOut(BaseModel):
     period_start: date
     period_end: date
     format: str
-    file_path: str | None
     size_bytes: int | None
     status: str
     error: str | None
     # Agent-produced JSON payload (CategorizationResult, AnalysisResult, …).
-    # NULL for legacy/file-backed PDF/MD reports.
     content: dict | None = None
     created_at: datetime
     updated_at: datetime
