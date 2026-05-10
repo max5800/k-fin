@@ -84,8 +84,29 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Build export image
+      - name: Build worker image
         run: docker build -t comdirect-export .
 
       - name: Build API image
         run: docker build -f Dockerfile.api -t comdirect-api .
+
+      # Smoke-test the import graph inside each image. `docker build` only
+      # checks that COPY paths exist; it never runs Python. A future stream
+      # that adds a new src/<X>/ package and forgets to COPY it ships a
+      # CrashLoopBackOff to prod. These two `python -c "import ..."` lines
+      # boot just enough to fail the workflow when that happens.
+      - name: Smoke-import API image
+        run: |
+          docker run --rm --entrypoint python comdirect-api \
+            -c "import src.api.app"
+
+      - name: Smoke-import worker image
+        env:
+          # pydantic-ai validates Anthropic provider creds at import time.
+          # No real LLM calls are made — we only walk the import graph.
+          ANTHROPIC_API_KEY: dummy-for-smoke-test
+        run: |
+          docker run --rm \
+            -e ANTHROPIC_API_KEY \
+            --entrypoint /app/.venv/bin/python comdirect-export \
+            -c "import main"
