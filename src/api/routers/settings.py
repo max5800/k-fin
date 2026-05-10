@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from src.api.deps import Auth, CurrentPrincipal, CurrentUser, get_db
+from src.api.deps import Auth, CurrentPrincipal, CurrentUser, ServicePrincipal, get_db
 from src.core.db.models import AppSettings, User
 from src.core.notifier import DISCORD_TIMEOUT_S, build_failure_payload
 
@@ -50,17 +50,56 @@ def _validate_webhook_url(url: str) -> str:
     return url
 
 
+def _mask_webhook_url(url: str | None) -> str | None:
+    """Mask a Discord webhook URL so the bot-token suffix isn't exposed.
+
+    Service-token callers (MCP, scheduler) don't need the full URL — they
+    never post to it directly. Returning the secret-bearing tail to them
+    would defeat the whole point of keeping it user-only on PUT.
+
+    The masked form keeps the full URL prefix up to the last segment,
+    plus the last 6 chars of the token, joined with an ellipsis. That
+    leaves enough surface for an operator to confirm the URL is "set
+    and looks plausible" without leaking the actual secret.
+    """
+    if not url:
+        return url
+    # Trim trailing slash so the split below behaves predictably.
+    trimmed = url.rstrip("/")
+    # Anything not webhook-shaped: be paranoid, mask everything after the host.
+    last_slash = trimmed.rfind("/")
+    if last_slash <= 0:
+        return url  # nothing reasonable to split on; leave alone
+    head = trimmed[: last_slash + 1]
+    tail = trimmed[last_slash + 1 :]
+    if len(tail) <= 6:
+        # Token shorter than the suffix we'd reveal — mask the whole tail.
+        return f"{head}…"
+    return f"{head}…{tail[-6:]}"
+
+
 class SettingsOut(BaseModel):
     auto_apply_confidence: float
     page_size: int
     webhook_url: str | None = None
 
     @classmethod
-    def from_row(cls, row: AppSettings) -> "SettingsOut":
+    def from_row(
+        cls,
+        row: AppSettings,
+        *,
+        principal: User | ServicePrincipal | None = None,
+    ) -> "SettingsOut":
+        webhook = row.webhook_url
+        # Never hand the raw Discord webhook URL (bot-token-bearing) to a
+        # non-human caller. JWT users (and the legacy "no principal known"
+        # path used by old tests) keep getting the full value.
+        if isinstance(principal, ServicePrincipal):
+            webhook = _mask_webhook_url(webhook)
         return cls(
             auto_apply_confidence=float(row.auto_apply_confidence),
             page_size=row.page_size,
-            webhook_url=row.webhook_url,
+            webhook_url=webhook,
         )
 
 
@@ -94,8 +133,17 @@ def _get_or_create(db: Session) -> AppSettings:
 
 
 @router.get("", response_model=SettingsOut)
-def read_settings(db: Session = Depends(get_db)) -> SettingsOut:
-    return SettingsOut.from_row(_get_or_create(db))
+def read_settings(
+    principal: CurrentPrincipal,
+    db: Session = Depends(get_db),
+) -> SettingsOut:
+    """Return the singleton settings row.
+
+    Service-token callers receive a masked ``webhook_url``: the host
+    plus the last 6 chars of the token segment. JWT users get the full
+    URL since they need to copy it back into the UI form on edit.
+    """
+    return SettingsOut.from_row(_get_or_create(db), principal=principal)
 
 
 @router.put("", response_model=SettingsOut)
@@ -139,7 +187,7 @@ def update_settings(
             row.webhook_url = _validate_webhook_url(payload.webhook_url)
     db.commit()
     db.refresh(row)
-    return SettingsOut.from_row(row)
+    return SettingsOut.from_row(row, principal=principal)
 
 
 # ---------------------------------------------------------------------------
