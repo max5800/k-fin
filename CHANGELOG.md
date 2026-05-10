@@ -1,3 +1,10 @@
+## [1.35.2](https://github.com/max5800/k-fin/compare/v1.35.1...v1.35.2) (2026-05-10)
+
+
+### Bug Fixes
+
+* full-review H1 + H6 + per-request engine reuse ([#49](https://github.com/max5800/k-fin/issues/49)) ([72a0b70](https://github.com/max5800/k-fin/commit/72a0b704a86eabe0865ce4e58aef2184156db567))
+
 ## [1.35.1](https://github.com/max5800/k-fin/compare/v1.35.0...v1.35.1) (2026-05-10)
 
 
