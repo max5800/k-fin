@@ -27,7 +27,7 @@ Two-microservice split with strict secret separation:
 
 ### Source Modules
 
-- `src/connector/` — Comdirect API client (OAuth2 + pushTAN, strictly read-only)
+- `src/external/` — Upstream provider clients (Comdirect REST + OAuth2/pushTAN, yfinance) — strictly read-only
 - `src/api/` — FastAPI app, routers, JWT auth (`src/api/auth/`)
 - `src/normalization/` — Ingest + canonicalize pipeline for Postgres
 - `src/agents/` — LLM agents (categorization, anomaly, monthly analysis, orchestrator)

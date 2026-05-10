@@ -22,7 +22,7 @@ One-line overviews. The code is the source of truth.
 
 | Path | Responsibility |
 |------|----------------|
-| `src/connector/` | Comdirect REST client — OAuth2 + pushTAN, accounts, transactions, depot. Read-only. |
+| `src/external/` | Upstream provider clients — Comdirect REST (OAuth2 + pushTAN, accounts, transactions, depot) and yfinance (price history). Read-only. |
 | `src/api/` | FastAPI app, routers, JWT auth (`src/api/auth/`), schemas, dependency wiring. |
 | `src/normalization/` | Ingest + canonicalize raw Comdirect payloads into the canonical Postgres schema. |
 | `src/agents/` | LLM agents — categorization, anomaly detection, monthly/weekly analysis, orchestrator, synthesizer. |
@@ -39,7 +39,7 @@ One-line overviews. The code is the source of truth.
 Comdirect REST API
         │  (OAuth2 + pushTAN, read-only)
         ▼
-comdirect-worker (src/connector → src/normalization)
+comdirect-worker (src/external → src/normalization)
         │  writes canonical rows
         ▼
    Postgres (canonical schema, managed by Alembic)

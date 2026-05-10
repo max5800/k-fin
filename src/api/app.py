@@ -42,7 +42,7 @@ def _run_refund_audit_startup() -> None:
     from sqlalchemy import create_engine
     from sqlalchemy.orm import Session as SqlSession
 
-    from src.api.routers.aggregates import apply_refund_heuristic
+    from src.services.refund_audit import apply_refund_heuristic
 
     engine = create_engine(settings.database_url)
     try:

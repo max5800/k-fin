@@ -18,7 +18,7 @@ from unittest.mock import MagicMock, patch
 import pandas as pd
 import pytest
 
-from src.connector.yfinance_client import (
+from src.external.yfinance_client import (
     CurrencyMismatchError,
     PriceFetchError,
     PricePoint,

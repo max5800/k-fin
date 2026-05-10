@@ -1,6 +1,6 @@
 """Model-based JSON export for Comdirect financial data.
 
-Uses the Pydantic models from src.connector.models as the single source of
+Uses the Pydantic models from src.external.models as the single source of
 truth — no manual field-picking, no raw-dict navigation.  The output is
 a faithful ``ComdirectData.model_dump()`` enriched with a ``meta`` block
 that downstream agent / report consumers can rely on.
@@ -8,7 +8,7 @@ that downstream agent / report consumers can rely on.
 
 from datetime import date, datetime, timezone
 
-from src.connector.models import ComdirectData
+from src.external.models import ComdirectData
 
 
 def build_export(

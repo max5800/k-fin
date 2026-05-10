@@ -37,7 +37,7 @@ A Kubernetes NetworkPolicy ensures only `comdirect-api` can reach `comdirect-wor
 
 | Module | Description |
 |--------|-------------|
-| `src/connector/` | Comdirect API client (auth, accounts, transactions, depot) |
+| `src/external/` | Upstream provider clients — Comdirect (auth, accounts, transactions, depot) and yfinance (price history) |
 | `src/api/` | FastAPI app, routers, JWT auth (`src/api/auth/`) |
 | `src/normalization/` | Ingest + canonicalize pipeline for Postgres |
 | `src/agents/` | LLM agents — categorization, anomaly detection, monthly analysis, orchestrator |

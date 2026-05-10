@@ -18,7 +18,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
-from src.connector.models import ComdirectData, DepotPosition, DepotTransaction
+from src.external.models import ComdirectData, DepotPosition, DepotTransaction
 from src.core.db.models import (
     Depot,
     DepotTransaction as DepotTransactionRow,

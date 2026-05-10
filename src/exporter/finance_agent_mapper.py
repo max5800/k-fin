@@ -3,7 +3,7 @@
 import logging
 from datetime import datetime, timezone
 
-from src.connector.models import (
+from src.external.models import (
     ComdirectAccount,
     ComdirectData,
     ComdirectTransaction,

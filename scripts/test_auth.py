@@ -18,7 +18,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.core.config import settings  # noqa: E402 — needs sys.path fix above
 from src.core.logging import get_logger, setup_logging  # noqa: E402
-from src.connector.comdirect_client import ComdirectClient  # noqa: E402
+from src.external.comdirect_client import ComdirectClient  # noqa: E402
 
 logger = get_logger("test_auth")
 

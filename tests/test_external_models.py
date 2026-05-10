@@ -1,6 +1,6 @@
 """Tests for Comdirect API Pydantic models."""
 
-from src.connector.models import (
+from src.external.models import (
     ComdirectAccount,
     ComdirectData,
     ComdirectTransaction,

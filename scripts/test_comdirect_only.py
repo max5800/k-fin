@@ -17,7 +17,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from src.connector.comdirect_client import ComdirectClient  # noqa: E402
+from src.external.comdirect_client import ComdirectClient  # noqa: E402
 from src.core.config import settings  # noqa: E402
 from src.core.logging import setup_logging  # noqa: E402
 

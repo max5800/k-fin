@@ -3,7 +3,7 @@
 
 Produces a clean, typed JSON file suitable for downstream agent and report
 consumers.  The schema mirrors the Pydantic models in
-``src.connector.models`` — no ad-hoc field mapping.
+``src.external.models`` — no ad-hoc field mapping.
 
 Usage:
     uv run python scripts/export_json.py [--output-dir DIR] [--since 30d] [--pretty]
@@ -17,7 +17,7 @@ import sys
 from datetime import date, timedelta
 from pathlib import Path
 
-from src.connector.comdirect_client import ComdirectClient
+from src.external.comdirect_client import ComdirectClient
 from src.core.config import settings  # noqa: F401 — ensures .env is loaded
 from src.core.logging import get_logger, setup_logging
 from src.exporter.json_export import build_export
