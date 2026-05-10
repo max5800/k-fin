@@ -12,6 +12,7 @@ from decimal import Decimal
 from unittest.mock import patch
 
 import pytest
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
@@ -340,6 +341,8 @@ class TestWebhookUrlSetting:
     def test_omitted_field_keeps_existing_value(self, api_client, db_engine):
         # page_size update by service token must NOT trigger the
         # webhook user-only check (webhook_url is omitted entirely).
+        # The response webhook_url is masked because the caller is a
+        # service principal (see TestWebhookUrlMasking below).
         with Session(db_engine) as s:
             s.add(
                 AppSettings(
@@ -359,7 +362,15 @@ class TestWebhookUrlSetting:
         assert resp.status_code == 200
         body = resp.json()
         assert body["page_size"] == 50
-        assert body["webhook_url"] == VALID_DISCORD_URL
+        # Service token gets the masked form; the secret tail stays hidden.
+        assert body["webhook_url"] is not None
+        assert body["webhook_url"] != VALID_DISCORD_URL
+        assert "…" in body["webhook_url"]
+        assert "abc-token" not in body["webhook_url"]
+        # The DB row is unchanged — masking is presentation-only.
+        with Session(db_engine) as s:
+            row = s.get(AppSettings, 1)
+            assert row.webhook_url == VALID_DISCORD_URL
 
     def test_oversize_url_rejected(self, api_client, user_auth):
         too_long = (
@@ -473,3 +484,252 @@ class TestWebhookTestEndpoint:
         body = resp.json()
         assert body["success"] is False
         assert body["status_code"] == 401
+
+
+# ---------------------------------------------------------------------------
+# webhook_url masking — service-token callers get the secret tail hidden
+# ---------------------------------------------------------------------------
+
+
+class TestWebhookUrlMasking:
+    """Service-token callers must not see the raw Discord bot-token."""
+
+    def _seed_url(self, db_engine, url: str) -> None:
+        with Session(db_engine) as s:
+            row = s.get(AppSettings, 1)
+            if row is None:
+                s.add(
+                    AppSettings(
+                        id=1,
+                        auto_apply_confidence=Decimal("0.60"),
+                        page_size=25,
+                        webhook_url=url,
+                    )
+                )
+            else:
+                row.webhook_url = url
+            s.commit()
+
+    def test_get_returns_full_url_for_jwt_user(
+        self, api_client, db_engine, user_auth
+    ):
+        self._seed_url(db_engine, VALID_DISCORD_URL)
+        resp = api_client.get("/api/v1/settings", headers=user_auth)
+        assert resp.status_code == 200
+        # JWT users edit the URL in the UI, so they need the raw value.
+        assert resp.json()["webhook_url"] == VALID_DISCORD_URL
+
+    def test_get_masks_url_for_service_token(self, api_client, db_engine):
+        self._seed_url(db_engine, VALID_DISCORD_URL)
+        resp = api_client.get("/api/v1/settings", headers=AUTH)
+        assert resp.status_code == 200
+        masked = resp.json()["webhook_url"]
+        assert masked is not None
+        assert masked != VALID_DISCORD_URL
+        # Domain visible — operator can confirm the host is right.
+        assert masked.startswith("https://discord.com/api/webhooks/123/")
+        # Ellipsis marker plus only the last 6 chars of the token.
+        assert "…" in masked
+        # Real secret never appears in the masked form.
+        assert "abc-token" not in masked
+        # Last 6 chars of "abc-token" are "c-token" (7) → "-token" (6).
+        assert masked.endswith("-token")
+
+    def test_get_masks_short_token_completely(self, api_client, db_engine):
+        # If the token segment is <=6 chars, mask the entire tail rather
+        # than echoing the bulk of it back.
+        short_url = "https://discord.com/api/webhooks/9/abc"
+        self._seed_url(db_engine, short_url)
+        resp = api_client.get("/api/v1/settings", headers=AUTH)
+        assert resp.status_code == 200
+        masked = resp.json()["webhook_url"]
+        assert masked == "https://discord.com/api/webhooks/9/…"
+
+    def test_get_passes_through_null_for_service_token(
+        self, api_client, db_engine
+    ):
+        self._seed_url(db_engine, VALID_DISCORD_URL)
+        # Clear via JWT user, then read back via service token — must be null,
+        # not an empty mask.
+        api_client.put(
+            "/api/v1/settings",
+            json={"webhook_url": ""},
+            headers={
+                "Authorization": "Bearer test-secret",  # ignored — set via user_auth
+            }
+            | {},
+        )
+        # Use a direct DB clear since the line above uses service-token auth
+        # which is forbidden for setting webhook_url.
+        with Session(db_engine) as s:
+            row = s.get(AppSettings, 1)
+            row.webhook_url = None
+            s.commit()
+        resp = api_client.get("/api/v1/settings", headers=AUTH)
+        assert resp.status_code == 200
+        assert resp.json()["webhook_url"] is None
+
+    def test_put_response_masks_for_service_token(self, api_client, db_engine):
+        # Service-token PUT can't mutate webhook_url, but a page_size PUT
+        # echoes the row back — that response must also be masked.
+        self._seed_url(db_engine, VALID_DISCORD_URL)
+        resp = api_client.put(
+            "/api/v1/settings",
+            json={"page_size": 75},
+            headers=AUTH,
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["page_size"] == 75
+        assert body["webhook_url"] != VALID_DISCORD_URL
+        assert "…" in body["webhook_url"]
+        assert "abc-token" not in body["webhook_url"]
+
+    def test_put_response_keeps_full_for_jwt_user(
+        self, api_client, db_engine, user_auth
+    ):
+        self._seed_url(db_engine, VALID_DISCORD_URL)
+        resp = api_client.put(
+            "/api/v1/settings",
+            json={"page_size": 80},
+            headers=user_auth,
+        )
+        assert resp.status_code == 200
+        assert resp.json()["webhook_url"] == VALID_DISCORD_URL
+
+
+# ---------------------------------------------------------------------------
+# Rate-limit on POST /settings/webhook/test (5/min per user)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(autouse=True)
+def _reset_webhook_rate_limit():
+    """Wipe the in-memory rate-limit bucket before AND after every test.
+
+    The bucket is process-global; without this the Discord-test cases
+    above leak counters into the rate-limit tests below (and vice
+    versa), making the suite order-dependent.
+    """
+    from src.api.routers import settings as settings_module
+
+    settings_module._clear_rate_limit_state()
+    yield
+    settings_module._clear_rate_limit_state()
+
+
+class TestWebhookTestRateLimit:
+    """5 requests per 60s per user, with Retry-After on overflow."""
+
+    def _seed_url(self, db_engine, url: str = VALID_DISCORD_URL) -> None:
+        with Session(db_engine) as s:
+            row = s.get(AppSettings, 1)
+            if row is None:
+                s.add(
+                    AppSettings(
+                        id=1,
+                        auto_apply_confidence=Decimal("0.60"),
+                        page_size=25,
+                        webhook_url=url,
+                    )
+                )
+            else:
+                row.webhook_url = url
+            s.commit()
+
+    def _stub_httpx(self, monkeypatch):
+        class _StubResponse:
+            status_code = 204
+
+        def fake_post(url, json, timeout):
+            return _StubResponse()
+
+        from src.api.routers import settings as settings_module
+
+        monkeypatch.setattr(settings_module.httpx, "post", fake_post)
+
+    def test_five_calls_in_window_succeed(
+        self, api_client, db_engine, monkeypatch, user_auth
+    ):
+        self._seed_url(db_engine)
+        self._stub_httpx(monkeypatch)
+        for i in range(5):
+            resp = api_client.post(
+                "/api/v1/settings/webhook/test", headers=user_auth
+            )
+            assert resp.status_code == 200, f"call #{i + 1} should pass"
+            assert resp.json()["success"] is True
+
+    def test_sixth_call_within_window_returns_429_with_retry_after(
+        self, api_client, db_engine, monkeypatch, user_auth
+    ):
+        self._seed_url(db_engine)
+        self._stub_httpx(monkeypatch)
+        for _ in range(5):
+            api_client.post("/api/v1/settings/webhook/test", headers=user_auth)
+        resp = api_client.post(
+            "/api/v1/settings/webhook/test", headers=user_auth
+        )
+        assert resp.status_code == 429
+        # Retry-After must be a positive integer string (HTTP RFC 7231 §7.1.3).
+        retry_after = resp.headers.get("Retry-After")
+        assert retry_after is not None
+        assert retry_after.isdigit()
+        assert 1 <= int(retry_after) <= 61
+        # Detail mentions the limit so the UI can render a meaningful toast.
+        assert "rate limit" in resp.json()["detail"].lower()
+
+    def test_429_does_not_call_discord(
+        self, api_client, db_engine, monkeypatch, user_auth
+    ):
+        self._seed_url(db_engine)
+        call_count = {"n": 0}
+
+        class _StubResponse:
+            status_code = 204
+
+        def fake_post(url, json, timeout):
+            call_count["n"] += 1
+            return _StubResponse()
+
+        from src.api.routers import settings as settings_module
+
+        monkeypatch.setattr(settings_module.httpx, "post", fake_post)
+
+        for _ in range(5):
+            api_client.post("/api/v1/settings/webhook/test", headers=user_auth)
+        assert call_count["n"] == 5
+        # Sixth call: short-circuited by the rate limit, no outbound call.
+        resp = api_client.post(
+            "/api/v1/settings/webhook/test", headers=user_auth
+        )
+        assert resp.status_code == 429
+        assert call_count["n"] == 5
+
+    def test_window_slides_with_simulated_clock(
+        self, api_client, db_engine, monkeypatch, user_auth
+    ):
+        # Use the unit-level helper directly so we can advance time without
+        # actually sleeping for 60s in the suite.
+        from src.api.routers import settings as settings_module
+
+        user_id = "user-abc"
+        # Burn the 5-call budget at t=0.
+        for _ in range(5):
+            settings_module._check_webhook_test_rate_limit(user_id, now=0.0)
+        # 6th call at t=10s still inside the window → 429.
+        with pytest.raises(HTTPException) as exc_info:
+            settings_module._check_webhook_test_rate_limit(user_id, now=10.0)
+        assert exc_info.value.status_code == 429
+        # 6th call at t=61s — first hit (t=0) has aged out → allowed.
+        settings_module._check_webhook_test_rate_limit(user_id, now=61.0)
+
+    def test_per_user_isolation(self, api_client, db_engine, monkeypatch, user_auth):
+        # Different users have independent buckets — exercise via the
+        # service principal (separate user_id="service") + JWT user.
+        from src.api.routers import settings as settings_module
+
+        for _ in range(5):
+            settings_module._check_webhook_test_rate_limit("user-A", now=0.0)
+        # user-B is NOT throttled by user-A's traffic.
+        settings_module._check_webhook_test_rate_limit("user-B", now=0.0)

@@ -1,8 +1,30 @@
 from unittest.mock import AsyncMock, MagicMock, mock_open, patch
 
+import pytest
 from fastapi.testclient import TestClient
 
 import main as worker_mod
+
+
+@pytest.fixture(autouse=True)
+def _seed_app_state_engine():
+    """Pin a no-op engine on app.state so the get_engine dep resolves.
+
+    The worker handlers under test now require ``app.state.engine`` to
+    exist (refactor moved per-call create_engine() into a shared,
+    lifespan-built pool). The TestClient runs handlers without lifespan
+    by default, so the suite has to set this itself.
+
+    We use a MagicMock rather than a real engine because the
+    /internal/sync/confirm tests stub out the ingest pipeline entirely
+    — the engine reference is only consumed on the failure-notify path,
+    which the happy-path tests don't traverse.
+    """
+    worker_mod.set_test_engine(MagicMock(name="fake-engine"))
+    yield
+    # Clear so other test files don't inherit a stale mock.
+    if hasattr(worker_mod.app.state, "engine"):
+        del worker_mod.app.state.engine
 
 
 def test_internal_sync_start_stores_request_overrides():

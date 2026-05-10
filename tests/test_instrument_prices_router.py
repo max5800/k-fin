@@ -105,11 +105,17 @@ def worker_client(db_engine, fake_provider):
         worker_main.app.dependency_overrides[
             worker_main._get_history_provider
         ] = lambda: fake_provider
+        # The new get_engine dep reads from app.state.engine. The
+        # TestClient skips lifespan unless used as a context manager,
+        # so install the testcontainer engine ourselves.
+        worker_main.set_test_engine(db_engine)
         client = TestClient(worker_main.app)
         try:
             yield client
         finally:
             worker_main.app.dependency_overrides.clear()
+            if hasattr(worker_main.app.state, "engine"):
+                del worker_main.app.state.engine
 
 
 # ---------------------------------------------------------------------------
