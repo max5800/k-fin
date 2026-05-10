@@ -12,11 +12,18 @@ COPY pyproject.toml uv.lock ./
 
 RUN uv sync --no-dev --no-install-project
 
-# Only the api-relevant source modules — no comdirect connector, no secrets
+# Only the api-relevant source modules. The comdirect client lives in
+# src/external/ for import-time wiring (rules → normalization → external
+# models, services/portfolio_prices → yfinance), but the api pod never
+# instantiates ComdirectClient — bank secrets are gated by ESO/Vault env
+# vars on the worker pod and the NetworkPolicy, not by code presence.
 COPY src/__init__.py src/__init__.py
 COPY src/api/ src/api/
 COPY src/core/ src/core/
 COPY src/agents/ src/agents/
+COPY src/services/ src/services/
+COPY src/normalization/ src/normalization/
+COPY src/external/ src/external/
 
 RUN adduser --disabled-password --gecos "" appuser && \
     mkdir -p /data/exports && \
