@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import httpx
 import pytest
 
-from src.connector.comdirect_client import ComdirectClient
+from src.external.comdirect_client import ComdirectClient
 
 
 def _mock_response(status_code, json_data=None, headers=None):
@@ -18,7 +18,7 @@ def _mock_response(status_code, json_data=None, headers=None):
 
 @pytest.fixture
 def client():
-    with patch("src.connector.comdirect_client.settings") as mock_settings:
+    with patch("src.external.comdirect_client.settings") as mock_settings:
         mock_settings.comdirect_client_id = "test-id"
         mock_settings.comdirect_client_secret = "test-secret"
         mock_settings.comdirect_username = "john.doe"
@@ -43,7 +43,7 @@ async def test_begin_auth_returns_state(client):
     mock_http.__aenter__ = AsyncMock(return_value=mock_http)
     mock_http.__aexit__ = AsyncMock(return_value=False)
 
-    with patch("src.connector.comdirect_client.httpx.AsyncClient", return_value=mock_http):
+    with patch("src.external.comdirect_client.httpx.AsyncClient", return_value=mock_http):
         result = await client.begin_auth()
 
     assert result == {"session_identifier": "sess-123", "challenge_id": "challenge-1"}
@@ -60,7 +60,7 @@ async def test_begin_auth_step1_failure_raises(client):
     mock_http.__aenter__ = AsyncMock(return_value=mock_http)
     mock_http.__aexit__ = AsyncMock(return_value=False)
 
-    with patch("src.connector.comdirect_client.httpx.AsyncClient", return_value=mock_http):
+    with patch("src.external.comdirect_client.httpx.AsyncClient", return_value=mock_http):
         with pytest.raises(RuntimeError, match="Step 1 failed"):
             await client.begin_auth()
 
@@ -81,7 +81,7 @@ async def test_complete_auth_succeeds(client):
     mock_http.__aenter__ = AsyncMock(return_value=mock_http)
     mock_http.__aexit__ = AsyncMock(return_value=False)
 
-    with patch("src.connector.comdirect_client.httpx.AsyncClient", return_value=mock_http):
+    with patch("src.external.comdirect_client.httpx.AsyncClient", return_value=mock_http):
         result = await client.complete_auth("sess-123", "challenge-1")
 
     assert result is True
@@ -102,7 +102,7 @@ async def test_complete_auth_activation_fails(client):
     mock_http.__aenter__ = AsyncMock(return_value=mock_http)
     mock_http.__aexit__ = AsyncMock(return_value=False)
 
-    with patch("src.connector.comdirect_client.httpx.AsyncClient", return_value=mock_http):
+    with patch("src.external.comdirect_client.httpx.AsyncClient", return_value=mock_http):
         result = await client.complete_auth("sess-123", "challenge-1")
 
     assert result is False
@@ -124,7 +124,7 @@ async def test_complete_auth_token_fails(client):
     mock_http.__aenter__ = AsyncMock(return_value=mock_http)
     mock_http.__aexit__ = AsyncMock(return_value=False)
 
-    with patch("src.connector.comdirect_client.httpx.AsyncClient", return_value=mock_http):
+    with patch("src.external.comdirect_client.httpx.AsyncClient", return_value=mock_http):
         result = await client.complete_auth("sess-123", "challenge-1")
 
     assert result is False

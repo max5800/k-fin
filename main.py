@@ -27,8 +27,8 @@ from src.api.routers import (
     settings as settings_router,
     transactions,
 )
-from src.connector.comdirect_client import ComdirectClient
-from src.connector.yfinance_client import (
+from src.external.comdirect_client import ComdirectClient
+from src.external.yfinance_client import (
     CurrencyMismatchError,
     HistoryProvider,
     PriceFetchError,

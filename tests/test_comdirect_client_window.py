@@ -6,12 +6,12 @@ from unittest.mock import MagicMock, patch
 import httpx
 import pytest
 
-from src.connector.comdirect_client import ComdirectClient
+from src.external.comdirect_client import ComdirectClient
 
 
 @pytest.fixture
 def client():
-    with patch("src.connector.comdirect_client.settings") as mock_settings:
+    with patch("src.external.comdirect_client.settings") as mock_settings:
         mock_settings.comdirect_client_id = "test-id"
         mock_settings.comdirect_client_secret = "test-secret"
         mock_settings.comdirect_username = "john.doe"

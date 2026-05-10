@@ -27,7 +27,7 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
-from src.connector.yfinance_client import (
+from src.external.yfinance_client import (
     PriceFetchError,
     PricePoint,
 )

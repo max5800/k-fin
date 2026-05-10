@@ -20,7 +20,7 @@ import sys
 from datetime import date, timedelta
 from pathlib import Path
 
-from src.connector.comdirect_client import ComdirectClient
+from src.external.comdirect_client import ComdirectClient
 from src.core.config import settings  # noqa: F401
 from src.core.logging import get_logger, setup_logging
 

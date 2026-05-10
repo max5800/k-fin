@@ -25,8 +25,8 @@ from typing import Awaitable, Callable, Optional
 from sqlalchemy import update
 from sqlalchemy.orm import Session
 
-from src.connector.comdirect_client import ComdirectClient
-from src.connector.models import ComdirectTransaction
+from src.external.comdirect_client import ComdirectClient
+from src.external.models import ComdirectTransaction
 from src.core.db.models import BackfillRun, BackfillStatus
 from src.normalization.ingest import ingest_transactions
 from src.normalization.pipeline import NormalizationPipeline

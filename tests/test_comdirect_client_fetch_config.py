@@ -3,12 +3,12 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from src.connector.comdirect_client import ComdirectClient, resolve_booking_date
+from src.external.comdirect_client import ComdirectClient, resolve_booking_date
 
 
 @pytest.fixture
 def client():
-    with patch("src.connector.comdirect_client.settings") as mock_settings:
+    with patch("src.external.comdirect_client.settings") as mock_settings:
         mock_settings.comdirect_client_id = "test-id"
         mock_settings.comdirect_client_secret = "test-secret"
         mock_settings.comdirect_username = "john.doe"

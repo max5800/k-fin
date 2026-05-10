@@ -35,7 +35,7 @@ def canonicalize(raw: dict[str, Any]) -> dict[str, Any]:
 
     Accepts both the nested Comdirect API shape (e.g. `transactionValue`,
     `creditor`, `bookingDate`) and the flat shape emitted by
-    `src.connector.models.ComdirectTransaction` (e.g. `amount`,
+    `src.external.models.ComdirectTransaction` (e.g. `amount`,
     `creditor_name`, `booking_date`).
     """
     tx_value = raw.get("transactionValue") or raw.get("amount_raw") or {}

@@ -11,7 +11,7 @@ import sys
 from datetime import date
 from pathlib import Path
 
-from src.connector.comdirect_client import ComdirectClient
+from src.external.comdirect_client import ComdirectClient
 from src.core.config import settings  # noqa: F401 — ensures .env is loaded
 from src.core.logging import get_logger, setup_logging
 from src.exporter.finance_agent_mapper import map_to_finance_agent

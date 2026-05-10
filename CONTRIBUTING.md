@@ -27,7 +27,7 @@ CI runs the same commands plus Alembic migration smoke tests and Docker builds.
 - Naming: `<type>/<short-kebab-summary>`, where `<type>` matches the conventional-commit
   type. Examples from the repo history:
   - `feat/m6-finance-api-core`
-  - `fix/connector-params`
+  - `fix/external-params`
   - `chore/repo-hygiene-m14`
   - `docs/architecture-skeleton`
   - `refactor/phase0-defirefly-v2`
@@ -39,7 +39,7 @@ Keep branches focused. Split large work into reviewable PRs.
 - **Conventional Commits are mandatory.** semantic-release reads them to cut versions
   and write the changelog. See [Conventional Commits](https://www.conventionalcommits.org/).
 - Common types: `feat`, `fix`, `chore`, `docs`, `refactor`, `test`, `perf`, `ci`.
-- Use a scope when it helps: `feat(api): ...`, `fix(connector): ...`, `chore(deploy): ...`.
+- Use a scope when it helps: `feat(api): ...`, `fix(external): ...`, `chore(deploy): ...`.
 - Subject line in the imperative, lowercase, no trailing period, ≤72 chars.
 - `commitlint` runs on commit (via husky) and rejects messages that do not parse.
 
