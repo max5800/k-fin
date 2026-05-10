@@ -13,7 +13,7 @@ from datetime import date
 from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, field_validator
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
 from src.agents.reaper import reap_stale_runs, start_periodic_reaper
@@ -28,16 +28,18 @@ from src.api.routers import (
     transactions,
 )
 from src.external.comdirect_client import ComdirectClient
-from src.external.yfinance_client import (
-    CurrencyMismatchError,
-    HistoryProvider,
-    PriceFetchError,
-    YFinanceClient,
-)
+from src.external.yfinance_client import HistoryProvider, YFinanceClient
 from src.core.config import settings
-from src.core.db.models import Instrument, InstrumentPriceHistory
 from src.core.logging import get_logger, setup_logging
 from src.core.notifier import notify_failure_from_db
+from src.services.portfolio_prices import (
+    CurrencyMismatchProviderError,
+    InstrumentNotFoundError,
+    InvalidPriceRangeError,
+    PriceProviderError,
+    TickerNotConfiguredError,
+    backfill_instrument_prices,
+)
 
 setup_logging()
 logger = get_logger("worker")
@@ -244,112 +246,43 @@ def internal_portfolio_backfill_prices(
 
     Internal-only — the api dispatcher (`POST /portfolio/instruments/{isin}/
     backfill-prices`) has already validated auth and basic input shape.
-    Runs the yfinance call + `instrument_price_history` upsert here so
+    Delegates the fetch + DB upsert to
+    :func:`src.services.portfolio_prices.backfill_instrument_prices` so
     the public api never makes outbound to Yahoo Finance and the api
     NetworkPolicy can stay tight.
     """
-    if payload.from_date > payload.to_date:
-        raise HTTPException(
-            status_code=400, detail="from_date must be <= to_date"
-        )
-
     engine = create_engine(settings.database_url)
     try:
         with Session(engine) as db:
-            instrument = db.get(Instrument, payload.isin)
-            if instrument is None:
-                raise HTTPException(
-                    status_code=404, detail="Instrument not found"
-                )
-            if not instrument.ticker_symbol:
-                raise HTTPException(
-                    status_code=400,
-                    detail=(
-                        "Instrument has no ticker_symbol; PATCH it first via "
-                        "/portfolio/instruments/{isin}"
-                    ),
-                )
-
             try:
-                points = provider.get_history(
-                    instrument.ticker_symbol,
-                    payload.from_date,
-                    payload.to_date,
-                    expected_currency=instrument.currency,
-                )
-            except CurrencyMismatchError as exc:
-                logger.warning(
-                    "backfill-prices(%s, ticker=%s) currency mismatch: %s",
-                    payload.isin,
-                    instrument.ticker_symbol,
-                    exc,
-                )
-                raise HTTPException(status_code=400, detail=str(exc)) from exc
-            except PriceFetchError as exc:
-                logger.warning(
-                    "backfill-prices(%s, ticker=%s) provider error: %s",
-                    payload.isin,
-                    instrument.ticker_symbol,
-                    exc,
-                )
-                raise HTTPException(
-                    status_code=502,
-                    detail="Upstream price provider failed",
-                ) from exc
-
-            if not points:
-                return _InternalBackfillResult(
+                result = backfill_instrument_prices(
+                    db,
                     isin=payload.isin,
-                    ticker_symbol=instrument.ticker_symbol,
-                    requested_from=payload.from_date,
-                    requested_to=payload.to_date,
-                    fetched_points=0,
-                    inserted_points=0,
-                    skipped_existing=0,
+                    from_date=payload.from_date,
+                    to_date=payload.to_date,
+                    provider=provider,
                 )
-
-            existing_dates = set(
-                db.execute(
-                    select(InstrumentPriceHistory.price_date).where(
-                        InstrumentPriceHistory.isin == payload.isin,
-                        InstrumentPriceHistory.price_date >= payload.from_date,
-                        InstrumentPriceHistory.price_date <= payload.to_date,
-                    )
-                )
-                .scalars()
-                .all()
-            )
-
-            inserted = 0
-            skipped = 0
-            for point in points:
-                if point.price_date in existing_dates:
-                    skipped += 1
-                    continue
-                db.add(
-                    InstrumentPriceHistory(
-                        isin=payload.isin,
-                        price_date=point.price_date,
-                        close=point.close,
-                        currency=point.currency or instrument.currency,
-                        source="yfinance",
-                    )
-                )
-                existing_dates.add(point.price_date)
-                inserted += 1
-            db.commit()
-
-            return _InternalBackfillResult(
-                isin=payload.isin,
-                ticker_symbol=instrument.ticker_symbol,
-                requested_from=payload.from_date,
-                requested_to=payload.to_date,
-                fetched_points=len(points),
-                inserted_points=inserted,
-                skipped_existing=skipped,
-            )
+            except (InvalidPriceRangeError, TickerNotConfiguredError) as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+            except InstrumentNotFoundError as exc:
+                raise HTTPException(status_code=404, detail="Instrument not found") from exc
+            except CurrencyMismatchProviderError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+            except PriceProviderError as exc:
+                raise HTTPException(status_code=502, detail=str(exc)) from exc
     finally:
         engine.dispose()
+
+    return _InternalBackfillResult(
+        isin=result.isin,
+        ticker_symbol=result.ticker_symbol,
+        requested_from=result.requested_from,
+        requested_to=result.requested_to,
+        fetched_points=result.fetched_points,
+        inserted_points=result.inserted_points,
+        skipped_existing=result.skipped_existing,
+        source=result.source,
+    )
 
 
 @app.post("/internal/normalize")
