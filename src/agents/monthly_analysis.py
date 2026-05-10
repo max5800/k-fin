@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import date, timedelta
+from datetime import date
 
 from pydantic_ai import Agent
 from sqlalchemy import Engine
@@ -20,6 +20,7 @@ from src.agents.gather import (
     get_recurring_patterns,
     get_savings_rate,
 )
+from src.agents.period import derive_period_label
 from src.agents.prompts.monthly_analysis import MONTHLY_ANALYSIS_SYSTEM_PROMPT
 from src.agents.types import AnalysisResult
 
@@ -33,15 +34,6 @@ monthly_analysis_agent = Agent(
     system_prompt=MONTHLY_ANALYSIS_SYSTEM_PROMPT,
     retries=2,
 )
-
-
-def _current_month_range(reference: date | None = None) -> tuple[date, date]:
-    """Return (first_day, last_day) of the previous complete month."""
-    ref = reference or date.today()
-    first_of_this_month = ref.replace(day=1)
-    last_of_prev = first_of_this_month - timedelta(days=1)
-    first_of_prev = last_of_prev.replace(day=1)
-    return first_of_prev, last_of_prev
 
 
 def run_monthly_analysis(
@@ -59,14 +51,8 @@ def run_monthly_analysis(
     to an ISO date range (``YYYY-MM-DD/YYYY-MM-DD``) for non-month
     windows so downstream report keys stay distinct.
     """
-    if period_days is not None and period_days > 0:
-        ref = reference_date or date.today()
-        first_day = ref - timedelta(days=period_days - 1)
-        last_day = ref
-        period = f"{first_day.isoformat()}/{last_day.isoformat()}"
-    else:
-        first_day, last_day = _current_month_range(reference_date)
-        period = first_day.strftime("%Y-%m")
+    ref = reference_date or date.today()
+    period, first_day, last_day = derive_period_label("monthly", period_days, ref)
 
     transactions = get_period_transactions(engine, first_day, last_day)
     if not transactions:

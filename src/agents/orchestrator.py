@@ -113,48 +113,51 @@ def _format_errors(errors: list[str]) -> str:
 
 _ISO_WEEK_RE = re.compile(r"^(\d{4})-W(\d{1,2})$")
 _ISO_MONTH_RE = re.compile(r"^(\d{4})-(\d{1,2})$")
-_ISO_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+_ISO_DATE_RANGE_RE = re.compile(r"^(\d{4}-\d{2}-\d{2})/(\d{4}-\d{2}-\d{2})$")
 
 
 def _parse_period(period: str | None, fallback: date) -> tuple[date, date]:
     """Parse an agent's `result.period` string into a (start, end) date pair.
 
-    Supported formats:
-      - None / empty                → (fallback, fallback)
-      - "2026-W16"                  → ISO week → Mon..Sun
-      - "2026-03"                   → first..last day of month
-      - "2026-03-19/2026-04-18"     → split on '/', both ISO dates
-      - anything else               → (fallback, fallback)
+    All period-aware agents now go through `derive_period_label`, which
+    only emits three canonical forms:
+
+      - "YYYY-Www"                  → ISO week → Mon..Sun
+      - "YYYY-MM"                   → first..last day of month
+      - "YYYY-MM-DD/YYYY-MM-DD"     → explicit ISO date range
+
+    Anything else (None, empty, or unparseable) falls back to
+    ``(fallback, fallback)`` — previously the code had a multi-branch
+    maze that silently collapsed to `(today, today)` on any mismatch;
+    the canonical formats remove the ambiguity, so a fallthrough now
+    really means "agent emitted something we didn't intend".
     """
     if not period:
         return fallback, fallback
 
-    if "/" in period:
+    if m := _ISO_DATE_RANGE_RE.match(period):
         try:
-            start_str, end_str = period.split("/", 1)
-            if _ISO_DATE_RE.match(start_str) and _ISO_DATE_RE.match(end_str):
-                return date.fromisoformat(start_str), date.fromisoformat(end_str)
+            return date.fromisoformat(m.group(1)), date.fromisoformat(m.group(2))
         except ValueError:
-            pass
+            return fallback, fallback
 
-    m = _ISO_WEEK_RE.match(period)
-    if m:
+    if m := _ISO_WEEK_RE.match(period):
         try:
             year, week = int(m.group(1)), int(m.group(2))
-            monday = date.fromisocalendar(year, week, 1)
-            sunday = date.fromisocalendar(year, week, 7)
-            return monday, sunday
+            return (
+                date.fromisocalendar(year, week, 1),
+                date.fromisocalendar(year, week, 7),
+            )
         except ValueError:
-            pass
+            return fallback, fallback
 
-    m = _ISO_MONTH_RE.match(period)
-    if m:
+    if m := _ISO_MONTH_RE.match(period):
         try:
             year, month = int(m.group(1)), int(m.group(2))
             last_day = calendar.monthrange(year, month)[1]
             return date(year, month, 1), date(year, month, last_day)
         except (ValueError, calendar.IllegalMonthError):
-            pass
+            return fallback, fallback
 
     return fallback, fallback
 
