@@ -1,3 +1,10 @@
+## [1.35.1](https://github.com/max5800/k-fin/compare/v1.35.0...v1.35.1) (2026-05-10)
+
+
+### Bug Fixes
+
+* wave-2 stream-z infra bugs (api dockerfile, py 3.14 drift, smoke imports) ([#48](https://github.com/max5800/k-fin/issues/48)) ([2e9f2d5](https://github.com/max5800/k-fin/commit/2e9f2d558ec85b478649390c644a5733de6095e9)), closes [PR#34](https://github.com/PR/issues/34)
+
 # [1.35.0](https://github.com/max5800/k-fin/compare/v1.34.1...v1.35.0) (2026-05-09)
 
 
