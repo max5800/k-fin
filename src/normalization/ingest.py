@@ -18,7 +18,7 @@ from typing import Any, Iterable
 from sqlalchemy import update
 from sqlalchemy.orm import Session
 
-from src.core.db.models import SyncRun, SyncSource, SyncStatus
+from src.core.db.models import DataSource, SyncRun, SyncSource, SyncStatus
 from src.normalization.canonicalize import canonicalize, content_hash
 from src.normalization.pipeline import NormalizationPipeline
 
@@ -30,6 +30,7 @@ def ingest_json_export(
     export_path: Path,
     *,
     batch_id: str | None = None,
+    source: DataSource = DataSource.COMDIRECT,
 ) -> int:
     """Load every transaction from a JSON export into raw_transactions.
 
@@ -40,8 +41,8 @@ def ingest_json_export(
     """
     batch = batch_id or f"json-{export_path.name}"
     payload = json.loads(export_path.read_text(encoding="utf-8"))
-    rows = _rows_from_json_payload(payload, batch_id=batch)
-    return _run_ingest(pipeline, rows, batch_id=batch)
+    rows = _rows_from_json_payload(payload, batch_id=batch, source=source)
+    return _run_ingest(pipeline, rows, batch_id=batch, source=source)
 
 
 def ingest_transactions(
@@ -49,6 +50,7 @@ def ingest_transactions(
     transactions: Iterable[dict[str, Any]],
     *,
     batch_id: str | None = None,
+    source: DataSource = DataSource.COMDIRECT,
 ) -> int:
     """Ingest an already-parsed list of transaction dicts.
 
@@ -56,24 +58,29 @@ def ingest_transactions(
     held in memory.
     """
     batch = batch_id or f"inproc-{datetime.now(timezone.utc).isoformat()}"
-    rows = [_build_row(tx, batch_id=batch) for tx in transactions]
-    return _run_ingest(pipeline, rows, batch_id=batch)
+    rows = [_build_row(tx, batch_id=batch, source=source) for tx in transactions]
+    return _run_ingest(pipeline, rows, batch_id=batch, source=source)
 
 
-def _rows_from_json_payload(payload: dict, *, batch_id: str) -> list[dict[str, Any]]:
+def _rows_from_json_payload(
+    payload: dict, *, batch_id: str, source: DataSource = DataSource.COMDIRECT
+) -> list[dict[str, Any]]:
     transactions_by_account = payload.get("transactions") or {}
     rows: list[dict[str, Any]] = []
     for _account_id, txs in transactions_by_account.items():
         for tx in txs:
-            rows.append(_build_row(tx, batch_id=batch_id))
+            rows.append(_build_row(tx, batch_id=batch_id, source=source))
     return rows
 
 
-def _build_row(tx: dict[str, Any], *, batch_id: str) -> dict[str, Any]:
+def _build_row(
+    tx: dict[str, Any], *, batch_id: str, source: DataSource = DataSource.COMDIRECT
+) -> dict[str, Any]:
     canonical = canonicalize(tx)
     return {
-        "content_hash": content_hash(canonical),
-        "comdirect_id": canonical["comdirect_id"] or None,
+        "content_hash": content_hash(canonical, source=source.value),
+        "source": source,
+        "external_id": canonical["external_id"] or None,
         "raw_data": tx,
         "batch_id": batch_id,
     }
@@ -84,10 +91,18 @@ def _run_ingest(
     rows: list[dict[str, Any]],
     *,
     batch_id: str,
+    source: DataSource = DataSource.COMDIRECT,
 ) -> int:
     run_id = str(uuid.uuid4())
     with Session(pipeline.engine) as session:
-        session.add(SyncRun(id=run_id, source=SyncSource.RAW_IMPORT, status=SyncStatus.RUNNING))
+        session.add(
+            SyncRun(
+                id=run_id,
+                source=SyncSource.RAW_IMPORT,
+                data_source=source,
+                status=SyncStatus.RUNNING,
+            )
+        )
         session.commit()
 
     try:

@@ -69,7 +69,7 @@ def _seed_tx(
     s.add(
         RawTransaction(
             content_hash=tx_id.ljust(64, "0"),
-            comdirect_id=None,
+            external_id=None,
             raw_data={"stub": True},
         )
     )

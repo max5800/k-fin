@@ -59,7 +59,7 @@ def seed(db_engine):
         s.add(
             RawTransaction(
                 content_hash="t1".ljust(64, "0"),
-                comdirect_id="CD1",
+                external_id="CD1",
                 raw_data={"stub": True},
             )
         )
@@ -68,7 +68,7 @@ def seed(db_engine):
             NormalizedTransaction(
                 id="t1".ljust(64, "0"),
                 raw_content_hash="t1".ljust(64, "0"),
-                comdirect_id="CD1",
+                external_id="CD1",
                 booking_date=date(2026, 3, 15),
                 valuation_date=date(2026, 3, 15),
                 amount=Decimal("-10.00"),

@@ -48,7 +48,7 @@ def agent_seed(db_engine):
             s.add(
                 RawTransaction(
                     content_hash=char * 64,
-                    comdirect_id=f"CD-{char}",
+                    external_id=f"CD-{char}",
                     raw_data={"stub": True},
                 )
             )
@@ -354,7 +354,7 @@ class TestGather:
                 s.add(
                     RawTransaction(
                         content_hash=char * 64,
-                        comdirect_id=f"CD-{char}",
+                        external_id=f"CD-{char}",
                         raw_data={"stub": True},
                     )
                 )

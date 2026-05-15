@@ -50,7 +50,8 @@ class TransactionOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: str
-    comdirect_id: str | None
+    source: str
+    external_id: str | None
     booking_date: date
     valuation_date: date
     amount: Decimal

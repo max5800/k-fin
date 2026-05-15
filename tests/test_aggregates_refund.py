@@ -108,7 +108,7 @@ def refund_seed(db_engine):
             s.add(
                 RawTransaction(
                     content_hash=hash_char * 64,
-                    comdirect_id=None,
+                    external_id=None,
                     raw_data={"stub": True},
                 )
             )
@@ -327,7 +327,7 @@ class TestRefundAudit:
             s.flush()
 
             for h in ("aa", "bb", "cc", "dd", "ee"):
-                s.add(RawTransaction(content_hash=h * 32, comdirect_id=None, raw_data={}))
+                s.add(RawTransaction(content_hash=h * 32, external_id=None, raw_data={}))
             s.flush()
 
             # Krankenkasse — should suggest gesundheit.
@@ -494,7 +494,7 @@ class TestRefundAuditAutoApply:
                 ("44" * 32, "Anna Müller", "Privat", Decimal("18.00")),
             ]
             for h, _sender, _desc, _amt in specs:
-                s.add(RawTransaction(content_hash=h, comdirect_id=None, raw_data={}))
+                s.add(RawTransaction(content_hash=h, external_id=None, raw_data={}))
             s.flush()
             for h, sender, desc, amt in specs:
                 s.add(NormalizedTransaction(

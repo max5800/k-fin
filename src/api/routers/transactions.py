@@ -49,7 +49,8 @@ def _enrich(tx: NormalizedTransaction, db: Session) -> TransactionOut:
 
     return TransactionOut(
         id=tx.id,
-        comdirect_id=tx.comdirect_id,
+        source=tx.source.value if hasattr(tx.source, "value") else tx.source,
+        external_id=tx.external_id,
         booking_date=tx.booking_date,
         valuation_date=tx.valuation_date,
         amount=tx.amount,

@@ -22,6 +22,7 @@ from sqlalchemy import (
     Date,
     DateTime,
     ForeignKey,
+    Index,
     Integer,
     Numeric,
     String,
@@ -49,8 +50,18 @@ class SyncStatus(str, enum.Enum):
 
 
 class SyncSource(str, enum.Enum):
+    """Pipeline stage of a sync run — kept name for backwards compat; semantically a *stage* enum."""
+
     RAW_IMPORT = "raw_import"
     NORMALIZE = "normalize"
+
+
+class DataSource(str, enum.Enum):
+    """Upstream data provider a raw/normalized transaction originated from."""
+
+    COMDIRECT = "comdirect"
+    PAYPAL = "paypal"
+    SANTANDER_CC = "santander_cc"
 
 
 class RunStatus(str, enum.Enum):
@@ -86,7 +97,12 @@ class RawTransaction(Base):
     __tablename__ = "raw_transactions"
 
     content_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
-    comdirect_id: Mapped[Optional[str]] = mapped_column(
+    source: Mapped[DataSource] = mapped_column(
+        SQLEnum(DataSource, name="data_source", values_callable=lambda e: [m.value for m in e]),
+        nullable=False,
+        default=DataSource.COMDIRECT,
+    )
+    external_id: Mapped[Optional[str]] = mapped_column(
         String, nullable=True, index=True
     )
     raw_data: Mapped[dict] = mapped_column(JSON, nullable=False)
@@ -97,6 +113,22 @@ class RawTransaction(Base):
     batch_id: Mapped[Optional[str]] = mapped_column(String, nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    __table_args__ = (
+        # Composite (source, external_id) index for filter-by-source
+        # queries. Not unique: a Comdirect correction creates a v+1 row
+        # in the same (source, external_id) chain and would briefly
+        # coexist with the predecessor before `superseded_by` is set.
+        # Cross-source-collision (PayPal-`R01` vs Comdirect-`R01`) is
+        # already prevented by the application: `load_raw_transactions`
+        # scopes lookups by both `source` and `external_id`, so a
+        # collision would manifest as two distinct chains, not a merge.
+        Index(
+            "ix_raw_transactions_source_external_id",
+            "source",
+            "external_id",
+        ),
     )
 
 
@@ -155,7 +187,12 @@ class NormalizedTransaction(Base):
     raw_content_hash: Mapped[str] = mapped_column(
         ForeignKey("raw_transactions.content_hash"), nullable=False, index=True
     )
-    comdirect_id: Mapped[Optional[str]] = mapped_column(
+    source: Mapped[DataSource] = mapped_column(
+        SQLEnum(DataSource, name="data_source", values_callable=lambda e: [m.value for m in e]),
+        nullable=False,
+        default=DataSource.COMDIRECT,
+    )
+    external_id: Mapped[Optional[str]] = mapped_column(
         String, nullable=True, index=True
     )
 
@@ -204,6 +241,19 @@ class NormalizedTransaction(Base):
         server_default=func.now(),
         onupdate=func.now(),
         nullable=False,
+    )
+
+    __table_args__ = (
+        # Composite index for filter-by-source queries. Not unique:
+        # corrections produce a new normalized row keyed by the new
+        # content_hash; the old row remains (FK to its now-superseded
+        # raw row stays valid) until a later cleanup pass. Cross-source-
+        # collision is enforced one level up on raw_transactions.
+        Index(
+            "ix_normalized_transactions_source_external_id",
+            "source",
+            "external_id",
+        ),
     )
 
 
@@ -355,6 +405,10 @@ class SyncRun(Base):
     source: Mapped[SyncSource] = mapped_column(
         SQLEnum(SyncSource, values_callable=lambda e: [m.value for m in e]),
         nullable=False,
+    )
+    data_source: Mapped[Optional[DataSource]] = mapped_column(
+        SQLEnum(DataSource, name="data_source", values_callable=lambda e: [m.value for m in e]),
+        nullable=True,
     )
     status: Mapped[SyncStatus] = mapped_column(
         SQLEnum(SyncStatus, values_callable=lambda e: [m.value for m in e]),
