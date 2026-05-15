@@ -1,0 +1,1144 @@
+{
+  "enums": {
+    "backfillstatus": [
+      "running",
+      "succeeded",
+      "failed",
+      "cancelled"
+    ],
+    "data_source": [
+      "comdirect",
+      "paypal",
+      "santander_cc"
+    ],
+    "report_status_enum": [
+      "pending",
+      "ready",
+      "failed"
+    ],
+    "runstatus": [
+      "pending",
+      "running",
+      "succeeded",
+      "failed",
+      "cancelled"
+    ],
+    "runtrigger": [
+      "manual",
+      "scheduled",
+      "webhook"
+    ],
+    "sync_stage_enum": [
+      "raw_import",
+      "normalize"
+    ],
+    "sync_status_enum": [
+      "running",
+      "succeeded",
+      "failed"
+    ],
+    "type_enum": [
+      "fix",
+      "variabel",
+      "diskretionaer"
+    ]
+  },
+  "tables": {
+    "agent_runs": {
+      "columns": {
+        "agent_name": {
+          "nullable": false,
+          "type": "VARCHAR"
+        },
+        "cost_usd": {
+          "nullable": true,
+          "type": "NUMERIC(10, 6)"
+        },
+        "error": {
+          "nullable": true,
+          "type": "VARCHAR"
+        },
+        "finished_at": {
+          "nullable": true,
+          "type": "TIMESTAMP"
+        },
+        "heartbeat_at": {
+          "nullable": true,
+          "type": "TIMESTAMP"
+        },
+        "id": {
+          "nullable": false,
+          "type": "VARCHAR"
+        },
+        "input_tokens": {
+          "nullable": true,
+          "type": "INTEGER"
+        },
+        "last_error": {
+          "nullable": true,
+          "type": "VARCHAR"
+        },
+        "output_tokens": {
+          "nullable": true,
+          "type": "INTEGER"
+        },
+        "progress_current": {
+          "nullable": true,
+          "type": "INTEGER"
+        },
+        "progress_message": {
+          "nullable": true,
+          "type": "VARCHAR"
+        },
+        "progress_total": {
+          "nullable": true,
+          "type": "INTEGER"
+        },
+        "result": {
+          "nullable": true,
+          "type": "JSON"
+        },
+        "started_at": {
+          "nullable": false,
+          "type": "TIMESTAMP"
+        },
+        "status": {
+          "nullable": false,
+          "type": "VARCHAR(9)"
+        },
+        "trigger": {
+          "nullable": false,
+          "type": "VARCHAR(9)"
+        },
+        "usage_detail": {
+          "nullable": true,
+          "type": "JSON"
+        }
+      },
+      "foreign_keys": [],
+      "indexes": {
+        "ix_agent_runs_agent_name": {
+          "columns": [
+            "agent_name"
+          ],
+          "unique": false
+        },
+        "ix_agent_runs_status_heartbeat": {
+          "columns": [
+            "status",
+            "heartbeat_at"
+          ],
+          "unique": false
+        }
+      },
+      "primary_key": [
+        "id"
+      ]
+    },
+    "app_settings": {
+      "columns": {
+        "auto_apply_confidence": {
+          "nullable": false,
+          "type": "NUMERIC(3, 2)"
+        },
+        "id": {
+          "nullable": false,
+          "type": "INTEGER"
+        },
+        "page_size": {
+          "nullable": false,
+          "type": "INTEGER"
+        },
+        "updated_at": {
+          "nullable": false,
+          "type": "TIMESTAMP"
+        },
+        "webhook_url": {
+          "nullable": true,
+          "type": "VARCHAR(500)"
+        }
+      },
+      "foreign_keys": [],
+      "indexes": {},
+      "primary_key": [
+        "id"
+      ]
+    },
+    "backfill_runs": {
+      "columns": {
+        "account_id": {
+          "nullable": true,
+          "type": "VARCHAR"
+        },
+        "current_window_start": {
+          "nullable": true,
+          "type": "DATE"
+        },
+        "error": {
+          "nullable": true,
+          "type": "VARCHAR"
+        },
+        "finished_at": {
+          "nullable": true,
+          "type": "TIMESTAMP"
+        },
+        "id": {
+          "nullable": false,
+          "type": "VARCHAR"
+        },
+        "progress_message": {
+          "nullable": true,
+          "type": "VARCHAR"
+        },
+        "rows_inserted": {
+          "nullable": false,
+          "type": "INTEGER"
+        },
+        "started_at": {
+          "nullable": false,
+          "type": "TIMESTAMP"
+        },
+        "status": {
+          "nullable": false,
+          "type": "VARCHAR(9)"
+        },
+        "target_start_date": {
+          "nullable": false,
+          "type": "DATE"
+        },
+        "windows_done": {
+          "nullable": false,
+          "type": "INTEGER"
+        },
+        "windows_total": {
+          "nullable": false,
+          "type": "INTEGER"
+        }
+      },
+      "foreign_keys": [],
+      "indexes": {
+        "ix_backfill_runs_status_started": {
+          "columns": [
+            "status",
+            "started_at"
+          ],
+          "unique": false
+        }
+      },
+      "primary_key": [
+        "id"
+      ]
+    },
+    "budgets": {
+      "columns": {
+        "category_id": {
+          "nullable": false,
+          "type": "VARCHAR"
+        },
+        "created_at": {
+          "nullable": false,
+          "type": "TIMESTAMP"
+        },
+        "currency": {
+          "nullable": false,
+          "type": "VARCHAR(3)"
+        },
+        "monthly_limit": {
+          "nullable": false,
+          "type": "NUMERIC(14, 2)"
+        },
+        "updated_at": {
+          "nullable": false,
+          "type": "TIMESTAMP"
+        }
+      },
+      "foreign_keys": [
+        "['category_id']->categories.['id']"
+      ],
+      "indexes": {},
+      "primary_key": [
+        "category_id"
+      ]
+    },
+    "categories": {
+      "columns": {
+        "id": {
+          "nullable": false,
+          "type": "VARCHAR"
+        },
+        "name": {
+          "nullable": false,
+          "type": "VARCHAR"
+        },
+        "type": {
+          "nullable": false,
+          "type": "VARCHAR(13)"
+        }
+      },
+      "foreign_keys": [],
+      "indexes": {
+        "categories_name_key": {
+          "columns": [
+            "name"
+          ],
+          "unique": true
+        }
+      },
+      "primary_key": [
+        "id"
+      ]
+    },
+    "depot_transactions": {
+      "columns": {
+        "amount": {
+          "nullable": false,
+          "type": "NUMERIC(14, 2)"
+        },
+        "booking_date": {
+          "nullable": false,
+          "type": "DATE"
+        },
+        "created_at": {
+          "nullable": false,
+          "type": "TIMESTAMP"
+        },
+        "currency": {
+          "nullable": false,
+          "type": "VARCHAR(3)"
+        },
+        "depot_id": {
+          "nullable": false,
+          "type": "VARCHAR(64)"
+        },
+        "isin": {
+          "nullable": true,
+          "type": "VARCHAR(12)"
+        },
+        "price": {
+          "nullable": false,
+          "type": "NUMERIC(14, 4)"
+        },
+        "quantity": {
+          "nullable": false,
+          "type": "NUMERIC(18, 6)"
+        },
+        "transaction_id": {
+          "nullable": false,
+          "type": "VARCHAR(64)"
+        },
+        "transaction_type": {
+          "nullable": false,
+          "type": "VARCHAR(16)"
+        }
+      },
+      "foreign_keys": [
+        "['depot_id']->depots.['depot_id']",
+        "['isin']->instruments.['isin']"
+      ],
+      "indexes": {
+        "ix_depot_transactions_booking_date": {
+          "columns": [
+            "booking_date"
+          ],
+          "unique": false
+        },
+        "ix_depot_transactions_depot_id": {
+          "columns": [
+            "depot_id"
+          ],
+          "unique": false
+        },
+        "ix_depot_transactions_isin": {
+          "columns": [
+            "isin"
+          ],
+          "unique": false
+        }
+      },
+      "primary_key": [
+        "transaction_id"
+      ]
+    },
+    "depots": {
+      "columns": {
+        "client_id": {
+          "nullable": true,
+          "type": "VARCHAR"
+        },
+        "created_at": {
+          "nullable": false,
+          "type": "TIMESTAMP"
+        },
+        "currency": {
+          "nullable": false,
+          "type": "VARCHAR(3)"
+        },
+        "depot_id": {
+          "nullable": false,
+          "type": "VARCHAR(64)"
+        },
+        "depot_type": {
+          "nullable": true,
+          "type": "VARCHAR"
+        },
+        "updated_at": {
+          "nullable": false,
+          "type": "TIMESTAMP"
+        }
+      },
+      "foreign_keys": [],
+      "indexes": {},
+      "primary_key": [
+        "depot_id"
+      ]
+    },
+    "instrument_price_history": {
+      "columns": {
+        "close": {
+          "nullable": false,
+          "type": "NUMERIC(14, 4)"
+        },
+        "currency": {
+          "nullable": false,
+          "type": "VARCHAR(3)"
+        },
+        "fetched_at": {
+          "nullable": false,
+          "type": "TIMESTAMP"
+        },
+        "id": {
+          "nullable": false,
+          "type": "INTEGER"
+        },
+        "isin": {
+          "nullable": false,
+          "type": "VARCHAR(12)"
+        },
+        "price_date": {
+          "nullable": false,
+          "type": "DATE"
+        },
+        "source": {
+          "nullable": false,
+          "type": "VARCHAR(32)"
+        }
+      },
+      "foreign_keys": [
+        "['isin']->instruments.['isin']"
+      ],
+      "indexes": {
+        "ix_instrument_price_history_isin": {
+          "columns": [
+            "isin"
+          ],
+          "unique": false
+        },
+        "ix_instrument_price_history_price_date": {
+          "columns": [
+            "price_date"
+          ],
+          "unique": false
+        },
+        "uq_instrument_price_history_isin_date": {
+          "columns": [
+            "isin",
+            "price_date"
+          ],
+          "unique": true
+        }
+      },
+      "primary_key": [
+        "id"
+      ]
+    },
+    "instruments": {
+      "columns": {
+        "currency": {
+          "nullable": false,
+          "type": "VARCHAR(3)"
+        },
+        "instrument_type": {
+          "nullable": true,
+          "type": "VARCHAR(32)"
+        },
+        "isin": {
+          "nullable": false,
+          "type": "VARCHAR(12)"
+        },
+        "name": {
+          "nullable": false,
+          "type": "VARCHAR"
+        },
+        "ticker_symbol": {
+          "nullable": true,
+          "type": "VARCHAR(32)"
+        },
+        "updated_at": {
+          "nullable": false,
+          "type": "TIMESTAMP"
+        },
+        "wkn": {
+          "nullable": true,
+          "type": "VARCHAR(12)"
+        }
+      },
+      "foreign_keys": [],
+      "indexes": {
+        "ix_instruments_instrument_type": {
+          "columns": [
+            "instrument_type"
+          ],
+          "unique": false
+        },
+        "ix_instruments_ticker_symbol": {
+          "columns": [
+            "ticker_symbol"
+          ],
+          "unique": false
+        },
+        "ix_instruments_wkn": {
+          "columns": [
+            "wkn"
+          ],
+          "unique": false
+        }
+      },
+      "primary_key": [
+        "isin"
+      ]
+    },
+    "normalized_transactions": {
+      "columns": {
+        "amount": {
+          "nullable": false,
+          "type": "NUMERIC(14, 2)"
+        },
+        "booking_date": {
+          "nullable": false,
+          "type": "DATE"
+        },
+        "category_id": {
+          "nullable": true,
+          "type": "VARCHAR"
+        },
+        "created_at": {
+          "nullable": false,
+          "type": "TIMESTAMP"
+        },
+        "currency": {
+          "nullable": false,
+          "type": "VARCHAR(3)"
+        },
+        "description": {
+          "nullable": true,
+          "type": "VARCHAR"
+        },
+        "external_id": {
+          "nullable": true,
+          "type": "VARCHAR"
+        },
+        "id": {
+          "nullable": false,
+          "type": "VARCHAR(64)"
+        },
+        "internal_transfer": {
+          "nullable": false,
+          "type": "BOOLEAN"
+        },
+        "is_outlier": {
+          "nullable": false,
+          "type": "BOOLEAN"
+        },
+        "is_recurring": {
+          "nullable": false,
+          "type": "BOOLEAN"
+        },
+        "is_refund": {
+          "nullable": false,
+          "type": "BOOLEAN"
+        },
+        "raw_content_hash": {
+          "nullable": false,
+          "type": "VARCHAR(64)"
+        },
+        "recipient": {
+          "nullable": true,
+          "type": "VARCHAR"
+        },
+        "recipient_iban": {
+          "nullable": true,
+          "type": "VARCHAR"
+        },
+        "recurring_pattern_id": {
+          "nullable": true,
+          "type": "INTEGER"
+        },
+        "refund_audit_decided_at": {
+          "nullable": true,
+          "type": "TIMESTAMP"
+        },
+        "sender": {
+          "nullable": true,
+          "type": "VARCHAR"
+        },
+        "sender_iban": {
+          "nullable": true,
+          "type": "VARCHAR"
+        },
+        "source": {
+          "nullable": false,
+          "type": "VARCHAR(12)"
+        },
+        "updated_at": {
+          "nullable": false,
+          "type": "TIMESTAMP"
+        },
+        "valuation_date": {
+          "nullable": false,
+          "type": "DATE"
+        }
+      },
+      "foreign_keys": [
+        "['category_id']->categories.['id']",
+        "['raw_content_hash']->raw_transactions.['content_hash']",
+        "['recurring_pattern_id']->recurring_patterns.['id']"
+      ],
+      "indexes": {
+        "ix_normalized_transactions_booking_date": {
+          "columns": [
+            "booking_date"
+          ],
+          "unique": false
+        },
+        "ix_normalized_transactions_category_refund_date": {
+          "columns": [
+            "category_id",
+            "is_refund",
+            "booking_date"
+          ],
+          "unique": false
+        },
+        "ix_normalized_transactions_external_id": {
+          "columns": [
+            "external_id"
+          ],
+          "unique": false
+        },
+        "ix_normalized_transactions_raw_content_hash": {
+          "columns": [
+            "raw_content_hash"
+          ],
+          "unique": false
+        },
+        "ix_normalized_transactions_source_external_id": {
+          "columns": [
+            "source",
+            "external_id"
+          ],
+          "unique": false
+        }
+      },
+      "primary_key": [
+        "id"
+      ]
+    },
+    "portfolio_snapshots": {
+      "columns": {
+        "captured_at": {
+          "nullable": false,
+          "type": "TIMESTAMP"
+        },
+        "depot_id": {
+          "nullable": true,
+          "type": "VARCHAR(64)"
+        },
+        "id": {
+          "nullable": false,
+          "type": "INTEGER"
+        },
+        "snapshot_date": {
+          "nullable": false,
+          "type": "DATE"
+        },
+        "total_purchase_value": {
+          "nullable": false,
+          "type": "NUMERIC(14, 2)"
+        },
+        "total_value": {
+          "nullable": false,
+          "type": "NUMERIC(14, 2)"
+        }
+      },
+      "foreign_keys": [
+        "['depot_id']->depots.['depot_id']"
+      ],
+      "indexes": {
+        "ix_portfolio_snapshots_depot_id": {
+          "columns": [
+            "depot_id"
+          ],
+          "unique": false
+        },
+        "ix_portfolio_snapshots_snapshot_date": {
+          "columns": [
+            "snapshot_date"
+          ],
+          "unique": false
+        },
+        "uq_portfolio_snapshots_depot_date": {
+          "columns": [
+            "depot_id",
+            "snapshot_date"
+          ],
+          "unique": true
+        }
+      },
+      "primary_key": [
+        "id"
+      ]
+    },
+    "positions": {
+      "columns": {
+        "as_of": {
+          "nullable": false,
+          "type": "TIMESTAMP"
+        },
+        "currency": {
+          "nullable": false,
+          "type": "VARCHAR(3)"
+        },
+        "current_price": {
+          "nullable": false,
+          "type": "NUMERIC(14, 4)"
+        },
+        "current_value": {
+          "nullable": false,
+          "type": "NUMERIC(14, 2)"
+        },
+        "depot_id": {
+          "nullable": false,
+          "type": "VARCHAR(64)"
+        },
+        "id": {
+          "nullable": false,
+          "type": "INTEGER"
+        },
+        "isin": {
+          "nullable": false,
+          "type": "VARCHAR(12)"
+        },
+        "prev_day_price": {
+          "nullable": true,
+          "type": "NUMERIC(14, 4)"
+        },
+        "prev_day_value": {
+          "nullable": true,
+          "type": "NUMERIC(14, 2)"
+        },
+        "purchase_value": {
+          "nullable": false,
+          "type": "NUMERIC(14, 2)"
+        },
+        "quantity": {
+          "nullable": false,
+          "type": "NUMERIC(18, 6)"
+        }
+      },
+      "foreign_keys": [
+        "['depot_id']->depots.['depot_id']",
+        "['isin']->instruments.['isin']"
+      ],
+      "indexes": {
+        "uq_positions_depot_isin": {
+          "columns": [
+            "depot_id",
+            "isin"
+          ],
+          "unique": true
+        }
+      },
+      "primary_key": [
+        "id"
+      ]
+    },
+    "raw_transactions": {
+      "columns": {
+        "batch_id": {
+          "nullable": true,
+          "type": "VARCHAR"
+        },
+        "content_hash": {
+          "nullable": false,
+          "type": "VARCHAR(64)"
+        },
+        "created_at": {
+          "nullable": false,
+          "type": "TIMESTAMP"
+        },
+        "external_id": {
+          "nullable": true,
+          "type": "VARCHAR"
+        },
+        "raw_data": {
+          "nullable": false,
+          "type": "JSON"
+        },
+        "source": {
+          "nullable": false,
+          "type": "VARCHAR(12)"
+        },
+        "superseded_by": {
+          "nullable": true,
+          "type": "VARCHAR(64)"
+        },
+        "version": {
+          "nullable": false,
+          "type": "INTEGER"
+        }
+      },
+      "foreign_keys": [
+        "['superseded_by']->raw_transactions.['content_hash']"
+      ],
+      "indexes": {
+        "ix_raw_transactions_batch_id": {
+          "columns": [
+            "batch_id"
+          ],
+          "unique": false
+        },
+        "ix_raw_transactions_external_id": {
+          "columns": [
+            "external_id"
+          ],
+          "unique": false
+        },
+        "ix_raw_transactions_source_external_id": {
+          "columns": [
+            "source",
+            "external_id"
+          ],
+          "unique": false
+        }
+      },
+      "primary_key": [
+        "content_hash"
+      ]
+    },
+    "recurring_patterns": {
+      "columns": {
+        "amount_stddev": {
+          "nullable": false,
+          "type": "NUMERIC(14, 2)"
+        },
+        "avg_amount": {
+          "nullable": false,
+          "type": "NUMERIC(14, 2)"
+        },
+        "created_at": {
+          "nullable": false,
+          "type": "TIMESTAMP"
+        },
+        "first_seen_month": {
+          "nullable": false,
+          "type": "DATE"
+        },
+        "id": {
+          "nullable": false,
+          "type": "INTEGER"
+        },
+        "last_seen_month": {
+          "nullable": false,
+          "type": "DATE"
+        },
+        "occurrence_count": {
+          "nullable": false,
+          "type": "INTEGER"
+        },
+        "recipient": {
+          "nullable": false,
+          "type": "VARCHAR"
+        },
+        "updated_at": {
+          "nullable": false,
+          "type": "TIMESTAMP"
+        }
+      },
+      "foreign_keys": [],
+      "indexes": {
+        "ix_recurring_patterns_recipient": {
+          "columns": [
+            "recipient"
+          ],
+          "unique": false
+        }
+      },
+      "primary_key": [
+        "id"
+      ]
+    },
+    "reports": {
+      "columns": {
+        "content": {
+          "nullable": true,
+          "type": "JSON"
+        },
+        "created_at": {
+          "nullable": false,
+          "type": "TIMESTAMP"
+        },
+        "error": {
+          "nullable": true,
+          "type": "VARCHAR"
+        },
+        "format": {
+          "nullable": false,
+          "type": "VARCHAR(10)"
+        },
+        "id": {
+          "nullable": false,
+          "type": "VARCHAR"
+        },
+        "period_end": {
+          "nullable": false,
+          "type": "DATE"
+        },
+        "period_start": {
+          "nullable": false,
+          "type": "DATE"
+        },
+        "report_type": {
+          "nullable": true,
+          "type": "VARCHAR"
+        },
+        "size_bytes": {
+          "nullable": true,
+          "type": "INTEGER"
+        },
+        "status": {
+          "nullable": false,
+          "type": "VARCHAR(7)"
+        },
+        "title": {
+          "nullable": false,
+          "type": "VARCHAR"
+        },
+        "updated_at": {
+          "nullable": false,
+          "type": "TIMESTAMP"
+        }
+      },
+      "foreign_keys": [],
+      "indexes": {
+        "ix_reports_period_start": {
+          "columns": [
+            "period_start"
+          ],
+          "unique": false
+        },
+        "ix_reports_report_type": {
+          "columns": [
+            "report_type"
+          ],
+          "unique": false
+        }
+      },
+      "primary_key": [
+        "id"
+      ]
+    },
+    "reviewed_suggestions": {
+      "columns": {
+        "decided_at": {
+          "nullable": false,
+          "type": "TIMESTAMP"
+        },
+        "reason": {
+          "nullable": true,
+          "type": "VARCHAR"
+        },
+        "transaction_id": {
+          "nullable": false,
+          "type": "VARCHAR"
+        }
+      },
+      "foreign_keys": [
+        "['transaction_id']->normalized_transactions.['id']"
+      ],
+      "indexes": {},
+      "primary_key": [
+        "transaction_id"
+      ]
+    },
+    "rules": {
+      "columns": {
+        "id": {
+          "nullable": false,
+          "type": "INTEGER"
+        },
+        "priority": {
+          "nullable": false,
+          "type": "INTEGER"
+        },
+        "regex_pattern": {
+          "nullable": false,
+          "type": "VARCHAR"
+        },
+        "target_category_id": {
+          "nullable": false,
+          "type": "VARCHAR"
+        }
+      },
+      "foreign_keys": [
+        "['target_category_id']->categories.['id']"
+      ],
+      "indexes": {},
+      "primary_key": [
+        "id"
+      ]
+    },
+    "sync_runs": {
+      "columns": {
+        "data_source": {
+          "nullable": true,
+          "type": "VARCHAR(12)"
+        },
+        "error": {
+          "nullable": true,
+          "type": "VARCHAR"
+        },
+        "finished_at": {
+          "nullable": true,
+          "type": "TIMESTAMP"
+        },
+        "id": {
+          "nullable": false,
+          "type": "VARCHAR"
+        },
+        "rows_processed": {
+          "nullable": false,
+          "type": "INTEGER"
+        },
+        "source": {
+          "nullable": false,
+          "type": "VARCHAR(10)"
+        },
+        "started_at": {
+          "nullable": false,
+          "type": "TIMESTAMP"
+        },
+        "status": {
+          "nullable": false,
+          "type": "VARCHAR(9)"
+        }
+      },
+      "foreign_keys": [],
+      "indexes": {},
+      "primary_key": [
+        "id"
+      ]
+    },
+    "tags": {
+      "columns": {
+        "id": {
+          "nullable": false,
+          "type": "VARCHAR"
+        },
+        "name": {
+          "nullable": false,
+          "type": "VARCHAR"
+        }
+      },
+      "foreign_keys": [],
+      "indexes": {
+        "tags_name_key": {
+          "columns": [
+            "name"
+          ],
+          "unique": true
+        }
+      },
+      "primary_key": [
+        "id"
+      ]
+    },
+    "transaction_tags": {
+      "columns": {
+        "tag_id": {
+          "nullable": false,
+          "type": "VARCHAR"
+        },
+        "transaction_id": {
+          "nullable": false,
+          "type": "VARCHAR"
+        }
+      },
+      "foreign_keys": [
+        "['tag_id']->tags.['id']",
+        "['transaction_id']->normalized_transactions.['id']"
+      ],
+      "indexes": {},
+      "primary_key": [
+        "tag_id",
+        "transaction_id"
+      ]
+    },
+    "users": {
+      "columns": {
+        "created_at": {
+          "nullable": false,
+          "type": "TIMESTAMP"
+        },
+        "display_name": {
+          "nullable": false,
+          "type": "VARCHAR"
+        },
+        "email": {
+          "nullable": false,
+          "type": "VARCHAR"
+        },
+        "id": {
+          "nullable": false,
+          "type": "VARCHAR(36)"
+        },
+        "is_active": {
+          "nullable": false,
+          "type": "BOOLEAN"
+        },
+        "last_login_at": {
+          "nullable": true,
+          "type": "TIMESTAMP"
+        },
+        "password_hash": {
+          "nullable": false,
+          "type": "VARCHAR"
+        },
+        "role": {
+          "nullable": false,
+          "type": "VARCHAR(32)"
+        },
+        "updated_at": {
+          "nullable": false,
+          "type": "TIMESTAMP"
+        }
+      },
+      "foreign_keys": [],
+      "indexes": {
+        "ix_users_email": {
+          "columns": [
+            "email"
+          ],
+          "unique": true
+        },
+        "users_email_key": {
+          "columns": [
+            "email"
+          ],
+          "unique": true
+        }
+      },
+      "primary_key": [
+        "id"
+      ]
+    }
+  }
+}

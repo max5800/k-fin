@@ -11,7 +11,7 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
-from src.core.db.models import SyncRun, SyncSource, SyncStatus
+from src.core.db.models import SyncRun, SyncStage, SyncStatus
 
 AUTH = {"Authorization": "Bearer test-secret"}
 
@@ -45,7 +45,7 @@ def api_client(db_engine):
 def _seed(
     db_engine,
     *,
-    source: SyncSource = SyncSource.RAW_IMPORT,
+    source: SyncStage = SyncStage.RAW_IMPORT,
     status: SyncStatus = SyncStatus.SUCCEEDED,
     started_at: datetime | None = None,
     finished_at: datetime | None = None,
@@ -91,7 +91,7 @@ def test_serialises_all_fields_including_error(api_client, db_engine):
     finished = started + timedelta(seconds=42)
     run_id = _seed(
         db_engine,
-        source=SyncSource.NORMALIZE,
+        source=SyncStage.NORMALIZE,
         status=SyncStatus.FAILED,
         started_at=started,
         finished_at=finished,
@@ -123,8 +123,8 @@ def test_limit_caps_response_size(api_client, db_engine):
 
 
 def test_source_filter(api_client, db_engine):
-    _seed(db_engine, source=SyncSource.RAW_IMPORT)
-    _seed(db_engine, source=SyncSource.NORMALIZE)
+    _seed(db_engine, source=SyncStage.RAW_IMPORT)
+    _seed(db_engine, source=SyncStage.NORMALIZE)
 
     resp = api_client.get("/api/v1/sync/runs?source=normalize", headers=AUTH)
     body = resp.json()

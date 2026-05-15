@@ -19,7 +19,7 @@ from src.core.db.models import (
     RecurringPattern,
     Report,
     SyncRun,
-    SyncSource,
+    SyncStage,
     SyncStatus,
     Tag,
     TransactionTag,
@@ -81,7 +81,7 @@ def seed_data(db_engine):
         s.add(
             SyncRun(
                 id="run001",
-                source=SyncSource.NORMALIZE,
+                source=SyncStage.NORMALIZE,
                 status=SyncStatus.SUCCEEDED,
                 started_at=datetime(2026, 3, 15, 10, 0, tzinfo=timezone.utc),
                 finished_at=datetime(2026, 3, 15, 10, 1, tzinfo=timezone.utc),

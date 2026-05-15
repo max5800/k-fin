@@ -18,7 +18,7 @@ from typing import Any, Iterable
 from sqlalchemy import update
 from sqlalchemy.orm import Session
 
-from src.core.db.models import DataSource, SyncRun, SyncSource, SyncStatus
+from src.core.db.models import DataSource, SyncRun, SyncStage, SyncStatus
 from src.normalization.canonicalize import canonicalize, content_hash
 from src.normalization.pipeline import NormalizationPipeline
 
@@ -98,7 +98,7 @@ def _run_ingest(
         session.add(
             SyncRun(
                 id=run_id,
-                source=SyncSource.RAW_IMPORT,
+                source=SyncStage.RAW_IMPORT,
                 data_source=source,
                 status=SyncStatus.RUNNING,
             )

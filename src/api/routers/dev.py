@@ -41,7 +41,7 @@ from src.core.db.models import (
     NormalizedTransaction,
     RawTransaction,
     SyncRun,
-    SyncSource,
+    SyncStage,
     SyncStatus,
 )
 
@@ -519,7 +519,7 @@ def seed_dataset(db: Session = Depends(get_db)):
     sync_run_id = f"seed-{seed_run_id}"
     db.add(SyncRun(
         id=sync_run_id,
-        source=SyncSource.RAW_IMPORT,
+        source=SyncStage.RAW_IMPORT,
         data_source=DataSource.COMDIRECT,
         status=SyncStatus.SUCCEEDED,
         started_at=datetime.now(timezone.utc),

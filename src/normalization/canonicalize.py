@@ -29,14 +29,27 @@ CANONICAL_FIELDS_FOR_HASH = (
     "description",
 )
 
-# The hash bytes include the JSON key names themselves; renaming
-# `comdirect_id` → `external_id` in-place would invalidate every existing
-# content_hash and break the FK chain (`raw_transactions.content_hash` ↔
-# `normalized_transactions.raw_content_hash`, `superseded_by`). To keep
-# hashes stable across the rename, the JSON key for `external_id` is
-# serialized as `comdirect_id` for the legacy `comdirect` source — every
-# existing row stays addressable, new sources hash with their own keys.
-_HASH_KEY_OVERRIDES_LEGACY_COMDIRECT = {"external_id": "comdirect_id"}
+# Comdirect hashing is deliberately special-cased for byte-stability.
+#
+# 1. Key name: the hash bytes include the JSON key names, so renaming
+#    `comdirect_id` → `external_id` would invalidate every existing
+#    content_hash and break the FK chain (`raw_transactions.content_hash`
+#    ↔ `normalized_transactions.raw_content_hash`, `superseded_by`). The
+#    comdirect hash keeps the legacy `comdirect_id` key.
+# 2. Value: the comdirect API leaves `transactionId` empty for booked
+#    transactions, so the comdirect hash has *always* been computed with
+#    a null identity field. M16-P1-Follow-up now populates `external_id`
+#    from the API `reference` for version-chain detection — but feeding
+#    that into the hash would change every pre-existing content_hash and
+#    duplicate all historical rows on the next sync. So `external_id` is
+#    forced to `null` in the comdirect hash: it stays a pure *content*
+#    fingerprint, byte-identical to legacy rows. Identity for comdirect
+#    lives in the `external_id` *column*, not the hash.
+#
+# Non-comdirect sources (PayPal, Santander) hash `external_id` normally
+# under its own key — they have a reliable per-transaction id, and the
+# hash must distinguish two same-content transactions with different ids.
+_COMDIRECT_HASH_IDENTITY_KEY = "comdirect_id"
 
 
 def canonicalize(raw: dict[str, Any]) -> dict[str, Any]:
@@ -90,6 +103,13 @@ def canonicalize(raw: dict[str, Any]) -> dict[str, Any]:
 
     # debit (negative amount): money flows to creditor → recipient=creditor
     # credit (positive amount): money comes from debtor → sender=debtor
+    #
+    # P2b/P2c extension point: PayPal/Santander transactions carry no IBAN.
+    # When `*_iban` is empty, `sender`/`recipient` must fall back to the
+    # payer email / merchant name supplied by those providers. Not wired
+    # up here yet — no non-Comdirect source exists, and the adapters in
+    # `paypal_canonicalize.py` / `santander_canonicalize.py` will produce
+    # the canonical dict for those sources (see plan M16-P2b/P2c).
     if amount < 0:
         sender = None
         sender_iban = None
@@ -110,8 +130,22 @@ def canonicalize(raw: dict[str, Any]) -> dict[str, Any]:
         or ""
     )
 
+    # external_id: comdirect leaves `transactionId` empty for booked
+    # transactions — fall back to `reference`, the API's stable, unique
+    # per-booking identifier (M16-P1-Follow-up). `reference` may sit at
+    # the top level (nested API shape / flat export) or inside the
+    # captured `source_payload`. PayPal/Santander supply `transaction_id`.
+    source_payload = raw.get("source_payload") or {}
+    external_id = (
+        raw.get("transactionId")
+        or raw.get("transaction_id")
+        or raw.get("reference")
+        or source_payload.get("reference")
+        or None
+    )
+
     return {
-        "external_id": raw.get("transactionId") or raw.get("transaction_id") or None,
+        "external_id": external_id,
         "booking_date": _parse_date(booking_date),
         "valuation_date": _parse_date(valuation_date),
         "amount": amount,
@@ -127,23 +161,31 @@ def canonicalize(raw: dict[str, Any]) -> dict[str, Any]:
 def content_hash(canonical: dict[str, Any], *, source: str = "comdirect") -> str:
     """SHA256 over the canonical identity fields.
 
-    Two raw payloads that project to identical canonical values will
-    share a hash; corrections that change any identity field produce a
-    new hash.
+    Two raw payloads that project to identical canonical values share a
+    hash; corrections that change any hashed field produce a new hash.
 
-    For ``source="comdirect"`` the JSON key for ``external_id`` is
-    written as ``comdirect_id`` so hashes computed against pre-migration
-    rows stay byte-identical. Non-comdirect sources hash with the
-    current key names — cross-source uniqueness is enforced separately
-    by a DB ``UNIQUE(source, external_id)`` index.
+    ``source="comdirect"`` is special-cased for byte-stability (see the
+    ``_COMDIRECT_HASH_IDENTITY_KEY`` comment): the identity field is
+    serialized under the legacy ``comdirect_id`` key **and forced to
+    null**, so the comdirect hash is a pure content fingerprint and
+    every pre-existing ``content_hash`` stays valid even though the
+    ``external_id`` column is now populated from ``reference``.
+
+    Non-comdirect sources hash ``external_id`` normally — cross-source
+    uniqueness relies on it, and the DB scopes lookups by
+    ``(source, external_id)``.
     """
-    overrides = (
-        _HASH_KEY_OVERRIDES_LEGACY_COMDIRECT if source == "comdirect" else {}
-    )
-    payload = {
-        overrides.get(k, k): _json_default(canonical.get(k))
-        for k in CANONICAL_FIELDS_FOR_HASH
-    }
+    if source == "comdirect":
+        payload: dict[str, Any] = {}
+        for k in CANONICAL_FIELDS_FOR_HASH:
+            if k == "external_id":
+                payload[_COMDIRECT_HASH_IDENTITY_KEY] = None
+            else:
+                payload[k] = _json_default(canonical.get(k))
+    else:
+        payload = {
+            k: _json_default(canonical.get(k)) for k in CANONICAL_FIELDS_FOR_HASH
+        }
     blob = json.dumps(payload, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(blob.encode("utf-8")).hexdigest()
 
