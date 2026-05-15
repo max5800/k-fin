@@ -49,8 +49,12 @@ class SyncStatus(str, enum.Enum):
     FAILED = "failed"
 
 
-class SyncSource(str, enum.Enum):
-    """Pipeline stage of a sync run — kept name for backwards compat; semantically a *stage* enum."""
+class SyncStage(str, enum.Enum):
+    """Pipeline stage of a sync run (raw import vs. normalize pass).
+
+    Distinct from `DataSource`, which is the upstream *provider*. The two
+    were historically conflated under the misleading name `SyncSource`.
+    """
 
     RAW_IMPORT = "raw_import"
     NORMALIZE = "normalize"
@@ -402,8 +406,12 @@ class SyncRun(Base):
     __tablename__ = "sync_runs"
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
-    source: Mapped[SyncSource] = mapped_column(
-        SQLEnum(SyncSource, values_callable=lambda e: [m.value for m in e]),
+    source: Mapped[SyncStage] = mapped_column(
+        SQLEnum(
+            SyncStage,
+            name="sync_stage_enum",
+            values_callable=lambda e: [m.value for m in e],
+        ),
         nullable=False,
     )
     data_source: Mapped[Optional[DataSource]] = mapped_column(

@@ -77,6 +77,13 @@ jobs:
           DATABASE_URL: postgresql+psycopg://finance:testpassword@localhost:5432/finance
         run: uv run alembic current 2>&1 | grep -q "(head)"
 
+      - name: Reverse migrations to base and re-apply
+        env:
+          DATABASE_URL: postgresql+psycopg://finance:testpassword@localhost:5432/finance
+        run: |
+          uv run python scripts/migrate.py downgrade
+          uv run python scripts/migrate.py upgrade
+
   docker-build:
     name: Docker Build
     runs-on: ubuntu-latest

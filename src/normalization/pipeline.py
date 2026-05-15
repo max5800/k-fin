@@ -30,7 +30,7 @@ from src.core.db.models import (
     RecurringPattern,
     Rule,
     SyncRun,
-    SyncSource,
+    SyncStage,
     SyncStatus,
 )
 from src.normalization.canonicalize import canonicalize
@@ -182,7 +182,7 @@ class NormalizationPipeline:
         with Session(self.engine) as session:
             session.add(
                 SyncRun(
-                    id=run_id, source=SyncSource.NORMALIZE, status=SyncStatus.RUNNING
+                    id=run_id, source=SyncStage.NORMALIZE, status=SyncStatus.RUNNING
                 )
             )
             session.commit()
@@ -195,6 +195,7 @@ class NormalizationPipeline:
 
                 df = self._apply_rules(df, session)
                 df = self._flag_internal_transfers(df, self.own_ibans)
+                df = self._flag_cross_source_transfers(df)
                 df, patterns = self._flag_recurring(df)
                 df = self._flag_outliers(df)
 
@@ -315,6 +316,28 @@ class NormalizationPipeline:
                     break
 
         return df.drop(columns=["_cents", "_abs_cents", "_bdate"])
+
+    @staticmethod
+    def _flag_cross_source_transfers(df: pd.DataFrame) -> pd.DataFrame:
+        """Cross-source internal-transfer match site — P2b/P2c fill this in.
+
+        The IBAN matcher above only pairs Comdirect↔Comdirect transfers
+        (PayPal/Santander carry no IBAN). Once those providers land, the
+        collapsed counterparts must be matched on amount + date instead:
+
+        - P2b: a PayPal "Bank Deposit to PP Account" transaction against
+          the Comdirect "PAYPAL EUROPE" lump posting, ±2 days, exact
+          amount → both `internal_transfer=True`.
+        - P2c: the sum of Santander credit-card line items in a billing
+          cycle against the Comdirect "Santander … Kartenabrechnung"
+          lump posting, ±3 days, exact sum → the Comdirect lump posting
+          `internal_transfer=True`.
+
+        No-op today: no non-Comdirect source exists yet. Kept as an
+        explicit, registered call site so P2b/P2c plug in here without
+        re-touching the pipeline wiring.
+        """
+        return df
 
     @staticmethod
     def _flag_recurring(df: pd.DataFrame) -> tuple[pd.DataFrame, list[dict[str, Any]]]:

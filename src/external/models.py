@@ -49,6 +49,11 @@ class ComdirectTransaction(BaseModel):
     """A bank account transaction (Umsatz)."""
 
     transaction_id: str = ""
+    # Comdirect's stable, unique per-booking identifier. `transaction_id`
+    # (API `transactionId`) is empty for booked transactions, so
+    # `reference` is the source for `external_id` — see canonicalize.py
+    # and plan M16-P1-Follow-up.
+    reference: str = ""
     booking_date: str = ""
     value_date: str = ""
     amount: float = 0.0
@@ -59,6 +64,13 @@ class ComdirectTransaction(BaseModel):
     creditor_iban: str = ""
     debtor_name: str = ""
     debtor_iban: str = ""
+    # The unmodified upstream API dict. The flat fields above keep only
+    # 11 of the ~17 fields Comdirect returns; `source_payload` preserves
+    # the rest (`reference`, `endToEndReference`, `directDebitMandateId`,
+    # …) so the ingest layer can persist a genuinely complete `raw_data`
+    # audit blob. Ignored by `canonicalize()` — does not affect
+    # `content_hash`. See plan M16-P1-Follow-up (external_id sourcing).
+    source_payload: dict = Field(default_factory=dict)
 
     @model_validator(mode="before")
     @classmethod
@@ -79,6 +91,7 @@ class ComdirectTransaction(BaseModel):
 
         return {
             "transaction_id": data.get("transactionId") or data.get("transaction_id") or "",
+            "reference": data.get("reference") or "",
             "booking_date": data.get("bookingDate") or data.get("booking_date") or "",
             "value_date": data.get("valutaDate") or data.get("value_date") or "",
             "amount": amount,
@@ -89,6 +102,11 @@ class ComdirectTransaction(BaseModel):
             "creditor_iban": creditor.get("iban") or data.get("creditor_iban") or "",
             "debtor_name": debtor.get("holderName") or data.get("debtor_name") or "",
             "debtor_iban": debtor.get("iban") or data.get("debtor_iban") or "",
+            # Preserve the upstream dict verbatim. On re-validation of an
+            # already-dumped model, reuse the captured payload rather
+            # than nesting it inside itself.
+            "source_payload": data.get("source_payload")
+            or {k: v for k, v in data.items() if k != "source_payload"},
         }
 
     @property
