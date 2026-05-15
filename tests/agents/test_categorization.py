@@ -62,7 +62,7 @@ def seeded_engine(db_engine):
         s.add(
             RawTransaction(
                 content_hash="a" * 64,
-                comdirect_id="CD-1",
+                external_id="CD-1",
                 raw_data={"stub": True},
             )
         )

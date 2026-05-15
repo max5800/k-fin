@@ -52,15 +52,15 @@ def seed_export_data(db_engine):
         s.add(Tag(id="important", name="Wichtig"))
         s.add(Tag(id="review", name="Pruefen"))
 
-        s.add(RawTransaction(content_hash="a" * 64, comdirect_id="CD001", raw_data={"stub": True}))
-        s.add(RawTransaction(content_hash="b" * 64, comdirect_id="CD002", raw_data={"stub": True}))
+        s.add(RawTransaction(content_hash="a" * 64, external_id="CD001", raw_data={"stub": True}))
+        s.add(RawTransaction(content_hash="b" * 64, external_id="CD002", raw_data={"stub": True}))
         s.flush()
 
         s.add(
             NormalizedTransaction(
                 id="txnE1",
                 raw_content_hash="a" * 64,
-                comdirect_id="CD001",
+                external_id="CD001",
                 booking_date=date(2026, 4, 10),
                 valuation_date=date(2026, 4, 11),
                 amount=Decimal("-42.50"),
@@ -78,7 +78,7 @@ def seed_export_data(db_engine):
             NormalizedTransaction(
                 id="txnE2",
                 raw_content_hash="b" * 64,
-                comdirect_id="CD002",
+                external_id="CD002",
                 booking_date=date(2026, 3, 1),
                 valuation_date=date(2026, 3, 1),
                 amount=Decimal("3500.00"),

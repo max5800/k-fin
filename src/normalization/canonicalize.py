@@ -1,4 +1,4 @@
-"""Shared canonical mapping from a raw Comdirect payload dict to the
+"""Shared canonical mapping from a raw provider payload dict to the
 flat, normalized shape used everywhere downstream (hash, ingest, pipeline).
 
 The pipeline and the ingest bridge must agree on *exactly* which fields
@@ -17,7 +17,7 @@ from decimal import Decimal
 from typing import Any
 
 CANONICAL_FIELDS_FOR_HASH = (
-    "comdirect_id",
+    "external_id",
     "booking_date",
     "valuation_date",
     "amount",
@@ -28,6 +28,15 @@ CANONICAL_FIELDS_FOR_HASH = (
     "recipient_iban",
     "description",
 )
+
+# The hash bytes include the JSON key names themselves; renaming
+# `comdirect_id` → `external_id` in-place would invalidate every existing
+# content_hash and break the FK chain (`raw_transactions.content_hash` ↔
+# `normalized_transactions.raw_content_hash`, `superseded_by`). To keep
+# hashes stable across the rename, the JSON key for `external_id` is
+# serialized as `comdirect_id` for the legacy `comdirect` source — every
+# existing row stays addressable, new sources hash with their own keys.
+_HASH_KEY_OVERRIDES_LEGACY_COMDIRECT = {"external_id": "comdirect_id"}
 
 
 def canonicalize(raw: dict[str, Any]) -> dict[str, Any]:
@@ -102,7 +111,7 @@ def canonicalize(raw: dict[str, Any]) -> dict[str, Any]:
     )
 
     return {
-        "comdirect_id": raw.get("transactionId") or raw.get("transaction_id") or None,
+        "external_id": raw.get("transactionId") or raw.get("transaction_id") or None,
         "booking_date": _parse_date(booking_date),
         "valuation_date": _parse_date(valuation_date),
         "amount": amount,
@@ -115,14 +124,26 @@ def canonicalize(raw: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def content_hash(canonical: dict[str, Any]) -> str:
+def content_hash(canonical: dict[str, Any], *, source: str = "comdirect") -> str:
     """SHA256 over the canonical identity fields.
 
     Two raw payloads that project to identical canonical values will
-    share a hash; Comdirect corrections that change any identity field
-    produce a new hash.
+    share a hash; corrections that change any identity field produce a
+    new hash.
+
+    For ``source="comdirect"`` the JSON key for ``external_id`` is
+    written as ``comdirect_id`` so hashes computed against pre-migration
+    rows stay byte-identical. Non-comdirect sources hash with the
+    current key names — cross-source uniqueness is enforced separately
+    by a DB ``UNIQUE(source, external_id)`` index.
     """
-    payload = {k: _json_default(canonical.get(k)) for k in CANONICAL_FIELDS_FOR_HASH}
+    overrides = (
+        _HASH_KEY_OVERRIDES_LEGACY_COMDIRECT if source == "comdirect" else {}
+    )
+    payload = {
+        overrides.get(k, k): _json_default(canonical.get(k))
+        for k in CANONICAL_FIELDS_FOR_HASH
+    }
     blob = json.dumps(payload, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(blob.encode("utf-8")).hexdigest()
 

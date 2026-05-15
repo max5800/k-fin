@@ -37,6 +37,7 @@ from src.core.config import settings
 from src.core.db.categories import INCOME_CATCHALL_CATEGORY_ID
 from src.core.db.models import (
     Category,
+    DataSource,
     NormalizedTransaction,
     RawTransaction,
     SyncRun,
@@ -519,6 +520,7 @@ def seed_dataset(db: Session = Depends(get_db)):
     db.add(SyncRun(
         id=sync_run_id,
         source=SyncSource.RAW_IMPORT,
+        data_source=DataSource.COMDIRECT,
         status=SyncStatus.SUCCEEDED,
         started_at=datetime.now(timezone.utc),
         finished_at=datetime.now(timezone.utc),
@@ -532,7 +534,8 @@ def seed_dataset(db: Session = Depends(get_db)):
         content_hash = _hash(seed_run_id, i)
         db.add(RawTransaction(
             content_hash=content_hash,
-            comdirect_id=f"SEED-{seed_run_id}-{i:04d}",
+            source=DataSource.COMDIRECT,
+            external_id=f"SEED-{seed_run_id}-{i:04d}",
             raw_data={"seed": True, "seed_run_id": seed_run_id, "index": i},
         ))
     db.flush()
@@ -542,7 +545,8 @@ def seed_dataset(db: Session = Depends(get_db)):
         db.add(NormalizedTransaction(
             id=content_hash,
             raw_content_hash=content_hash,
-            comdirect_id=f"SEED-{seed_run_id}-{i:04d}",
+            source=DataSource.COMDIRECT,
+            external_id=f"SEED-{seed_run_id}-{i:04d}",
             booking_date=spec.booking_date,
             valuation_date=spec.booking_date,
             amount=spec.amount,

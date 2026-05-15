@@ -94,7 +94,7 @@ def seed_data(db_engine):
             s.add(
                 RawTransaction(
                     content_hash=hash_char * 64,
-                    comdirect_id=cid,
+                    external_id=cid,
                     raw_data={"stub": True},
                 )
             )
@@ -106,7 +106,7 @@ def seed_data(db_engine):
             NormalizedTransaction(
                 id="txn001",
                 raw_content_hash="a" * 64,
-                comdirect_id="CD001",
+                external_id="CD001",
                 booking_date=date(2026, 3, 15),
                 valuation_date=date(2026, 3, 15),
                 amount=Decimal("-42.50"),
@@ -126,7 +126,7 @@ def seed_data(db_engine):
             NormalizedTransaction(
                 id="txn002",
                 raw_content_hash="b" * 64,
-                comdirect_id="CD002",
+                external_id="CD002",
                 booking_date=date(2026, 3, 1),
                 valuation_date=date(2026, 3, 1),
                 amount=Decimal("-850.00"),

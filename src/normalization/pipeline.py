@@ -24,6 +24,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
 from src.core.db.models import (
+    DataSource,
     NormalizedTransaction,
     RawTransaction,
     RecurringPattern,
@@ -116,14 +117,16 @@ class NormalizationPipeline:
         """Insert raw rows with versioning.
 
         Each row dict must provide: `content_hash`, `raw_data`, and
-        optionally `comdirect_id` and `batch_id`. Returns the number of
-        newly-inserted rows.
+        optionally `source`, `external_id`, and `batch_id`. Returns the
+        number of newly-inserted rows. Rows without an explicit `source`
+        default to `DataSource.COMDIRECT` for backward compatibility.
         """
         inserted = 0
         with Session(self.engine) as session:
             for item in rows:
                 content_hash = item["content_hash"]
-                comdirect_id = item.get("comdirect_id")
+                external_id = item.get("external_id")
+                source = item.get("source") or DataSource.COMDIRECT
 
                 existing = session.get(RawTransaction, content_hash)
                 if existing is not None:
@@ -131,11 +134,12 @@ class NormalizationPipeline:
 
                 version = 1
                 prev_hash: str | None = None
-                if comdirect_id:
+                if external_id:
                     active = (
                         session.execute(
                             select(RawTransaction)
-                            .where(RawTransaction.comdirect_id == comdirect_id)
+                            .where(RawTransaction.source == source)
+                            .where(RawTransaction.external_id == external_id)
                             .where(RawTransaction.superseded_by.is_(None))
                         )
                         .scalars()
@@ -149,7 +153,8 @@ class NormalizationPipeline:
                 session.add(
                     RawTransaction(
                         content_hash=content_hash,
-                        comdirect_id=comdirect_id,
+                        source=source,
+                        external_id=external_id,
                         raw_data=item["raw_data"],
                         version=version,
                         batch_id=item.get("batch_id"),
@@ -223,7 +228,8 @@ class NormalizationPipeline:
                 {
                     "id": raw.content_hash,
                     "raw_content_hash": raw.content_hash,
-                    "comdirect_id": canonical["comdirect_id"] or raw.comdirect_id,
+                    "source": raw.source,
+                    "external_id": canonical["external_id"] or raw.external_id,
                     "booking_date": canonical["booking_date"],
                     "valuation_date": canonical["valuation_date"]
                     or canonical["booking_date"],
@@ -450,7 +456,8 @@ class NormalizationPipeline:
             stmt = pg_insert(NormalizedTransaction).values(
                 id=row["id"],
                 raw_content_hash=row["raw_content_hash"],
-                comdirect_id=_nan_to_none(row.get("comdirect_id")),
+                source=row.get("source") or DataSource.COMDIRECT,
+                external_id=_nan_to_none(row.get("external_id")),
                 booking_date=row["booking_date"],
                 valuation_date=row["valuation_date"],
                 amount=row["amount"],

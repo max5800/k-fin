@@ -60,7 +60,7 @@ def test_ground_truth_end_to_end(postgres_url, db_engine):
     assert len(df) == len(transactions)
 
     with Session(db_engine) as session:
-        normalized = {n.comdirect_id: n for n in session.query(NormalizedTransaction).all()}
+        normalized = {n.external_id: n for n in session.query(NormalizedTransaction).all()}
 
     mismatches: list[str] = []
     for tx_id, exp in expected.items():
@@ -176,7 +176,7 @@ def test_corrected_transaction_creates_new_version(postgres_url, db_engine):
     with Session(db_engine) as session:
         rows_for_id = (
             session.query(RawTransaction)
-            .filter(RawTransaction.comdirect_id == originals[0]["transaction_id"])
+            .filter(RawTransaction.external_id == originals[0]["transaction_id"])
             .order_by(RawTransaction.version)
             .all()
         )
