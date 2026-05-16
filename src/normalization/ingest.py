@@ -19,6 +19,7 @@ from sqlalchemy import update
 from sqlalchemy.orm import Session
 
 from src.core.db.models import DataSource, SyncRun, SyncStage, SyncStatus
+from src.external.provider import CanonicalTransaction
 from src.normalization.canonicalize import canonicalize, content_hash
 from src.normalization.pipeline import NormalizationPipeline
 
@@ -60,6 +61,45 @@ def ingest_transactions(
     batch = batch_id or f"inproc-{datetime.now(timezone.utc).isoformat()}"
     rows = [_build_row(tx, batch_id=batch, source=source) for tx in transactions]
     return _run_ingest(pipeline, rows, batch_id=batch, source=source)
+
+
+def ingest_canonical(
+    pipeline: NormalizationPipeline,
+    transactions: Iterable[CanonicalTransaction],
+    *,
+    batch_id: str | None = None,
+    source: DataSource = DataSource.COMDIRECT,
+) -> int:
+    """Ingest a stream of provider-emitted `CanonicalTransaction`s.
+
+    The M16-P2a provider path (`BankProvider.complete_sync`) yields
+    `CanonicalTransaction` objects that already carry the canonical dict
+    and the original payload. This entrypoint builds raw rows from them
+    directly — it does **not** re-run `canonicalize()` — so the
+    `content_hash` is byte-identical to the file-import path
+    (`ingest_json_export`). Returns the number of newly-inserted rows.
+    """
+    batch = batch_id or f"provider-{datetime.now(timezone.utc).isoformat()}"
+    rows = [_row_from_canonical(ct, batch_id=batch) for ct in transactions]
+    return _run_ingest(pipeline, rows, batch_id=batch, source=source)
+
+
+def _row_from_canonical(
+    ct: CanonicalTransaction, *, batch_id: str
+) -> dict[str, Any]:
+    """Build a raw_transactions row from an already-canonicalized transaction.
+
+    Mirrors `_build_row` exactly — same `content_hash` inputs, same key
+    layout — but skips `canonicalize()` because the provider already ran
+    it. `ct.source` selects the source-specific hashing rule.
+    """
+    return {
+        "content_hash": content_hash(ct.canonical, source=ct.source.value),
+        "source": ct.source,
+        "external_id": ct.canonical.get("external_id") or None,
+        "raw_data": ct.raw_data,
+        "batch_id": batch_id,
+    }
 
 
 def _rows_from_json_payload(

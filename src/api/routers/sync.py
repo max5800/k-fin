@@ -24,22 +24,6 @@ class SyncStartRequest(BaseModel):
     )
 
 
-@router.post("/start")
-async def sync_start(payload: SyncStartRequest | None = Body(default=None)):
-    """Begin a sync run — triggers pushTAN challenge via the internal worker."""
-    try:
-        async with httpx.AsyncClient(timeout=30) as client:
-            resp = await client.post(
-                f"{settings.worker_url}/internal/sync/start",
-                json=(payload.model_dump(exclude_none=True) if payload else None),
-            )
-            return resp.json()
-    except httpx.ConnectError:
-        raise HTTPException(status_code=503, detail="Worker service unreachable")
-    except httpx.HTTPError as e:
-        raise HTTPException(status_code=503, detail=f"Worker communication failed: {e}")
-
-
 @router.post("/normalize")
 async def normalize():
     """Re-run normalization pipeline over existing raw_transactions."""
@@ -47,22 +31,6 @@ async def normalize():
         async with httpx.AsyncClient(timeout=120) as client:
             resp = await client.post(
                 f"{settings.worker_url}/internal/normalize",
-            )
-            return resp.json()
-    except httpx.ConnectError:
-        raise HTTPException(status_code=503, detail="Worker service unreachable")
-    except httpx.HTTPError as e:
-        raise HTTPException(status_code=503, detail=f"Worker communication failed: {e}")
-
-
-@router.post("/confirm")
-async def sync_confirm(session_id: str):
-    """Confirm TAN and complete sync via the internal worker."""
-    try:
-        async with httpx.AsyncClient(timeout=120) as client:
-            resp = await client.post(
-                f"{settings.worker_url}/internal/sync/confirm",
-                params={"session_id": session_id},
             )
             return resp.json()
     except httpx.ConnectError:
@@ -180,3 +148,58 @@ def list_sync_runs(
     if source is not None:
         stmt = stmt.where(SyncRun.source == source)
     return db.execute(stmt).scalars().all()
+
+
+# ---------------------------------------------------------------------------
+# Provider-neutral sync — generic over the data source (M16-P2a).
+#
+# Declared last so the `{source_id}` path parameter cannot shadow the
+# explicit `/backfill/...`, `/normalize` and `/runs` routes above.
+# ---------------------------------------------------------------------------
+
+
+@router.post("/{source_id}/start")
+async def sync_start(
+    source_id: str, payload: SyncStartRequest | None = Body(default=None)
+):
+    """Begin a sync run for a data source — triggers its TAN challenge.
+
+    Proxies to the worker, which routes ``source_id`` through the
+    provider registry. The response carries a ``provider`` block
+    (display name + TAN kind) the UI TAN modal renders.
+    """
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.post(
+                f"{settings.worker_url}/internal/sync/{source_id}",
+                json=(payload.model_dump(exclude_none=True) if payload else None),
+            )
+            if resp.status_code >= 400:
+                raise HTTPException(
+                    status_code=resp.status_code, detail=_safe_json_detail(resp)
+                )
+            return resp.json()
+    except httpx.ConnectError:
+        raise HTTPException(status_code=503, detail="Worker service unreachable")
+    except httpx.HTTPError as e:
+        raise HTTPException(status_code=503, detail=f"Worker communication failed: {e}")
+
+
+@router.post("/{source_id}/complete")
+async def sync_complete(source_id: str, session_id: str):
+    """Confirm the TAN and complete a sync run via the internal worker."""
+    try:
+        async with httpx.AsyncClient(timeout=120) as client:
+            resp = await client.post(
+                f"{settings.worker_url}/internal/sync/{source_id}/complete",
+                params={"session_id": session_id},
+            )
+            if resp.status_code >= 400:
+                raise HTTPException(
+                    status_code=resp.status_code, detail=_safe_json_detail(resp)
+                )
+            return resp.json()
+    except httpx.ConnectError:
+        raise HTTPException(status_code=503, detail="Worker service unreachable")
+    except httpx.HTTPError as e:
+        raise HTTPException(status_code=503, detail=f"Worker communication failed: {e}")
