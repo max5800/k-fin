@@ -1,0 +1,62 @@
+{
+  "_comment": "Dummy Santander Consumer Bank credit-card API fixtures (M16-P2c). All values are obvious fakes — card 4111 1111 1111 1111 (last4 1111), TEST-* ids, dummy merchants, obvious test amounts. No real data.",
+  "login_response": { "challengeId": "TEST-CHALLENGE-1" },
+  "login_remembered_device": { "challengeId": null },
+  "session_elevated": { "elevated": true },
+  "session_pending": { "elevated": false },
+  "cards_response": {
+    "cards": [
+      { "id": "TEST-CARD-1", "maskedNumber": "1111", "productName": "1plus Visa Card" }
+    ]
+  },
+  "transactions_response": {
+    "transactions": [
+      {
+        "id": "TEST-TX-EUR",
+        "bookingDate": "2026-05-04",
+        "valueDate": "2026-05-05",
+        "merchant": "REWE Markt",
+        "merchantCountry": "DE",
+        "amount": "-42.50",
+        "currency": "EUR",
+        "cardLast4": "1111",
+        "pending": false
+      },
+      {
+        "id": "TEST-TX-USD",
+        "bookingDate": "2026-05-08",
+        "valueDate": "2026-05-10",
+        "merchant": "AMZN Mktp US",
+        "merchantCountry": "US",
+        "amount": "-91.80",
+        "currency": "EUR",
+        "originalAmount": "-99.00",
+        "originalCurrency": "USD",
+        "cardLast4": "1111",
+        "pending": false
+      },
+      {
+        "id": "TEST-TX-GBP",
+        "bookingDate": "2026-05-09",
+        "valueDate": "2026-05-11",
+        "merchant": "British Rail",
+        "merchantCountry": "GB",
+        "amount": "-58.20",
+        "currency": "EUR",
+        "originalAmount": "-49.00",
+        "originalCurrency": "GBP",
+        "cardLast4": "1111",
+        "pending": false
+      },
+      {
+        "bookingDate": "2026-05-11",
+        "merchant": "Cafe Central",
+        "merchantCountry": "DE",
+        "amount": "-7.40",
+        "currency": "EUR",
+        "cardLast4": "1111",
+        "pending": true
+      }
+    ]
+  }
+}

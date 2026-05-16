@@ -557,6 +557,14 @@
           "nullable": false,
           "type": "BOOLEAN"
         },
+        "original_amount": {
+          "nullable": true,
+          "type": "NUMERIC(14, 2)"
+        },
+        "original_currency": {
+          "nullable": true,
+          "type": "VARCHAR(3)"
+        },
         "raw_content_hash": {
           "nullable": false,
           "type": "VARCHAR(64)"

@@ -12,6 +12,7 @@ from src.core.db.models import DataSource
 from src.external.comdirect_provider import ComdirectProvider
 from src.external.paypal_provider import PayPalProvider
 from src.external.provider import BankProvider
+from src.external.santander_provider import SantanderProvider
 
 #: The single source of truth for source → provider. Lookup is by the
 #: ``DataSource`` enum value (the ``source_id`` path segment on the
@@ -19,6 +20,7 @@ from src.external.provider import BankProvider
 PROVIDERS: dict[DataSource, type[BankProvider]] = {
     DataSource.COMDIRECT: ComdirectProvider,
     DataSource.PAYPAL: PayPalProvider,
+    DataSource.SANTANDER_CC: SantanderProvider,
 }
 
 

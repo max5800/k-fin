@@ -6,6 +6,6 @@
   {"pattern": "acme\\s*gmbh.*gehalt",    "category": "salary",     "priority": 100},
   {"pattern": "rewe|edeka|aldi|lidl",    "category": "groceries",  "priority": 50},
   {"pattern": "shell|aral|esso",         "category": "fuel",       "priority": 50},
-  {"pattern": "restaurant|pizzeria|cafe","category": "dining",     "priority": 40},
-  {"pattern": "amazon",                  "category": "shopping",   "priority": 40}
+  {"pattern": "restaurant|pizzeria|cafe|bistro","category": "dining",  "priority": 40},
+  {"pattern": "amazon|amzn",             "category": "shopping",   "priority": 40}
 ]

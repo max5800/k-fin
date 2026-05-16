@@ -164,3 +164,95 @@ def test_each_side_consumed_once():
 def test_empty_frame_is_noop():
     out = _flag(pd.DataFrame())
     assert out.empty
+
+
+# ── P2c — Santander credit-card settlement ──────────────────────────────
+
+
+def _santander(id_: str, amount: float, day: str, merchant: str = "Merchant"):
+    return _row(
+        id=id_,
+        source=DataSource.SANTANDER_CC,
+        amount=amount,
+        booking_date=day,
+        description=merchant,
+    )
+
+
+def test_santander_settlement_flags_only_the_comdirect_posting():
+    """The Comdirect lump posting is flagged; the card charges stay un-flagged."""
+    df = _frame(
+        [
+            _santander("s-1", -90.00, "2026-05-04", "REWE"),
+            _santander("s-2", -60.00, "2026-05-18", "Amazon"),
+            _row(
+                id="cd-1",
+                source=DataSource.COMDIRECT,
+                amount=-150.00,
+                booking_date="2026-06-02",
+                recipient="Santander Consumer Bank Kartenabrechnung",
+            ),
+        ]
+    )
+    out = _flag(df)
+    flags = dict(zip(out["id"], out["internal_transfer"]))
+    assert flags["cd-1"] is True or flags["cd-1"]
+    # The real spend stays counted exactly once — the charges are not flagged.
+    assert not flags["s-1"]
+    assert not flags["s-2"]
+
+
+def test_santander_sum_includes_refunds():
+    """A mid-cycle refund nets against the charges before the sum match."""
+    df = _frame(
+        [
+            _santander("s-1", -100.00, "2026-05-03"),
+            _santander("s-2", -60.00, "2026-05-12"),
+            _santander("s-3", 10.00, "2026-05-20", "Refund"),  # net = -150.00
+            _row(
+                id="cd-1",
+                source=DataSource.COMDIRECT,
+                amount=-150.00,
+                booking_date="2026-06-01",
+                recipient="SANTANDER KARTENABRECHNUNG",
+            ),
+        ]
+    )
+    out = _flag(df)
+    assert dict(zip(out["id"], out["internal_transfer"]))["cd-1"]
+
+
+def test_teilzahlung_does_not_match():
+    """A partial / instalment payment ≠ the cycle sum → no false positive."""
+    df = _frame(
+        [
+            _santander("s-1", -90.00, "2026-05-04"),
+            _santander("s-2", -60.00, "2026-05-18"),
+            _row(
+                id="cd-1",
+                source=DataSource.COMDIRECT,
+                amount=-50.00,  # partial payment, not the -150.00 cycle sum
+                booking_date="2026-06-02",
+                recipient="Santander Kartenabrechnung Teilzahlung",
+            ),
+        ]
+    )
+    out = _flag(df)
+    assert not out["internal_transfer"].any()
+
+
+def test_unrelated_comdirect_debit_not_named_santander_is_untouched():
+    df = _frame(
+        [
+            _santander("s-1", -150.00, "2026-05-04"),
+            _row(
+                id="cd-1",
+                source=DataSource.COMDIRECT,
+                amount=-150.00,
+                booking_date="2026-06-02",
+                recipient="REWE Markt GmbH",
+            ),
+        ]
+    )
+    out = _flag(df)
+    assert not out["internal_transfer"].any()
