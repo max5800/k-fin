@@ -1,0 +1,81 @@
+{
+  "_comment": "Dummy PayPal Transaction Search API fixtures (M16-P2b). All values are obvious fakes — sandbox-style account, max@example.com, TEST-* ids.",
+  "transaction_details": [
+    {
+      "transaction_info": {
+        "paypal_account_id": "TESTACCOUNT0001",
+        "transaction_id": "TEST-TXN-PURCHASE-EUR",
+        "transaction_event_code": "T0006",
+        "transaction_initiation_date": "2026-05-10T14:23:00+0000",
+        "transaction_updated_date": "2026-05-10T14:23:05+0000",
+        "transaction_amount": { "currency_code": "EUR", "value": "-19.99" },
+        "fee_amount": { "currency_code": "EUR", "value": "0.00" },
+        "transaction_status": "S",
+        "transaction_subject": "Steam Wallet Code"
+      },
+      "payer_info": {
+        "account_id": "TESTMERCHANT001",
+        "email_address": "shop@example.com",
+        "payer_name": { "alternate_full_name": "PAYPAL *STEAMGAMES" }
+      },
+      "cart_info": {
+        "item_details": [
+          {
+            "item_name": "Steam Wallet Code 20 EUR",
+            "item_quantity": "1",
+            "item_amount": { "currency_code": "EUR", "value": "-19.99" }
+          }
+        ]
+      }
+    },
+    {
+      "transaction_info": {
+        "paypal_account_id": "TESTACCOUNT0001",
+        "transaction_id": "TEST-TXN-RECEIVED-EUR",
+        "transaction_event_code": "T0003",
+        "transaction_initiation_date": "2026-05-09T09:00:00+0000",
+        "transaction_amount": { "currency_code": "EUR", "value": "25.00" },
+        "transaction_status": "S",
+        "transaction_subject": "Splitwise Ausgleich"
+      },
+      "payer_info": {
+        "account_id": "TESTFRIEND00001",
+        "email_address": "max@example.com",
+        "payer_name": { "given_name": "Max", "surname": "Mustermann" }
+      }
+    },
+    {
+      "transaction_info": {
+        "paypal_account_id": "TESTACCOUNT0001",
+        "transaction_id": "TEST-TXN-BANK-DEPOSIT",
+        "transaction_event_code": "T0300",
+        "transaction_initiation_date": "2026-05-08T07:30:00+0000",
+        "transaction_amount": { "currency_code": "EUR", "value": "50.00" },
+        "transaction_status": "S"
+      }
+    },
+    {
+      "transaction_info": {
+        "paypal_account_id": "TESTACCOUNT0001",
+        "transaction_id": "TEST-TXN-PURCHASE-USD",
+        "transaction_event_code": "T0006",
+        "transaction_initiation_date": "2026-05-07T18:45:00+0000",
+        "transaction_amount": { "currency_code": "USD", "value": "-10.00" },
+        "transaction_status": "S"
+      },
+      "payer_info": {
+        "email_address": "store@example.com",
+        "payer_name": { "alternate_full_name": "Example US Store" }
+      },
+      "cart_info": {
+        "item_details": [
+          { "item_name": "E-Book: Async Python" }
+        ]
+      }
+    }
+  ],
+  "account_number": "TESTACCOUNT0001",
+  "total_items": 4,
+  "total_pages": 1,
+  "page": 1
+}

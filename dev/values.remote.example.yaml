@@ -113,6 +113,16 @@ externalSecret:
     - path: finance/comdirect
       vaultKey: COMDIRECT_PIN
       envVar: COMDIRECT_PIN
+    # PayPal credentials (M16-P2b) — worker-only, same finance/* scope.
+    - path: finance/paypal
+      vaultKey: PAYPAL_CLIENT_ID
+      envVar: PAYPAL_CLIENT_ID
+    - path: finance/paypal
+      vaultKey: PAYPAL_CLIENT_SECRET
+      envVar: PAYPAL_CLIENT_SECRET
+    - path: finance/paypal
+      vaultKey: PAYPAL_ENVIRONMENT
+      envVar: PAYPAL_ENVIRONMENT
   infraSecrets:
     secretStore:
       name: vault-backend

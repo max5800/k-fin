@@ -89,6 +89,7 @@ def _apply_filters(
     internal_transfer: bool | None,
     is_refund: bool | None,
     search: str | None,
+    source: str | None,
 ) -> Select:
     if tag_ids is not None and len(tag_ids) > _MAX_TAG_IDS:
         raise HTTPException(
@@ -123,6 +124,8 @@ def _apply_filters(
         stmt = stmt.where(NormalizedTransaction.internal_transfer == internal_transfer)
     if is_refund is not None:
         stmt = stmt.where(NormalizedTransaction.is_refund == is_refund)
+    if source is not None:
+        stmt = stmt.where(NormalizedTransaction.source == source)
     if search:
         # Escape LIKE wildcards from the user-supplied search box so a
         # query like "50%" or "OS_2024" matches the literal characters
@@ -162,6 +165,9 @@ def list_transactions(
     internal_transfer: bool | None = Query(None),
     is_refund: bool | None = Query(None),
     search: str | None = Query(None),
+    source: str | None = Query(
+        None, description="Filter by data source (comdirect | paypal)."
+    ),
 ):
     filter_kwargs = dict(
         date_from=date_from,
@@ -173,6 +179,7 @@ def list_transactions(
         internal_transfer=internal_transfer,
         is_refund=is_refund,
         search=search,
+        source=source,
     )
     stmt = _apply_filters(select(NormalizedTransaction), **filter_kwargs)
     count_stmt = _apply_filters(
@@ -293,6 +300,7 @@ def export_transactions(
     internal_transfer: bool | None = Query(None),
     is_refund: bool | None = Query(None),
     search: str | None = Query(None),
+    source: str | None = Query(None),
 ):
     """Stream filtered transactions as CSV or JSON.
 
@@ -310,6 +318,7 @@ def export_transactions(
         internal_transfer=internal_transfer,
         is_refund=is_refund,
         search=search,
+        source=source,
     ).order_by(NormalizedTransaction.booking_date.desc(), NormalizedTransaction.id).limit(_EXPORT_MAX_ROWS)
 
     records = _iter_export_rows(db, stmt)

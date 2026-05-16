@@ -457,8 +457,23 @@ class SyncRunOut(BaseModel):
 
     id: str
     source: str
+    # Upstream provider the run ingested (comdirect | paypal | …). Null
+    # for normalization passes, which are source-agnostic.
+    data_source: str | None = None
     status: str
     started_at: datetime
     finished_at: datetime | None = None
     rows_processed: int
     error: str | None = None
+
+
+class LastSyncOut(BaseModel):
+    """Most recent raw-import run for one data source — drives the
+    per-source "Last sync" indicator in the UI TopBar."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    data_source: str
+    status: str
+    started_at: datetime
+    finished_at: datetime | None = None

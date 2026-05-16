@@ -319,24 +319,62 @@ class NormalizationPipeline:
 
     @staticmethod
     def _flag_cross_source_transfers(df: pd.DataFrame) -> pd.DataFrame:
-        """Cross-source internal-transfer match site — P2b/P2c fill this in.
+        """Cross-source internal-transfer matching (M16-P2b).
 
         The IBAN matcher above only pairs Comdirect↔Comdirect transfers
-        (PayPal/Santander carry no IBAN). Once those providers land, the
-        collapsed counterparts must be matched on amount + date instead:
+        (PayPal/Santander carry no IBAN). This site matches the collapsed
+        counterparts on amount + date instead:
 
-        - P2b: a PayPal "Bank Deposit to PP Account" transaction against
-          the Comdirect "PAYPAL EUROPE" lump posting, ±2 days, exact
-          amount → both `internal_transfer=True`.
-        - P2c: the sum of Santander credit-card line items in a billing
-          cycle against the Comdirect "Santander … Kartenabrechnung"
-          lump posting, ±3 days, exact sum → the Comdirect lump posting
-          `internal_transfer=True`.
+        - P2b: a PayPal "Bank Deposit to PP Account" credit against the
+          Comdirect "PAYPAL EUROPE" debit lump posting, opposite signs,
+          exact amount, ±INTERNAL_TRANSFER_DAY_WINDOW days → both
+          `internal_transfer=True`. The Comdirect lump posting thereby
+          drops out of the savings-rate maths and out of categorisation.
+        - P2c (future): the Santander credit-card billing posting.
 
-        No-op today: no non-Comdirect source exists yet. Kept as an
-        explicit, registered call site so P2b/P2c plug in here without
-        re-touching the pipeline wiring.
+        Each side is consumed at most once per match so a run of equal-
+        value transfers cannot fan out into spurious pairings.
         """
+        if df.empty:
+            return df
+
+        df = df.copy()
+        records = df.to_dict("records")
+
+        pp_deposits: list[dict[str, Any]] = []
+        cd_paypal: list[dict[str, Any]] = []
+        for rec in records:
+            if _is_paypal_bank_deposit(rec):
+                pp_deposits.append(rec)
+            elif _is_comdirect_paypal_posting(rec):
+                cd_paypal.append(rec)
+
+        if not pp_deposits or not cd_paypal:
+            return df
+
+        flagged: set[Any] = set()
+        used_comdirect: set[Any] = set()
+        for deposit in pp_deposits:
+            dep_cents = abs(int(Decimal(str(deposit["amount"])) * 100))
+            dep_date = pd.to_datetime(deposit["booking_date"])
+            for posting in cd_paypal:
+                if posting["id"] in used_comdirect:
+                    continue
+                post_cents = abs(int(Decimal(str(posting["amount"])) * 100))
+                if post_cents != dep_cents:
+                    continue
+                if (
+                    abs((dep_date - pd.to_datetime(posting["booking_date"])).days)
+                    > INTERNAL_TRANSFER_DAY_WINDOW
+                ):
+                    continue
+                flagged.add(deposit["id"])
+                flagged.add(posting["id"])
+                used_comdirect.add(posting["id"])
+                break
+
+        if flagged:
+            df.loc[df["id"].isin(flagged), "internal_transfer"] = True
         return df
 
     @staticmethod
@@ -545,6 +583,41 @@ def _both_ibans_in(a: dict[str, Any], b: dict[str, Any], own: set[str]) -> bool:
     a_ibans = {a.get("sender_iban"), a.get("recipient_iban")}
     b_ibans = {b.get("sender_iban"), b.get("recipient_iban")}
     return bool((a_ibans & own) and (b_ibans & own))
+
+
+def _source_value(source: Any) -> str:
+    """Normalise a DataFrame `source` cell — DataSource enum or str — to its value."""
+    return source.value if isinstance(source, DataSource) else str(source)
+
+
+def _is_paypal_bank_deposit(rec: dict[str, Any]) -> bool:
+    """A PayPal credit funding the balance from a bank account.
+
+    The canonical adapter (`paypal_canonicalize`) stamps these with the
+    stable "Bank Deposit to PP Account" description; the deposit is a
+    credit (amount > 0 — money arriving in PayPal).
+    """
+    if _source_value(rec.get("source")) != DataSource.PAYPAL.value:
+        return False
+    if not rec.get("amount") or rec["amount"] <= 0:
+        return False
+    return "bank deposit" in (rec.get("description") or "").lower()
+
+
+def _is_comdirect_paypal_posting(rec: dict[str, Any]) -> bool:
+    """The Comdirect "PAYPAL EUROPE" debit — the bank side of a top-up.
+
+    A debit (amount < 0 — money leaving the bank account) whose
+    counterparty or remittance text names PayPal.
+    """
+    if _source_value(rec.get("source")) != DataSource.COMDIRECT.value:
+        return False
+    if not rec.get("amount") or rec["amount"] >= 0:
+        return False
+    haystack = " ".join(
+        str(part) for part in (rec.get("description"), rec.get("recipient")) if part
+    ).lower()
+    return "paypal" in haystack
 
 
 def _consecutive_runs(months: list[pd.Period]) -> list[list[pd.Period]]:
