@@ -29,8 +29,11 @@ from src.api.routers import (
     transactions,
 )
 from src.external.comdirect_client import ComdirectClient
+from src.external.provider import BankProvider
+from src.external.providers import get_provider
 from src.external.yfinance_client import HistoryProvider, YFinanceClient
 from src.core.config import settings
+from src.core.db.models import DataSource
 from src.core.logging import get_logger, setup_logging
 from src.core.notifier import notify_failure_from_db
 from src.services.portfolio_prices import (
@@ -347,203 +350,170 @@ def internal_normalize():
         pipeline.engine.dispose()
 
 
-@app.post("/internal/sync/start")
-async def internal_sync_start(payload: SyncStartRequest | None = None):
-    """Step 1: Begin auth flow and trigger TAN challenge."""
-    client = ComdirectClient()
-
+def _parse_source(source_id: str) -> DataSource:
+    """Map a ``source_id`` path segment onto a :class:`DataSource`, or 404."""
     try:
-        auth_state = await client.begin_auth()
-    except RuntimeError as exc:
-        logger.error(f"begin_auth failed: {exc}")
-        raise HTTPException(status_code=502, detail=str(exc))
-
-    session_id = str(uuid.uuid4())
-    _pending_sessions[session_id] = {
-        "client": client,
-        "session_identifier": auth_state["session_identifier"],
-        "challenge_id": auth_state["challenge_id"],
-        "config": (payload.model_dump(exclude_none=True) if payload else {}),
-    }
-
-    logger.info(f"TAN challenge sent, session_id={session_id}")
-    return {"status": "pending_tan", "session_id": session_id}
+        return DataSource(source_id)
+    except ValueError:
+        raise HTTPException(
+            status_code=404, detail=f"Unknown sync source: {source_id!r}"
+        )
 
 
-@app.post("/internal/sync/confirm")
-async def internal_sync_confirm(
+async def _finalize_provider_sync(
+    provider: BankProvider,
+    source: DataSource,
+    *,
+    engine: Engine,
     session_id: str,
-    engine: Engine = Depends(get_engine),
-):
-    """Step 2: Complete auth after TAN confirmation and run export."""
-    if session_id not in _pending_sessions:
-        raise HTTPException(status_code=404, detail="Unknown session_id")
+) -> dict:
+    """Stream a provider's canonical transactions, ingest + normalize them,
+    then run the provider's post-sync hook.
 
-    pending = _pending_sessions.pop(session_id)
-    client: ComdirectClient = pending["client"]
-    config = pending.get("config", {})
+    Shared by both the TAN-completion route and (for providers that need
+    no user step) the start route's inline path.
 
-    ok = await client.complete_auth(
-        pending["session_identifier"],
-        pending["challenge_id"],
-    )
-    if not ok:
-        raise HTTPException(status_code=502, detail="Session activation failed")
+    A failed *fetch* (auth / provider API) is a hard 502. A failure to
+    *persist* an otherwise-good fetch is best-effort — the response is
+    still 200 with ``ingest: null``, matching the legacy sync contract.
+    """
+    from src.normalization.ingest import ingest_canonical
+    from src.normalization.pipeline import NormalizationPipeline
 
-    # Run export using the authenticated client
+    # --- Fetch: auth + provider API. Hard failure. ----------------------
     try:
-        from pathlib import Path
-
-        from scripts.export_csv import (
-            export_account_to_csv,
-            export_depot_positions_csv,
-            export_depot_transactions_csv,
-            export_summary_csv,
-        )
-
-        output_dir = Path("/data/exports")
-        output_dir.mkdir(parents=True, exist_ok=True)
-
-        data = await client.get_all_data(
-            account_transaction_limit=config.get(
-                "account_transaction_limit", settings.account_transaction_limit
-            ),
-            account_transaction_min_booking_date=config.get(
-                "account_transaction_min_booking_date",
-                settings.account_transaction_min_booking_date,
-            ),
-            depot_transaction_limit=config.get(
-                "depot_transaction_limit", settings.depot_transaction_limit
-            ),
-            depot_transaction_min_booking_date=config.get(
-                "depot_transaction_min_booking_date",
-                settings.depot_transaction_min_booking_date,
-            ),
-        )
-
-        # CSV exports
-        for acc in data["accounts"]:
-            account_inner = acc.get("account") or acc
-            account_id = account_inner.get("accountId")
-            iban = account_inner.get("iban", account_id)
-            if not account_id:
-                continue
-            balance_obj = acc.get("balance") or {}
-            acc_type_obj = account_inner.get("accountType") or {}
-            acc_type_text = (
-                acc_type_obj.get("text", "Girokonto")
-                if isinstance(acc_type_obj, dict)
-                else str(acc_type_obj)
-            )
-            balance_info = {
-                "value": (
-                    balance_obj.get("value", "0")
-                    if isinstance(balance_obj, dict)
-                    else str(balance_obj)
-                ),
-                "unit": (
-                    balance_obj.get("unit", "EUR") if isinstance(balance_obj, dict) else "EUR"
-                ),
-                "account_type": acc_type_text,
-            }
-            txs = data["transactions"].get(account_id, [])
-            export_account_to_csv(account_id, iban, balance_info, txs, output_dir)
-
-        all_positions: list[dict] = []
-        for depot in data["depots"]:
-            depot_id = depot.get("depotId")
-            if not depot_id:
-                continue
-            positions = data["depot_positions"].get(depot_id, [])
-            all_positions.extend(positions)
-            export_depot_positions_csv(depot_id, positions, output_dir)
-            depot_txs = data["depot_transactions"].get(depot_id, [])
-            export_depot_transactions_csv(depot_id, depot_txs, output_dir)
-
-        export_summary_csv(data["accounts"], all_positions, output_dir)
-
-        # JSON export
-        import json as json_mod
-
-        from src.exporter.json_export import build_export
-
-        payload = build_export(data)
-        from datetime import date
-
-        json_path = output_dir / f"comdirect_export_{date.today().isoformat()}.json"
-        with open(json_path, "w", encoding="utf-8") as fh:
-            json_mod.dump(payload, fh, ensure_ascii=False, indent=2)
-
-        # ----------------------------------------------------------
-        # Ingest raw transactions + normalize (best-effort)
-        # ----------------------------------------------------------
-        ingest_result = None
-        try:
-            from datetime import date as _date
-
-            from sqlalchemy.orm import Session
-
-            from src.normalization.depot_ingest import capture_snapshot, ingest_depots
-            from src.normalization.ingest import ingest_json_export
-            from src.normalization.pipeline import NormalizationPipeline
-
-            pipeline = NormalizationPipeline(
-                database_url=settings.database_url,
-                own_ibans=settings.get_own_ibans(),
-            )
-            inserted = ingest_json_export(pipeline, json_path)
-            logger.info("Ingested %d raw transactions", inserted)
-
-            _df, _normalize_run_id = pipeline.process_and_normalize()
-            logger.info("Normalization completed (%d rows)", len(_df))
-
-            depot_stats: dict[str, int] | None = None
-            try:
-                with Session(pipeline.engine) as depot_session:
-                    depot_stats = ingest_depots(depot_session, data)
-                    capture_snapshot(depot_session, _date.today())
-                logger.info("Depot ingest: %s", depot_stats)
-            except Exception:
-                logger.exception("Depot ingest failed (transactions ingest still succeeded)")
-
-            ingest_result = {
-                "inserted": inserted,
-                "normalized": len(_df),
-                "normalize_run_id": _normalize_run_id,
-                "depots": depot_stats,
-            }
-        except Exception:
-            logger.exception("Ingest/normalization failed (export still succeeded)")
-
-        # Agent pipeline is intentionally NOT triggered here — sync only
-        # fetches Comdirect data + normalizes. Trigger LLM agents
-        # separately via POST /api/v1/runs/full so the user controls
-        # cost/time and the long-running phase shows up in the dedicated
-        # Agents UI with progress.
-
-        logger.info("Export completed successfully")
+        transactions = [ct async for ct in provider.complete_sync(None)]
     except Exception as exc:
-        logger.exception("Export failed")
-        # Best-effort failure ping. The HTTP 500 below is the source of
-        # truth for the api caller; the webhook is informational. We
-        # surface ``session_id`` as the run-ID since this code path
-        # doesn't create a SyncRun row of its own. Reuses the shared
-        # app-state engine — the previous per-call create_engine() was
-        # 50–200ms of throwaway pool setup right at the moment when the
-        # user is already waiting on a failure response.
+        logger.exception("Sync fetch failed for source=%s", source.value)
         notify_failure_from_db(
             engine,
             run_kind="sync",
             run_id=session_id,
-            error_message=f"Export failed: {exc}",
+            error_message=f"Sync failed: {exc}",
         )
-        raise HTTPException(status_code=500, detail=f"Export failed: {exc}")
+        raise HTTPException(status_code=502, detail=f"Sync failed: {exc}")
 
+    # --- Persist: ingest + normalize. Best-effort. ----------------------
+    ingest_result: dict | None = None
+    pipeline: NormalizationPipeline | None = None
+    try:
+        pipeline = NormalizationPipeline(
+            database_url=settings.database_url,
+            own_ibans=settings.get_own_ibans(),
+        )
+        inserted = ingest_canonical(pipeline, transactions, source=source)
+        logger.info("Ingested %d raw transactions from %s", inserted, source.value)
+
+        _df, _normalize_run_id = pipeline.process_and_normalize()
+        logger.info("Normalization completed (%d rows)", len(_df))
+
+        ingest_result = {
+            "inserted": inserted,
+            "normalized": len(_df),
+            "normalize_run_id": _normalize_run_id,
+        }
+    except Exception:
+        logger.exception(
+            "Ingest/normalization failed for %s (fetch still succeeded)", source.value
+        )
+    finally:
+        if pipeline is not None:
+            pipeline.engine.dispose()
+
+    # --- Provider-specific tail (Comdirect: CSV export + depot ingest).
+    #     The hook guards itself; this try is belt-and-braces. The agent
+    #     pipeline is intentionally NOT triggered here — sync only fetches
+    #     + normalizes; LLM agents run separately via POST /api/v1/runs/full.
+    try:
+        extra = await provider.post_sync_hook(engine)
+        if ingest_result is not None and extra:
+            ingest_result.update(extra)
+    except Exception:
+        logger.exception("Provider post-sync hook failed for %s", source.value)
+
+    logger.info("Sync completed for source=%s", source.value)
     return {
         "status": "done",
         "message": "Sync abgeschlossen — Agents separat starten",
         "ingest": ingest_result,
     }
+
+
+@app.post("/internal/sync/{source_id}")
+async def internal_sync_start(
+    source_id: str,
+    payload: SyncStartRequest | None = None,
+    engine: Engine = Depends(get_engine),
+):
+    """Step 1: open a provider sync session and trigger its TAN challenge.
+
+    Routes ``source_id`` through the provider registry. A provider whose
+    ``tan_kind`` needs no user step runs the whole sync inline and
+    returns ``status=done``; Comdirect issues a decoupled pushTAN
+    challenge and returns ``status=pending_tan`` with a ``provider`` block
+    the UI modal renders.
+    """
+    source = _parse_source(source_id)
+    provider_cls = get_provider(source)
+    config = payload.model_dump(exclude_none=True) if payload else {}
+    provider = provider_cls(config=config)
+
+    try:
+        challenge = await provider.start_sync()
+    except RuntimeError as exc:
+        logger.error("start_sync failed for %s: %s", source.value, exc)
+        raise HTTPException(status_code=502, detail=str(exc))
+
+    if challenge is None:
+        # No user interaction needed (e.g. PayPal m2m-OAuth) — sync inline.
+        logger.info("Source %s needs no TAN — running sync inline", source.value)
+        return await _finalize_provider_sync(
+            provider, source, engine=engine, session_id=str(uuid.uuid4())
+        )
+
+    session_id = str(uuid.uuid4())
+    _pending_sessions[session_id] = {
+        "kind": "sync",
+        "source": source,
+        "provider": provider,
+    }
+    logger.info("TAN challenge sent for %s, session_id=%s", source.value, session_id)
+    return {
+        "status": "pending_tan",
+        "session_id": session_id,
+        "provider": {
+            "source": source.value,
+            "display_name": provider_cls.display_name,
+            "tan_kind": provider_cls.tan_kind.value,
+            "display_hint": challenge.display_hint,
+        },
+    }
+
+
+@app.post("/internal/sync/{source_id}/complete")
+async def internal_sync_complete(
+    source_id: str,
+    session_id: str,
+    engine: Engine = Depends(get_engine),
+):
+    """Step 2: complete the provider sync after the user resolved the TAN."""
+    source = _parse_source(source_id)
+    if session_id not in _pending_sessions:
+        raise HTTPException(status_code=404, detail="Unknown session_id")
+
+    pending = _pending_sessions.pop(session_id)
+    if pending.get("kind") != "sync":
+        raise HTTPException(
+            status_code=400, detail=f"Session {session_id} is not a sync session"
+        )
+    if pending["source"] != source:
+        raise HTTPException(
+            status_code=400, detail="source_id does not match the session"
+        )
+
+    return await _finalize_provider_sync(
+        pending["provider"], source, engine=engine, session_id=session_id
+    )
 
 
 # ---------------------------------------------------------------------------
