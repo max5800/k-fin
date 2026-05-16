@@ -123,6 +123,18 @@ externalSecret:
     - path: finance/paypal
       vaultKey: PAYPAL_ENVIRONMENT
       envVar: PAYPAL_ENVIRONMENT
+    # Santander credit-card credentials (M16-P2c) — worker-only, same
+    # finance/* scope. Placeholders only — real values live in Vault.
+    # SANTANDER_DEVICE_ID is optional (a remembered device that skips 2FA).
+    - path: finance/santander
+      vaultKey: SANTANDER_USERNAME
+      envVar: SANTANDER_USERNAME
+    - path: finance/santander
+      vaultKey: SANTANDER_PASSWORD
+      envVar: SANTANDER_PASSWORD
+    - path: finance/santander
+      vaultKey: SANTANDER_DEVICE_ID
+      envVar: SANTANDER_DEVICE_ID
   infraSecrets:
     secretStore:
       name: vault-backend

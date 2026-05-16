@@ -34,10 +34,36 @@ from src.core.db.models import (
     SyncStatus,
 )
 from src.normalization.canonicalize import canonicalize
+from src.normalization.paypal_canonicalize import paypal_canonicalize
+from src.normalization.santander_canonicalize import santander_canonicalize
 
 logger = logging.getLogger(__name__)
 
 INTERNAL_TRANSFER_DAY_WINDOW = 2
+# Tolerance on the Santander credit-card billing-period boundary when
+# matching the Comdirect settlement lump posting (M16-P2c).
+SANTANDER_SETTLEMENT_DAY_WINDOW = 3
+
+# Source-aware canonicalisation. `_build_dataframe` re-projects every active
+# raw payload onto the canonical shape; a PayPal or Santander payload is
+# nothing like the Comdirect shape, so the generic `canonicalize()` would
+# silently drop it (no booking_date → skipped). Dispatch on the row's
+# `source` so each provider's own adapter runs.
+_CANONICALIZERS = {
+    DataSource.COMDIRECT: canonicalize,
+    DataSource.PAYPAL: paypal_canonicalize,
+    DataSource.SANTANDER_CC: santander_canonicalize,
+}
+
+
+def _canonicalize_for_source(source: Any, raw_data: dict[str, Any]) -> dict[str, Any]:
+    """Project a raw payload onto the canonical dict using the source's adapter."""
+    if not isinstance(source, DataSource):
+        try:
+            source = DataSource(source)
+        except ValueError:
+            source = DataSource.COMDIRECT
+    return _CANONICALIZERS.get(source, canonicalize)(raw_data)
 RECURRING_MIN_MONTHS = 3
 RECURRING_AMOUNT_TOLERANCE = Decimal("0.10")  # ±10 %
 # Modified z-score threshold (Iglewicz & Hoaglin, 1993). Robust against
@@ -222,7 +248,7 @@ class NormalizationPipeline:
 
         records: list[dict[str, Any]] = []
         for raw in active_rows:
-            canonical = canonicalize(raw.raw_data)
+            canonical = _canonicalize_for_source(raw.source, raw.raw_data)
             if not canonical.get("booking_date"):
                 continue
             records.append(
@@ -236,6 +262,10 @@ class NormalizationPipeline:
                     or canonical["booking_date"],
                     "amount": canonical["amount"],
                     "currency": canonical["currency"],
+                    # FX leg (M16-P2c) — present only for non-EUR Santander
+                    # credit-card purchases; None everywhere else.
+                    "original_amount": canonical.get("original_amount"),
+                    "original_currency": canonical.get("original_currency"),
                     "sender": canonical["sender"],
                     "recipient": canonical["recipient"],
                     "sender_iban": canonical["sender_iban"],
@@ -319,18 +349,26 @@ class NormalizationPipeline:
 
     @staticmethod
     def _flag_cross_source_transfers(df: pd.DataFrame) -> pd.DataFrame:
-        """Cross-source internal-transfer matching (M16-P2b).
+        """Cross-source internal-transfer matching (M16-P2b / P2c).
 
         The IBAN matcher above only pairs Comdirect↔Comdirect transfers
         (PayPal/Santander carry no IBAN). This site matches the collapsed
-        counterparts on amount + date instead:
+        counterparts on amount + date instead, in two independent passes:
 
-        - P2b: a PayPal "Bank Deposit to PP Account" credit against the
-          Comdirect "PAYPAL EUROPE" debit lump posting, opposite signs,
-          exact amount, ±INTERNAL_TRANSFER_DAY_WINDOW days → both
-          `internal_transfer=True`. The Comdirect lump posting thereby
-          drops out of the savings-rate maths and out of categorisation.
-        - P2c (future): the Santander credit-card billing posting.
+        - **P2b — PayPal top-up.** A PayPal "Bank Deposit to PP Account"
+          credit against the Comdirect "PAYPAL EUROPE" debit lump posting,
+          opposite signs, exact amount, ±INTERNAL_TRANSFER_DAY_WINDOW days
+          → **both** `internal_transfer=True`.
+
+        - **P2c — Santander credit-card settlement.** The Comdirect
+          "Santander … Kartenabrechnung" debit lump posting against the
+          *sum* of the Santander credit-card transactions in that billing
+          cycle, exact sum match → **only the Comdirect lump posting**
+          `internal_transfer=True`. The individual Santander charges stay
+          un-flagged: they are the real spend and must be counted exactly
+          once (in the Santander source, with the real merchant). A
+          partial payment / instalment (Teilzahlung) makes the debit ≠ the
+          cycle sum, so it simply does not match — no false positive.
 
         Each side is consumed at most once per match so a run of equal-
         value transfers cannot fan out into spurious pairings.
@@ -341,37 +379,9 @@ class NormalizationPipeline:
         df = df.copy()
         records = df.to_dict("records")
 
-        pp_deposits: list[dict[str, Any]] = []
-        cd_paypal: list[dict[str, Any]] = []
-        for rec in records:
-            if _is_paypal_bank_deposit(rec):
-                pp_deposits.append(rec)
-            elif _is_comdirect_paypal_posting(rec):
-                cd_paypal.append(rec)
-
-        if not pp_deposits or not cd_paypal:
-            return df
-
         flagged: set[Any] = set()
-        used_comdirect: set[Any] = set()
-        for deposit in pp_deposits:
-            dep_cents = abs(int(Decimal(str(deposit["amount"])) * 100))
-            dep_date = pd.to_datetime(deposit["booking_date"])
-            for posting in cd_paypal:
-                if posting["id"] in used_comdirect:
-                    continue
-                post_cents = abs(int(Decimal(str(posting["amount"])) * 100))
-                if post_cents != dep_cents:
-                    continue
-                if (
-                    abs((dep_date - pd.to_datetime(posting["booking_date"])).days)
-                    > INTERNAL_TRANSFER_DAY_WINDOW
-                ):
-                    continue
-                flagged.add(deposit["id"])
-                flagged.add(posting["id"])
-                used_comdirect.add(posting["id"])
-                break
+        flagged |= _match_paypal_topups(records)
+        flagged |= _match_santander_cc_settlement(records)
 
         if flagged:
             df.loc[df["id"].isin(flagged), "internal_transfer"] = True
@@ -523,6 +533,8 @@ class NormalizationPipeline:
                 valuation_date=row["valuation_date"],
                 amount=row["amount"],
                 currency=_nan_to_none(row.get("currency")) or "EUR",
+                original_amount=_nan_to_none(row.get("original_amount")),
+                original_currency=_nan_to_none(row.get("original_currency")),
                 sender=_nan_to_none(row.get("sender")),
                 recipient=_nan_to_none(row.get("recipient")),
                 sender_iban=_nan_to_none(row.get("sender_iban")),
@@ -557,6 +569,8 @@ class NormalizationPipeline:
                     "internal_transfer": stmt.excluded.internal_transfer,
                     "recurring_pattern_id": stmt.excluded.recurring_pattern_id,
                     "description": stmt.excluded.description,
+                    "original_amount": stmt.excluded.original_amount,
+                    "original_currency": stmt.excluded.original_currency,
                     "updated_at": datetime.now(timezone.utc),
                 },
             )
@@ -618,6 +632,111 @@ def _is_comdirect_paypal_posting(rec: dict[str, Any]) -> bool:
         str(part) for part in (rec.get("description"), rec.get("recipient")) if part
     ).lower()
     return "paypal" in haystack
+
+
+def _is_comdirect_santander_posting(rec: dict[str, Any]) -> bool:
+    """The Comdirect "Santander … Kartenabrechnung" debit — the bank side
+    of a credit-card settlement.
+
+    A debit (amount < 0 — money leaving the bank account) whose counterparty
+    or remittance text names Santander.
+    """
+    if _source_value(rec.get("source")) != DataSource.COMDIRECT.value:
+        return False
+    if not rec.get("amount") or rec["amount"] >= 0:
+        return False
+    haystack = " ".join(
+        str(part) for part in (rec.get("description"), rec.get("recipient")) if part
+    ).lower()
+    return "santander" in haystack
+
+
+def _match_paypal_topups(records: list[dict[str, Any]]) -> set[Any]:
+    """Pair PayPal bank-deposit credits with their Comdirect "PAYPAL" debits.
+
+    Returns the ids of every matched row (both sides). Each Comdirect
+    posting is consumed at most once.
+    """
+    pp_deposits = [r for r in records if _is_paypal_bank_deposit(r)]
+    cd_paypal = [r for r in records if _is_comdirect_paypal_posting(r)]
+    if not pp_deposits or not cd_paypal:
+        return set()
+
+    flagged: set[Any] = set()
+    used_comdirect: set[Any] = set()
+    for deposit in pp_deposits:
+        dep_cents = abs(int(Decimal(str(deposit["amount"])) * 100))
+        dep_date = pd.to_datetime(deposit["booking_date"])
+        for posting in cd_paypal:
+            if posting["id"] in used_comdirect:
+                continue
+            post_cents = abs(int(Decimal(str(posting["amount"])) * 100))
+            if post_cents != dep_cents:
+                continue
+            if (
+                abs((dep_date - pd.to_datetime(posting["booking_date"])).days)
+                > INTERNAL_TRANSFER_DAY_WINDOW
+            ):
+                continue
+            flagged.add(deposit["id"])
+            flagged.add(posting["id"])
+            used_comdirect.add(posting["id"])
+            break
+    return flagged
+
+
+def _match_santander_cc_settlement(records: list[dict[str, Any]]) -> set[Any]:
+    """Match a Comdirect credit-card settlement debit to a Santander billing cycle.
+
+    The billing cycle is taken as the calendar month of the Santander
+    credit-card transactions; its expected settlement is the exact *net*
+    sum of that month's charges (purchases minus refunds). A Comdirect
+    "Santander" debit whose amount equals that sum is the lump posting —
+    only it is returned for flagging (the individual Santander charges are
+    the real spend and stay un-flagged). Each cycle is consumed once.
+    """
+    santander = [
+        r
+        for r in records
+        if _source_value(r.get("source")) == DataSource.SANTANDER_CC.value
+    ]
+    cd_postings = [r for r in records if _is_comdirect_santander_posting(r)]
+    if not santander or not cd_postings:
+        return set()
+
+    # Bucket the Santander charges by calendar month → net sum + date span.
+    buckets: dict[tuple[int, int], dict[str, Any]] = {}
+    for rec in santander:
+        bdate = pd.to_datetime(rec["booking_date"])
+        key = (bdate.year, bdate.month)
+        bucket = buckets.setdefault(
+            key, {"sum_cents": 0, "min_date": bdate, "max_date": bdate}
+        )
+        bucket["sum_cents"] += int(Decimal(str(rec["amount"])) * 100)
+        bucket["min_date"] = min(bucket["min_date"], bdate)
+        bucket["max_date"] = max(bucket["max_date"], bdate)
+
+    tolerance = pd.Timedelta(days=SANTANDER_SETTLEMENT_DAY_WINDOW)
+    flagged: set[Any] = set()
+    used_cycles: set[tuple[int, int]] = set()
+    for posting in sorted(cd_postings, key=lambda r: pd.to_datetime(r["booking_date"])):
+        post_cents = abs(int(Decimal(str(posting["amount"])) * 100))
+        post_date = pd.to_datetime(posting["booking_date"])
+        for key in sorted(buckets):
+            if key in used_cycles:
+                continue
+            bucket = buckets[key]
+            if abs(bucket["sum_cents"]) != post_cents:
+                continue
+            # The settlement debit posts no earlier than the billing cycle
+            # opened (minus the tolerance) — guards against pairing a debit
+            # with a far-off cycle that happens to net the same sum.
+            if post_date < bucket["min_date"] - tolerance:
+                continue
+            flagged.add(posting["id"])
+            used_cycles.add(key)
+            break
+    return flagged
 
 
 def _consecutive_runs(months: list[pd.Period]) -> list[list[pd.Period]]:

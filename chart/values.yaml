@@ -181,6 +181,19 @@ externalSecret:
     - path: finance/paypal
       vaultKey: PAYPAL_ENVIRONMENT
       envVar: PAYPAL_ENVIRONMENT
+    # Santander credit-card credentials (M16-P2c) — same finance/* Vault
+    # scope as the bank/PayPal credentials, so they land in the worker-only
+    # comdirect-secrets Secret and the api pod never receives them.
+    # SANTANDER_DEVICE_ID is optional (a remembered device that skips 2FA).
+    - path: finance/santander
+      vaultKey: SANTANDER_USERNAME
+      envVar: SANTANDER_USERNAME
+    - path: finance/santander
+      vaultKey: SANTANDER_PASSWORD
+      envVar: SANTANDER_PASSWORD
+    - path: finance/santander
+      vaultKey: SANTANDER_DEVICE_ID
+      envVar: SANTANDER_DEVICE_ID
   # Infrastructure secrets — via ClusterSecretStore (k8s/* path)
   # API token, Anthropic API key, and any future infra keys
   #

@@ -55,6 +55,8 @@ def _enrich(tx: NormalizedTransaction, db: Session) -> TransactionOut:
         valuation_date=tx.valuation_date,
         amount=tx.amount,
         currency=tx.currency,
+        original_amount=tx.original_amount,
+        original_currency=tx.original_currency,
         sender=tx.sender,
         recipient=tx.recipient,
         description=tx.description,

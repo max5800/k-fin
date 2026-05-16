@@ -56,6 +56,11 @@ class TransactionOut(BaseModel):
     valuation_date: date
     amount: Decimal
     currency: str
+    # FX leg (M16-P2c) — original foreign-currency amount/currency of a
+    # non-EUR Santander credit-card purchase; both None for EUR transactions
+    # and for every Comdirect/PayPal row.
+    original_amount: Decimal | None = None
+    original_currency: str | None = None
     sender: str | None
     recipient: str | None
     description: str | None

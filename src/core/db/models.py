@@ -205,6 +205,16 @@ class NormalizedTransaction(Base):
 
     amount: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False)
     currency: Mapped[str] = mapped_column(String(3), nullable=False, default="EUR")
+    # FX leg (M16-P2c): the original foreign-currency amount/currency of a
+    # non-EUR purchase — Santander credit-card travel spend. Both NULL for
+    # EUR transactions and for every Comdirect/PayPal row. Outside the
+    # content-hash identity fields.
+    original_amount: Mapped[Optional[Decimal]] = mapped_column(
+        Numeric(14, 2), nullable=True
+    )
+    original_currency: Mapped[Optional[str]] = mapped_column(
+        String(3), nullable=True
+    )
     sender: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     recipient: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     sender_iban: Mapped[Optional[str]] = mapped_column(String, nullable=True)

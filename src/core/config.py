@@ -26,6 +26,15 @@ class Settings(BaseSettings):
     paypal_client_secret: str = ""
     paypal_environment: str = "sandbox"
 
+    # Santander Consumer Bank credit card (M16-P2c) — MySantander login.
+    # Worker-only secrets: the api pod must never receive these (same
+    # separation as the Comdirect/PayPal credentials — see the chart's
+    # comdirect-secrets ExternalSecret). `santander_device_id` is optional —
+    # when set it references a remembered device that can skip the 2FA step.
+    santander_username: str = ""
+    santander_password: str = ""
+    santander_device_id: str = ""
+
     # Sync
     sync_interval_minutes: int = 60
     sync_initial_days: int = 90
