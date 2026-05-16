@@ -54,6 +54,35 @@ paths = [
 ]
 
 [[rules]]
+id = "paypal-credentials"
+description = "PayPal API credentials (CLIENT_ID / CLIENT_SECRET) with a non-placeholder value"
+# PAYPAL_ENVIRONMENT is deliberately excluded — "sandbox" / "live" are
+# not secrets. Same single-line `[ \t]*` discipline as the comdirect rule.
+regex = '''(?i)(PAYPAL_(CLIENT_ID|CLIENT_SECRET))[ \t]*[:=][ \t]*["']?([^\s"'#]+)["']?'''
+secretGroup = 3
+keywords = ["PAYPAL_"]
+
+[rules.allowlist]
+description = "Placeholder values + test fixtures are safe — only real credentials should fail"
+regexes = [
+    '''your_[a-z_]+_here''',
+    '''change_me''',
+    '''dummy''',
+    '''placeholder''',
+    '''example''',
+    '''sandbox''',
+    '''test[-_]''',
+    '''<[^>]+>''',
+    '''^\$\{[A-Za-z_][A-Za-z0-9_]*(:[-?+][^}]*)?\}$''',
+    # Python type annotations: `paypal_client_id: str = ""` captures `str`.
+    '''^(str|int|float|bool|None|list|dict|tuple|set|bytes|Optional|Annotated)$''',
+]
+paths = [
+    # Test files use obvious fakes for paypal_* settings.
+    '''tests/.*\.py$''',
+]
+
+[[rules]]
 id = "real-german-iban"
 description = "Real-looking 22-char German IBAN (DE + 20 digits) outside of dummy/test contexts"
 regex = '''\bDE\d{20}\b'''

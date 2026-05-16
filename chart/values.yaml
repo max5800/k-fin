@@ -169,6 +169,18 @@ externalSecret:
     - path: finance/comdirect
       vaultKey: COMDIRECT_PIN
       envVar: COMDIRECT_PIN
+    # PayPal credentials (M16-P2b) — same finance/* Vault scope as the
+    # bank credentials, so they land in the worker-only comdirect-secrets
+    # Secret and the api pod never receives them.
+    - path: finance/paypal
+      vaultKey: PAYPAL_CLIENT_ID
+      envVar: PAYPAL_CLIENT_ID
+    - path: finance/paypal
+      vaultKey: PAYPAL_CLIENT_SECRET
+      envVar: PAYPAL_CLIENT_SECRET
+    - path: finance/paypal
+      vaultKey: PAYPAL_ENVIRONMENT
+      envVar: PAYPAL_ENVIRONMENT
   # Infrastructure secrets — via ClusterSecretStore (k8s/* path)
   # API token, Anthropic API key, and any future infra keys
   #

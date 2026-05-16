@@ -6,9 +6,9 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 
 from src.api.deps import Auth, Db
-from src.api.schemas import SyncRunOut
+from src.api.schemas import LastSyncOut, SyncRunOut
 from src.core.config import settings
-from src.core.db.models import SyncRun
+from src.core.db.models import DataSource, SyncRun, SyncStage
 
 router = APIRouter(prefix="/sync", tags=["sync"], dependencies=[Auth])
 
@@ -142,12 +142,47 @@ def list_sync_runs(
     db: Db,
     limit: int = Query(50, ge=1, le=500),
     source: str | None = Query(None),
+    data_source: str | None = Query(None),
 ):
-    """Return the most recent sync runs, newest first."""
+    """Return the most recent sync runs, newest first.
+
+    ``source`` filters on the pipeline stage (raw_import | normalize);
+    ``data_source`` filters on the upstream provider (comdirect | paypal).
+    """
     stmt = select(SyncRun).order_by(SyncRun.started_at.desc()).limit(limit)
     if source is not None:
         stmt = stmt.where(SyncRun.source == source)
+    if data_source is not None:
+        stmt = stmt.where(SyncRun.data_source == data_source)
     return db.execute(stmt).scalars().all()
+
+
+@router.get("/last", response_model=list[LastSyncOut])
+def last_sync_per_source(db: Db):
+    """Most recent raw-import run per data source — one entry per provider
+    that has ever synced, newest run only. Drives the TopBar's per-source
+    "Last sync" indicator (e.g. "Comdirect 2h • PayPal 30m")."""
+    out: list[LastSyncOut] = []
+    for ds in DataSource:
+        run = db.execute(
+            select(SyncRun)
+            .where(
+                SyncRun.source == SyncStage.RAW_IMPORT,
+                SyncRun.data_source == ds,
+            )
+            .order_by(SyncRun.started_at.desc())
+            .limit(1)
+        ).scalar_one_or_none()
+        if run is not None:
+            out.append(
+                LastSyncOut(
+                    data_source=ds.value,
+                    status=run.status.value,
+                    started_at=run.started_at,
+                    finished_at=run.finished_at,
+                )
+            )
+    return out
 
 
 # ---------------------------------------------------------------------------
