@@ -140,7 +140,7 @@ def test_internal_sync_complete_uses_session_overrides_with_fallbacks():
         patch.object(worker_mod.settings, "depot_transaction_min_booking_date", None),
         patch("src.normalization.ingest.ingest_canonical", return_value=0),
         patch(
-            "src.normalization.pipeline.NormalizationPipeline",
+            "src.normalization.ingest.NormalizationPipeline",
             return_value=pipeline_instance,
         ),
         patch.object(
@@ -173,7 +173,7 @@ def test_internal_sync_complete_ingests_normalizes_and_runs_hook():
     with (
         patch("src.normalization.ingest.ingest_canonical", ingest_mock),
         patch(
-            "src.normalization.pipeline.NormalizationPipeline",
+            "src.normalization.ingest.NormalizationPipeline",
             return_value=pipeline_instance,
         ),
         patch.object(
@@ -208,7 +208,7 @@ def test_internal_sync_complete_succeeds_when_ingest_fails():
             MagicMock(side_effect=RuntimeError("DB is down")),
         ),
         patch(
-            "src.normalization.pipeline.NormalizationPipeline",
+            "src.normalization.ingest.NormalizationPipeline",
             return_value=MagicMock(),
         ),
         patch.object(

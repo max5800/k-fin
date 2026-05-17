@@ -15,6 +15,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
 
+import pandas as pd
 from sqlalchemy import update
 from sqlalchemy.orm import Session
 
@@ -82,6 +83,37 @@ def ingest_canonical(
     batch = batch_id or f"provider-{datetime.now(timezone.utc).isoformat()}"
     rows = [_row_from_canonical(ct, batch_id=batch) for ct in transactions]
     return _run_ingest(pipeline, rows, batch_id=batch, source=source)
+
+
+def ingest_and_normalize(
+    transactions: Iterable[CanonicalTransaction],
+    *,
+    source: DataSource,
+    database_url: str,
+    batch_id: str | None = None,
+) -> tuple[int, pd.DataFrame, str]:
+    """Ingest provider/import `CanonicalTransaction`s and re-normalize.
+
+    The single seam shared by the worker bank-sync path
+    (`main._finalize_provider_sync`) and the file-import routes
+    (`api.routers.import_csv`): build a one-shot `NormalizationPipeline`,
+    stage the raw rows via `ingest_canonical`, run `process_and_normalize`,
+    and **always** dispose the engine — so neither caller has to hand-roll
+    that lifecycle (and leak an engine on the error path).
+
+    Returns `(inserted_raw_rows, normalized_dataframe, normalize_run_id)`.
+    Error handling stays the caller's: the import routes let a failure
+    surface as a 5xx; the worker treats persistence as best-effort.
+    """
+    pipeline = NormalizationPipeline(database_url=database_url)
+    try:
+        inserted = ingest_canonical(
+            pipeline, transactions, batch_id=batch_id, source=source
+        )
+        df, run_id = pipeline.process_and_normalize()
+        return inserted, df, run_id
+    finally:
+        pipeline.engine.dispose()
 
 
 def _row_from_canonical(

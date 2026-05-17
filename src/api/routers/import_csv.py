@@ -25,13 +25,12 @@ from src.api.deps import Auth
 from src.core.config import settings
 from src.core.db.models import DataSource
 from src.external.provider import CanonicalTransaction
-from src.normalization.ingest import ingest_canonical
+from src.normalization.ingest import ingest_and_normalize
 from src.normalization.paypal_csv import (
     PayPalCsvError,
     parse_paypal_csv,
     paypal_csv_canonicalize,
 )
-from src.normalization.pipeline import NormalizationPipeline
 from src.normalization.santander_canonicalize import santander_canonicalize
 from src.normalization.santander_pdf import SantanderPdfError, parse_statement
 
@@ -42,6 +41,13 @@ router = APIRouter(prefix="/import", tags=["import"], dependencies=[Auth])
 # A twelve-month PayPal Kontoauszug is a few hundred KB; cap well above
 # that, low enough to reject a mis-uploaded file outright.
 _MAX_UPLOAD_BYTES = 10 * 1024 * 1024
+
+# Statement-PDF upload caps. A full card history is a couple of dozen
+# monthly PDFs; cap the file count and the aggregate size so one request
+# cannot buffer hundreds of MB into the api pod's memory and hand it all
+# to pdfplumber. The per-page cap lives in `santander_pdf._MAX_PAGES`.
+_MAX_FILES = 24
+_MAX_TOTAL_UPLOAD_BYTES = 50 * 1024 * 1024
 
 
 class PayPalImportResult(BaseModel):
@@ -88,12 +94,9 @@ def import_paypal_csv(file: UploadFile = File(...)) -> PayPalImportResult:
         for row in rows
     ]
 
-    pipeline = NormalizationPipeline(database_url=settings.database_url)
-    try:
-        inserted = ingest_canonical(pipeline, transactions, source=DataSource.PAYPAL)
-        df, _run_id = pipeline.process_and_normalize()
-    finally:
-        pipeline.engine.dispose()
+    inserted, df, _run_id = ingest_and_normalize(
+        transactions, source=DataSource.PAYPAL, database_url=settings.database_url
+    )
 
     logger.info(
         "PayPal CSV import: %d parsed, %d inserted, %d normalized",
@@ -138,9 +141,16 @@ def import_santander_pdf(
     (every upload empty, oversized or unreadable); otherwise a partial
     result is returned with the per-file ``errors``.
     """
+    if len(files) > _MAX_FILES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"Too many files — upload at most {_MAX_FILES} statements per request.",
+        )
+
     transactions: list[CanonicalTransaction] = []
     errors: list[str] = []
     statements = 0
+    total_bytes = 0
 
     for upload in files:
         name = upload.filename or "statement.pdf"
@@ -153,6 +163,15 @@ def import_santander_pdf(
                 f"{name}: exceeds the {_MAX_UPLOAD_BYTES // (1024 * 1024)} MB limit"
             )
             continue
+        total_bytes += len(raw)
+        if total_bytes > _MAX_TOTAL_UPLOAD_BYTES:
+            raise HTTPException(
+                status_code=413,
+                detail=(
+                    f"Combined upload exceeds the "
+                    f"{_MAX_TOTAL_UPLOAD_BYTES // (1024 * 1024)} MB limit."
+                ),
+            )
         try:
             rows = parse_statement(raw)
         except SantanderPdfError as exc:
@@ -176,14 +195,11 @@ def import_santander_pdf(
             detail="; ".join(errors) or "no statement PDF was uploaded",
         )
 
-    pipeline = NormalizationPipeline(database_url=settings.database_url)
-    try:
-        inserted = ingest_canonical(
-            pipeline, transactions, source=DataSource.SANTANDER_CC
-        )
-        df, _run_id = pipeline.process_and_normalize()
-    finally:
-        pipeline.engine.dispose()
+    inserted, df, _run_id = ingest_and_normalize(
+        transactions,
+        source=DataSource.SANTANDER_CC,
+        database_url=settings.database_url,
+    )
 
     logger.info(
         "Santander PDF import: %d statement(s), %d parsed, %d inserted, %d normalized",

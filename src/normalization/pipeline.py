@@ -36,7 +36,7 @@ from src.core.db.models import (
     SyncStatus,
 )
 from src.normalization.canonicalize import canonicalize
-from src.normalization.paypal_csv import paypal_csv_canonicalize
+from src.normalization.paypal_csv import BANK_DEPOSIT_LABEL, paypal_csv_canonicalize
 from src.normalization.santander_canonicalize import santander_canonicalize
 
 logger = logging.getLogger(__name__)
@@ -59,13 +59,27 @@ _CANONICALIZERS = {
 
 
 def _canonicalize_for_source(source: Any, raw_data: dict[str, Any]) -> dict[str, Any]:
-    """Project a raw payload onto the canonical dict using the source's adapter."""
+    """Project a raw payload onto the canonical dict using the source's adapter.
+
+    An unrecognised `source` is a loud failure, not a silent fallback:
+    routing a non-Comdirect payload through the Comdirect `canonicalize()`
+    would drop it (no `booking_date` → skipped in `_build_dataframe`) and
+    lose financial data without a trace. The raised error surfaces on the
+    `SyncRun` row instead.
+    """
     if not isinstance(source, DataSource):
         try:
             source = DataSource(source)
-        except ValueError:
-            source = DataSource.COMDIRECT
-    return _CANONICALIZERS.get(source, canonicalize)(raw_data)
+        except ValueError as exc:
+            raise ValueError(
+                f"cannot canonicalize raw transaction: unknown source {source!r}"
+            ) from exc
+    try:
+        return _CANONICALIZERS[source](raw_data)
+    except KeyError as exc:
+        raise ValueError(
+            f"no canonical adapter registered for source {source.value!r}"
+        ) from exc
 RECURRING_MIN_MONTHS = 3
 RECURRING_AMOUNT_TOLERANCE = Decimal("0.10")  # ±10 %
 # Modified z-score threshold (Iglewicz & Hoaglin, 1993). Robust against
@@ -433,10 +447,11 @@ class NormalizationPipeline:
         (PayPal/Santander carry no IBAN). This site matches the collapsed
         counterparts on amount + date instead, in two independent passes:
 
-        - **P2b — PayPal top-up.** A PayPal "Bank Deposit to PP Account"
-          credit against the Comdirect "PAYPAL EUROPE" debit lump posting,
-          opposite signs, exact amount, ±INTERNAL_TRANSFER_DAY_WINDOW days
-          → **both** `internal_transfer=True`.
+        - **P2b — PayPal top-up.** A PayPal "Bankgutschrift auf
+          PayPal-Konto" credit against the Comdirect "PAYPAL EUROPE" debit
+          lump posting, opposite signs, exact amount,
+          ±INTERNAL_TRANSFER_DAY_WINDOW days → **both**
+          `internal_transfer=True`.
 
         - **P2c — Santander credit-card settlement.** The Comdirect
           "Santander … Kartenabrechnung" debit lump posting against the
@@ -707,11 +722,13 @@ def _source_value(source: Any) -> str:
 
 
 def _is_paypal_bank_deposit(rec: dict[str, Any]) -> bool:
-    """A PayPal credit funding the balance from a bank account.
+    """A PayPal credit funding the balance from a bank account — a top-up.
 
-    The canonical adapter (`paypal_canonicalize`) stamps these with the
-    stable "Bank Deposit to PP Account" description; the deposit is a
-    credit (amount > 0 — money arriving in PayPal).
+    The PayPal CSV importer deliberately keeps these "Bankgutschrift auf
+    PayPal-Konto" rows (see `paypal_csv._is_bank_funding_row`) so this
+    matcher can pair them; the canonical `description` carries that German
+    `Beschreibung` label verbatim. The deposit is a credit (amount > 0 —
+    money arriving in the PayPal balance).
     """
     if _source_value(rec.get("source")) != DataSource.PAYPAL.value:
         return False
@@ -720,7 +737,7 @@ def _is_paypal_bank_deposit(rec: dict[str, Any]) -> bool:
     # `description` may arrive as a pandas NaN (float) for a row that had
     # none — NaN is truthy, so guard on the type, not on `or ""`.
     desc = rec.get("description")
-    return isinstance(desc, str) and "bank deposit" in desc.lower()
+    return isinstance(desc, str) and BANK_DEPOSIT_LABEL in desc.lower()
 
 
 def _is_comdirect_paypal_posting(rec: dict[str, Any]) -> bool:
@@ -845,19 +862,16 @@ def _match_santander_cc_settlement(records: list[dict[str, Any]]) -> set[Any]:
 
 
 def _is_paypal_outgoing(rec: dict[str, Any]) -> bool:
-    """A PayPal debit that is a real spend — a purchase or a sent payment.
+    """A PayPal debit — a real spend (a purchase or a sent payment).
 
-    Excludes the bank-withdrawal event (money moved PayPal → bank): that
-    is also a debit, but an internal transfer, not a spend.
+    Every funding row the PayPal CSV importer keeps is the "Bankgutschrift
+    auf PayPal-Konto" top-up, which is a *credit* (amount > 0); a
+    PayPal→bank withdrawal is not imported at all. So any PayPal debit
+    that reaches the pipeline is genuine spending.
     """
     if _source_value(rec.get("source")) != DataSource.PAYPAL.value:
         return False
-    if not rec.get("amount") or rec["amount"] >= 0:
-        return False
-    # A pandas NaN `description` (float) is not a withdrawal label — guard
-    # on the type rather than on `or ""`, since NaN is truthy.
-    desc = rec.get("description")
-    return not (isinstance(desc, str) and "withdrawal to bank" in desc.lower())
+    return bool(rec.get("amount")) and rec["amount"] < 0
 
 
 def _match_paypal_purchases(records: list[dict[str, Any]]) -> list[dict[str, Any]]:

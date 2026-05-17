@@ -9,16 +9,31 @@ The Kontoauszug is a balance *ledger*: every real payment is recorded
 together with one or more **funding rows** that move money into the
 PayPal balance to cover it — a bank debit ("Bankgutschrift auf
 PayPal-Konto"), a credit-card charge, a buyer-credit draw, an FX
-conversion leg, an authorisation hold, and so on. Those funding rows are
+conversion leg, an authorisation hold, and so on. Most funding rows are
 PayPal-internal plumbing, not independent transactions; importing them
 verbatim would invent phantom income and double-count every spend.
 
-So this module imports **only the real transactions** — the rows that
-carry a genuine counterparty in the ``Name`` column (a merchant or a
-person). A row with an empty ``Name``, or a ``Name`` that is PayPal
+So this module imports two kinds of row:
+
+* the **real transactions** — rows that carry a genuine counterparty in
+  the ``Name`` column (a merchant or a person);
+* the **bank top-up** — the "Bankgutschrift auf PayPal-Konto" credit
+  that funds the PayPal balance straight from the user's bank account
+  (see :func:`_is_bank_funding_row`). It has no ``Name``, but it is
+  *not* pure plumbing: it is the PayPal-side leg of a cross-source
+  transfer. The normalization pipeline pairs it with the Comdirect
+  "PAYPAL EUROPE" debit and flags **both** ``internal_transfer=True``
+  (:func:`src.normalization.pipeline._match_paypal_topups`), so the
+  top-up is counted once — not as phantom income.
+
+Every other row with an empty ``Name``, or a ``Name`` that is PayPal
 itself, is a funding/plumbing row and is skipped (see
 :func:`_is_real_transaction`). A rare real payment PayPal recorded
 without a name is skipped too — an accepted v1 trade-off.
+
+A top-up the pipeline cannot pair (the matching Comdirect debit was
+never synced) stays visible as a standalone credit — a known, accepted
+trade-off of reconciling two independently-synced sources.
 
 Two responsibilities:
 
@@ -48,7 +63,11 @@ from decimal import Decimal, InvalidOperation
 from typing import Any
 
 from src.core.logging import get_logger
-from src.normalization.canonicalize import _parse_date, _to_decimal
+from src.normalization.canonicalize import (
+    _parse_date,
+    _to_decimal,
+    parse_german_decimal,
+)
 
 logger = get_logger("paypal-csv")
 
@@ -99,6 +118,12 @@ _REQUIRED_KEYS: tuple[str, ...] = (
     "name",
 )
 
+# Upper bound on rows materialised from one upload. The route caps the
+# upload at ~10 MB; a pathologically narrow CSV could still pack far more
+# rows than any real Kontoauszug (seven years is a few thousand). Bail
+# loudly rather than building millions of dicts in the api pod's memory.
+_MAX_ROWS = 200_000
+
 # Internal key → the German header to name in an error message.
 _KEY_LABELS: dict[str, str] = {
     "date": "Datum",
@@ -113,6 +138,14 @@ _KEY_LABELS: dict[str, str] = {
 # linked back to the payment via `Zugehöriger Transaktionscode`.
 # Matched case-folded.
 _FX_CONVERSION_LABEL = "allgemeine währungsumrechnung"
+
+# PayPal's `Beschreibung` for a bank account topping up the PayPal
+# balance. Unlike the other funding rows this one IS imported (see
+# `_is_bank_funding_row`): it is the PayPal-side leg of a cross-source
+# top-up, paired downstream with the Comdirect "PAYPAL EUROPE" debit
+# (`pipeline._match_paypal_topups`). Matched case-folded as a substring
+# so a minor wording drift around the phrase still hits.
+BANK_DEPOSIT_LABEL = "bankgutschrift auf paypal-konto"
 
 # "PAYPAL *STEAMGAMES" / "PP*STEAM" → "STEAMGAMES" — strip the processor
 # prefix so the bare vendor reaches the rule haystack / categoriser.
@@ -160,14 +193,23 @@ def parse_paypal_csv(raw: bytes) -> list[dict[str, Any]]:
         }
         if any(mapped.values()):  # drop blank trailing lines
             all_rows.append((lineno, mapped))
+        if len(all_rows) > _MAX_ROWS:
+            raise PayPalCsvParseError(
+                f"CSV exceeds the {_MAX_ROWS:,}-row limit — this is far "
+                "larger than any real PayPal Kontoauszug; refusing to import"
+            )
 
     eur_conversions = _harvest_eur_conversions(all_rows)
 
     rows: list[dict[str, Any]] = []
     skipped = 0
     for lineno, mapped in all_rows:
-        if not _is_real_transaction(mapped):
-            skipped += 1  # a bank/FX/credit funding row — internal plumbing
+        # A real payment, or the bank top-up that funds the balance — the
+        # latter has no `Name` but is the PayPal leg of a cross-source
+        # transfer the pipeline reconciles. Every other Name-less row is
+        # internal plumbing (FX leg, buyer-credit draw, hold) — skipped.
+        if not (_is_real_transaction(mapped) or _is_bank_funding_row(mapped)):
+            skipped += 1
             continue
 
         if not mapped.get("transaction_id"):
@@ -193,7 +235,8 @@ def parse_paypal_csv(raw: bytes) -> list[dict[str, Any]]:
         rows.append(mapped)
 
     logger.info(
-        "PayPal CSV parsed: %d transaction(s), %d funding/plumbing row(s) skipped",
+        "PayPal CSV parsed: %d row(s) imported (real transactions + bank "
+        "top-ups), %d funding/plumbing row(s) skipped",
         len(rows),
         skipped,
     )
@@ -245,6 +288,19 @@ def _is_real_transaction(row: dict[str, Any]) -> bool:
     if not name:
         return False
     return "paypal" not in name.lower()
+
+
+def _is_bank_funding_row(row: dict[str, Any]) -> bool:
+    """Whether a row is a bank account topping up the PayPal balance.
+
+    The "Bankgutschrift auf PayPal-Konto" credit funds the balance
+    straight from the user's bank account. It carries no counterparty
+    ``Name`` — so :func:`_is_real_transaction` rejects it — but it is
+    *not* discarded: it is the PayPal-side leg of a cross-source transfer
+    the pipeline reconciles against the Comdirect "PAYPAL EUROPE" debit.
+    """
+    label = (row.get("description_type") or "").strip().lower()
+    return BANK_DEPOSIT_LABEL in label
 
 
 def _decode(raw: bytes) -> str:
@@ -305,23 +361,18 @@ def _parse_german_date(value: str, lineno: int) -> str:
 
 
 def _parse_german_decimal(value: str, lineno: int) -> Decimal:
-    """Parse a German-formatted amount (``-1.234,56``) into a Decimal.
+    """Parse a German-formatted amount cell into a Decimal.
 
-    German number format: ``.`` groups thousands, ``,`` is the decimal
-    separator. An empty cell is treated as ``0``. The maintainer's PayPal
-    account is German; amounts therefore always carry a decimal comma.
-    The no-comma branch is a safety net for a stray whole-number cell.
+    Thin wrapper around :func:`canonicalize.parse_german_decimal`: strips
+    PayPal's non-breaking spaces, treats an empty cell as ``0``, and
+    re-raises an unparseable value as a row-numbered
+    :class:`PayPalCsvParseError` rather than a bare ``InvalidOperation``.
     """
     s = (value or "").strip().replace("\xa0", "").replace(" ", "")
     if not s:
         return Decimal("0")
-    if "," in s:
-        s = s.replace(".", "").replace(",", ".")
-    elif s.count(".") > 1:
-        # multiple dots, no comma → all dots are thousands separators
-        s = s.replace(".", "")
     try:
-        return Decimal(s)
+        return parse_german_decimal(s)
     except (InvalidOperation, ValueError) as exc:
         raise PayPalCsvParseError(
             f"row {lineno}: unparseable amount {value!r}"

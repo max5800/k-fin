@@ -2,7 +2,7 @@
 
 The Santander connector's adapter into the *same* canonical dict shape that
 :func:`src.normalization.canonicalize.canonicalize` produces for Comdirect and
-:func:`src.normalization.paypal_canonicalize.paypal_canonicalize` for PayPal —
+:func:`src.normalization.paypal_csv.paypal_csv_canonicalize` for PayPal —
 so ingest, hashing, the pipeline and every downstream consumer stay
 source-agnostic. Source-intrinsic differences:
 
@@ -44,6 +44,14 @@ def derive_external_id(tx: SantanderTransaction) -> str:
     that identify a card purchase. Two raw payloads describing the same
     purchase derive the same id and dedupe; two genuinely distinct purchases
     differ in at least one field.
+
+    Currently not triggered in practice: the PDF importer
+    (:mod:`src.normalization.santander_pdf`) always supplies a
+    ``transaction_id`` (``"santander-pdf-<digest>"``), and the live
+    MySantander scraping path is gated behind ``ENDPOINTS_VERIFIED = False``
+    in :mod:`src.external.santander_client`. Kept because
+    :func:`santander_canonicalize` references it as a fallback and the live
+    path will eventually be enabled.
     """
     parts = "|".join(
         [

@@ -1,9 +1,13 @@
 """Cross-source internal-transfer matching tests (M16-P2b).
 
-A PayPal "Bank Deposit to PP Account" credit and its Comdirect
+A PayPal "Bankgutschrift auf PayPal-Konto" credit and its Comdirect
 "PAYPAL EUROPE" debit counterpart describe one money movement. The
 pipeline must flag both `internal_transfer=True` so the savings-rate
 maths counts the top-up once, not twice.
+
+`test_topup_matching_uses_real_parser_output` drives the actual PayPal
+CSV importer end-to-end, so these hand-built fixtures cannot drift from
+the German `Beschreibung` label the parser really emits.
 """
 
 from __future__ import annotations
@@ -43,7 +47,7 @@ def test_matching_pair_flags_both_sides():
                 source=DataSource.PAYPAL,
                 amount=50.00,
                 booking_date="2026-05-08",
-                description="Bank Deposit to PP Account",
+                description="Bankgutschrift auf PayPal-Konto",
             ),
             _row(
                 id="cd-1",
@@ -67,7 +71,7 @@ def test_amount_mismatch_does_not_match():
                 source=DataSource.PAYPAL,
                 amount=50.00,
                 booking_date="2026-05-08",
-                description="Bank Deposit to PP Account",
+                description="Bankgutschrift auf PayPal-Konto",
             ),
             _row(
                 id="cd-1",
@@ -90,7 +94,7 @@ def test_date_outside_window_does_not_match():
                 source=DataSource.PAYPAL,
                 amount=50.00,
                 booking_date="2026-05-01",
-                description="Bank Deposit to PP Account",
+                description="Bankgutschrift auf PayPal-Konto",
             ),
             _row(
                 id="cd-1",
@@ -114,7 +118,7 @@ def test_unrelated_comdirect_debit_is_untouched():
                 source=DataSource.PAYPAL,
                 amount=50.00,
                 booking_date="2026-05-08",
-                description="Bank Deposit to PP Account",
+                description="Bankgutschrift auf PayPal-Konto",
             ),
             _row(
                 id="cd-1",
@@ -138,14 +142,14 @@ def test_each_side_consumed_once():
                 source=DataSource.PAYPAL,
                 amount=50.00,
                 booking_date="2026-05-08",
-                description="Bank Deposit to PP Account",
+                description="Bankgutschrift auf PayPal-Konto",
             ),
             _row(
                 id="pp-2",
                 source=DataSource.PAYPAL,
                 amount=50.00,
                 booking_date="2026-05-08",
-                description="Bank Deposit to PP Account",
+                description="Bankgutschrift auf PayPal-Konto",
             ),
             _row(
                 id="cd-1",
@@ -380,7 +384,7 @@ def test_topup_and_purchase_do_not_interfere():
         [
             _row(id="pp-dep", source=DataSource.PAYPAL, amount=50.00,
                  booking_date="2026-05-02",
-                 description="Bank Deposit to PP Account"),
+                 description="Bankgutschrift auf PayPal-Konto"),
             _row(id="cd-dep", source=DataSource.COMDIRECT, amount=-50.00,
                  booking_date="2026-05-02", recipient="PAYPAL EUROPE"),
             _row(id="pp-buy", source=DataSource.PAYPAL, amount=-19.99,
@@ -441,4 +445,55 @@ def test_iban_carrying_transfer_pair_is_still_flagged():
         ),
         own_ibans=set(),
     )
+    assert out["internal_transfer"].all()
+
+
+# ── Regression: the matcher must agree with the real PayPal CSV parser ──
+#
+# `_match_paypal_topups` keys on the canonical `description`, which is the
+# German `Beschreibung` the importer copies verbatim. An earlier revision
+# matched the English literal "bank deposit" — dead code, since the
+# importer never emits it, and the funding row was skipped outright. This
+# test drives the real parser so the fixtures above cannot drift again.
+
+
+def test_topup_matching_uses_real_parser_output():
+    """The PayPal CSV importer keeps the bank-top-up row, and its
+    canonical `description` is exactly what `_is_paypal_bank_deposit`
+    matches — proving parser and matcher agree on the German label."""
+    from src.normalization.paypal_csv import (
+        parse_paypal_csv,
+        paypal_csv_canonicalize,
+    )
+
+    csv_bytes = (
+        "Datum,Beschreibung,Währung,Brutto,Transaktionscode,Name\r\n"
+        '01.05.2026,Bankgutschrift auf PayPal-Konto,EUR,"50,00",TXN-FUND-1,\r\n'
+    ).encode("utf-8")
+
+    canonical = [paypal_csv_canonicalize(r) for r in parse_paypal_csv(csv_bytes)]
+    # the funding row is imported (not skipped) — it is the top-up leg
+    assert len(canonical) == 1
+    topup = canonical[0]
+    assert topup["amount"] > 0  # a credit — money arriving in PayPal
+
+    df = _frame(
+        [
+            _row(
+                id="pp-1",
+                source=DataSource.PAYPAL,
+                amount=topup["amount"],
+                booking_date=topup["booking_date"],
+                description=topup["description"],
+            ),
+            _row(
+                id="cd-1",
+                source=DataSource.COMDIRECT,
+                amount=-50.00,
+                booking_date=topup["booking_date"],
+                recipient="PAYPAL EUROPE SARL ET CIE",
+            ),
+        ]
+    )
+    out = _flag(df)
     assert out["internal_transfer"].all()

@@ -1,9 +1,9 @@
 """Tests for the PayPal CSV import endpoint (``POST /import/paypal-csv``).
 
-Covers the auth guard, the happy path (funding rows skipped, real
-transactions ingested + normalized in one call), idempotent re-upload,
-the 422 on a malformed CSV, and the 400 on an empty file. Backed by a
-throw-away Postgres (testcontainers).
+Covers the auth guard, the happy path (plumbing rows skipped, real
+transactions plus the bank top-up ingested + normalized in one call),
+idempotent re-upload, the 422 on a malformed CSV, and the 400 on an
+empty file. Backed by a throw-away Postgres (testcontainers).
 """
 
 from __future__ import annotations
@@ -25,13 +25,16 @@ _COLUMNS = [
     "Datum", "Beschreibung", "Währung", "Brutto", "Entgelt", "Netto",
     "Transaktionscode", "Name",
 ]
-# Two real merchant payments and one funding row (empty Name → skipped).
+# Two real merchant payments, one bank top-up (no Name, but kept — the
+# PayPal leg of a cross-source transfer), one plumbing row (skipped).
 _PAYMENT_A = ["08.05.2026", "Zahlung im Einzugsverfahren mit Zahlungsrechnung",
               "EUR", "-19,99", "0,00", "-19,99", "TXN-A", "Test Merchant Ltd"]
 _PAYMENT_B = ["09.05.2026", "PayPal Express-Zahlung",
               "EUR", "-5,00", "0,00", "-5,00", "TXN-B", "Another Shop"]
-_FUNDING = ["08.05.2026", "Bankgutschrift auf PayPal-Konto",
-            "EUR", "19,99", "0,00", "19,99", "TXN-FUND", ""]
+_TOPUP = ["08.05.2026", "Bankgutschrift auf PayPal-Konto",
+          "EUR", "50,00", "0,00", "50,00", "TXN-TOPUP", ""]
+_PLUMBING = ["08.05.2026", "Reservierung",
+             "EUR", "-12,00", "0,00", "-12,00", "TXN-HOLD", ""]
 
 
 def _make_csv(rows: list[list[str]], columns: list[str] = _COLUMNS) -> bytes:
@@ -75,20 +78,20 @@ def test_import_requires_auth(api_client):
     assert resp.status_code == 401
 
 
-def test_import_skips_funding_rows_and_normalizes(api_client):
-    """The funding row is skipped; the two real payments are ingested and
-    normalized in one call."""
+def test_import_keeps_topup_skips_plumbing_and_normalizes(api_client):
+    """The plumbing row is skipped; the two real payments and the bank
+    top-up are ingested and normalized in one call."""
     resp = api_client.post(
         "/api/v1/import/paypal-csv",
-        files=_upload(_make_csv([_PAYMENT_A, _FUNDING, _PAYMENT_B])),
+        files=_upload(_make_csv([_PAYMENT_A, _TOPUP, _PLUMBING, _PAYMENT_B])),
         headers=AUTH,
     )
     assert resp.status_code == 200
     assert resp.json() == {
-        "parsed": 2,  # _FUNDING skipped — empty Name
-        "inserted": 2,
+        "parsed": 3,  # A + B + top-up kept; _PLUMBING skipped (empty Name)
+        "inserted": 3,
         "duplicates": 0,
-        "normalized": 2,
+        "normalized": 3,
     }
 
 

@@ -162,6 +162,54 @@ def test_parse_statement_rejects_non_pdf_bytes():
         parse_statement(b"this is not a pdf at all")
 
 
+def test_fx_row_within_multi_row_statement_balances():
+    """An FX row surrounded by ordinary rows must contribute its EUR
+    amount to the balance check and still reconcile (full-review M7).
+
+    opening 100,00; -40,00 debit, -45,00 EUR FX debit, +10,00 credit
+    → booked sum = -75,00 → closing = 100 - (-75) = 175,00.
+    """
+    txns = _parse_statement_text(
+        _statement(
+            lines=(
+                "1505 Shop A 1205 40,00",
+                "2005 Foreign Shop USD 50,00 0.9000 1805 45,00",
+                "2505 Shop B 2405 10,00 H",
+            ),
+            closing="175,00",
+        )
+    )
+    assert len(txns) == 3
+    fx = next(t for t in txns if t["original_currency"] == "USD")
+    assert fx["amount"] == "-45.00"
+    assert fx["original_amount"] == "-50.00"
+    assert fx["merchant_name"] == "Foreign Shop"
+
+
+def test_merchant_with_uppercase_token_is_not_mistaken_for_fx():
+    """A plain row whose merchant contains a three-letter uppercase token
+    must parse as a normal EUR purchase, not as a foreign-currency row —
+    the FX tail needs a currency *and* a dotted rate to trigger."""
+    txns = _parse_statement_text(
+        _statement(lines=("1505 ABC Store Berlin 1205 40,00",), closing="140,00")
+    )
+    assert len(txns) == 1
+    assert txns[0]["merchant_name"] == "ABC Store Berlin"
+    assert txns[0]["original_currency"] is None
+    assert txns[0]["amount"] == "-40.00"
+
+
+def test_row_with_invalid_date_is_dropped_and_fails_balance_check():
+    """A line that matches the transaction shape but carries an
+    impossible DDMM date is dropped — and because its amount then never
+    enters the booked sum, the balance check fails loudly rather than
+    silently importing a partial statement (full-review M7)."""
+    with pytest.raises(SantanderPdfError, match="balance check"):
+        _parse_statement_text(
+            _statement(lines=("9904 Bad Date Shop 1205 40,00",), closing="140,00")
+        )
+
+
 def test_parsed_row_feeds_santander_canonicalize():
     """A parsed row must round-trip through the M16-P2c canonical adapter."""
     txns = _parse_statement_text(
