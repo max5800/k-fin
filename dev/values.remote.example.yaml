@@ -113,16 +113,6 @@ externalSecret:
     - path: finance/comdirect
       vaultKey: COMDIRECT_PIN
       envVar: COMDIRECT_PIN
-    # PayPal credentials (M16-P2b) — worker-only, same finance/* scope.
-    - path: finance/paypal
-      vaultKey: PAYPAL_CLIENT_ID
-      envVar: PAYPAL_CLIENT_ID
-    - path: finance/paypal
-      vaultKey: PAYPAL_CLIENT_SECRET
-      envVar: PAYPAL_CLIENT_SECRET
-    - path: finance/paypal
-      vaultKey: PAYPAL_ENVIRONMENT
-      envVar: PAYPAL_ENVIRONMENT
     # Santander credit-card credentials (M16-P2c) — worker-only, same
     # finance/* scope. Placeholders only — real values live in Vault.
     # SANTANDER_DEVICE_ID is optional (a remembered device that skips 2FA).

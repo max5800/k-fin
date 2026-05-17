@@ -16,16 +16,6 @@ class Settings(BaseSettings):
     comdirect_pin: str = ""
     comdirect_tan_method: str = "pushTAN"
 
-    # PayPal (M16-P2b) — Transaction Search API, OAuth2 client_credentials.
-    # Worker-only secrets: the api pod must never receive these (same
-    # separation as the Comdirect bank credentials — see the chart's
-    # comdirect-secrets ExternalSecret). `paypal_environment` selects the
-    # sandbox vs. live API host; anything other than "live" is treated as
-    # sandbox.
-    paypal_client_id: str = ""
-    paypal_client_secret: str = ""
-    paypal_environment: str = "sandbox"
-
     # Santander Consumer Bank credit card (M16-P2c) — MySantander login.
     # Worker-only secrets: the api pod must never receive these (same
     # separation as the Comdirect/PayPal credentials — see the chart's

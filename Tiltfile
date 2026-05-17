@@ -41,9 +41,12 @@ docker_build(
     entrypoint=["uvicorn", "src.api.app:app", "--host", "0.0.0.0", "--port", "8000", "--reload"],
     live_update=[
         fall_back_on(["./pyproject.toml", "./uv.lock"]),
-        sync("./src/api", "/app/src/api"),
-        sync("./src/core", "/app/src/core"),
-        sync("./src/agents", "/app/src/agents"),
+        # Sync the whole src/ tree. The api transitively imports across it
+        # (routers → normalization, external, services, agents, core — e.g.
+        # the rules router and the CSV importer both reach into
+        # src/normalization). One whole-tree sync mirrors the worker below
+        # and never needs a per-package list kept in step with Dockerfile.api.
+        sync("./src", "/app/src"),
     ],
 )
 

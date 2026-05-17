@@ -9,6 +9,9 @@ __pycache__/
 comdirect_REST_API_Dokumentation.pdf
 docs/comdirect_REST_API_Dokumentation.md
 docs/comdirect_rest_api_swagger.json
+
+# Santander API package: copyrighted PDFs + a sandbox eIDAS private key — never commit
+docs/santander_api_information_package/
 secrets/
 exports/
 data/

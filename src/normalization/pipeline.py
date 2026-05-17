@@ -34,7 +34,7 @@ from src.core.db.models import (
     SyncStatus,
 )
 from src.normalization.canonicalize import canonicalize
-from src.normalization.paypal_canonicalize import paypal_canonicalize
+from src.normalization.paypal_csv import paypal_csv_canonicalize
 from src.normalization.santander_canonicalize import santander_canonicalize
 
 logger = logging.getLogger(__name__)
@@ -51,7 +51,7 @@ SANTANDER_SETTLEMENT_DAY_WINDOW = 3
 # `source` so each provider's own adapter runs.
 _CANONICALIZERS = {
     DataSource.COMDIRECT: canonicalize,
-    DataSource.PAYPAL: paypal_canonicalize,
+    DataSource.PAYPAL: paypal_csv_canonicalize,
     DataSource.SANTANDER_CC: santander_canonicalize,
 }
 
@@ -219,6 +219,7 @@ class NormalizationPipeline:
                     self._finish_run(session, run_id, rows=0)
                     return df, run_id
 
+                df = self._enrich_paypal_purchases(df)
                 df = self._apply_rules(df, session)
                 df = self._flag_internal_transfers(df, self.own_ibans)
                 df = self._flag_cross_source_transfers(df)
@@ -280,6 +281,48 @@ class NormalizationPipeline:
             )
         return pd.DataFrame(records)
 
+    @staticmethod
+    def _enrich_paypal_purchases(df: pd.DataFrame) -> pd.DataFrame:
+        """Copy PayPal merchant context onto the matching Comdirect lines.
+
+        A PayPal-funded purchase appears twice: the bank statement shows
+        only an anonymous "PAYPAL (EUROPE) S.A.R.L." direct debit, while
+        the PayPal row carries the real merchant and item. This pass joins
+        the two (equal amount, ±INTERNAL_TRANSFER_DAY_WINDOW days) and
+        rewrites the bank row's ``recipient`` / ``description`` with the
+        merchant. It runs **before `_apply_rules`** so rules and the
+        categoriser match on the real merchant, not on "PAYPAL EUROPE".
+
+        The matched PayPal row is the duplicate leg of that spend; it is
+        marked in the temp column ``_pp_purchase_dup``, which
+        `_flag_cross_source_transfers` turns into ``internal_transfer`` so
+        the spend is counted exactly once.
+        """
+        if df.empty:
+            return df
+        df = df.copy()
+        df["_pp_purchase_dup"] = False
+
+        matches = _match_paypal_purchases(df.to_dict("records"))
+        for match in matches:
+            merchant = match["merchant"]
+            if merchant:
+                bank_row = df["id"] == match["comdirect_id"]
+                existing = df.loc[bank_row, "description"]
+                bank_desc = _nan_to_none(existing.iloc[0]) if len(existing) else None
+                df.loc[bank_row, "recipient"] = merchant
+                df.loc[bank_row, "description"] = _merge_paypal_context(
+                    merchant, bank_desc
+                )
+            df.loc[df["id"] == match["paypal_id"], "_pp_purchase_dup"] = True
+
+        if matches:
+            logger.info(
+                "PayPal: enriched %d Comdirect 'PAYPAL' line(s) with merchant context",
+                len(matches),
+            )
+        return df
+
     def _apply_rules(self, df: pd.DataFrame, session: Session) -> pd.DataFrame:
         rules = session.execute(select(Rule)).scalars().all()
         if not rules or df.empty:
@@ -307,6 +350,13 @@ class NormalizationPipeline:
         `own_ibans` is provided, both sides must reference IBANs from
         the set — this prevents false positives on coincidental ±X
         same-day pairs with external counterparties.
+
+        Rows without any IBAN are never paired here: PayPal and
+        Santander credit-card rows carry no IBAN and cannot be legs of
+        an own-account bank transfer. Pairing them mis-flags a PayPal
+        payment and its same-amount refund as an internal transfer.
+        Cross-source matching for those sources lives in
+        `_flag_cross_source_transfers`.
         """
         if df.empty:
             df["internal_transfer"] = False
@@ -336,6 +386,13 @@ class NormalizationPipeline:
                         abs((pos["_bdate"] - neg["_bdate"]).days)
                         > INTERNAL_TRANSFER_DAY_WINDOW
                     ):
+                        continue
+                    # A row with no IBAN at all cannot be a leg of an
+                    # own-account bank transfer — guard before the
+                    # `own_ibans` check so it holds even when no own
+                    # IBANs are configured. Without it, IBAN-less PayPal
+                    # rows (a payment and its refund) get mis-paired.
+                    if not (_has_iban(pos) and _has_iban(neg)):
                         continue
                     if own and not _both_ibans_in(pos, neg, own):
                         continue
@@ -370,6 +427,11 @@ class NormalizationPipeline:
           partial payment / instalment (Teilzahlung) makes the debit ≠ the
           cycle sum, so it simply does not match — no false positive.
 
+        It also turns the ``_pp_purchase_dup`` marker — set upstream by
+        `_enrich_paypal_purchases` on a PayPal spend whose merchant was
+        copied onto a Comdirect "PAYPAL EUROPE" line — into
+        ``internal_transfer``, so that spend is counted exactly once.
+
         Each side is consumed at most once per match so a run of equal-
         value transfers cannot fan out into spurious pairings.
         """
@@ -382,6 +444,13 @@ class NormalizationPipeline:
         flagged: set[Any] = set()
         flagged |= _match_paypal_topups(records)
         flagged |= _match_santander_cc_settlement(records)
+
+        # A PayPal spend whose merchant was copied onto a Comdirect
+        # "PAYPAL EUROPE" line (see `_enrich_paypal_purchases`) is the
+        # duplicate leg of that spend — flag it so the amount counts once.
+        if "_pp_purchase_dup" in df.columns:
+            flagged |= set(df.loc[df["_pp_purchase_dup"].astype(bool), "id"])
+            df = df.drop(columns=["_pp_purchase_dup"])
 
         if flagged:
             df.loc[df["id"].isin(flagged), "internal_transfer"] = True
@@ -599,6 +668,18 @@ def _both_ibans_in(a: dict[str, Any], b: dict[str, Any], own: set[str]) -> bool:
     return bool((a_ibans & own) and (b_ibans & own))
 
 
+def _has_iban(rec: dict[str, Any]) -> bool:
+    """Whether a row carries at least one IBAN — i.e. it *could* be a leg
+    of an own-account bank transfer. PayPal and Santander credit-card
+    rows carry neither a sender nor a recipient IBAN; a pandas NaN cell
+    is treated as absent (guard on the type — NaN is truthy)."""
+    for key in ("sender_iban", "recipient_iban"):
+        value = rec.get(key)
+        if isinstance(value, str) and value.strip():
+            return True
+    return False
+
+
 def _source_value(source: Any) -> str:
     """Normalise a DataFrame `source` cell — DataSource enum or str — to its value."""
     return source.value if isinstance(source, DataSource) else str(source)
@@ -615,7 +696,10 @@ def _is_paypal_bank_deposit(rec: dict[str, Any]) -> bool:
         return False
     if not rec.get("amount") or rec["amount"] <= 0:
         return False
-    return "bank deposit" in (rec.get("description") or "").lower()
+    # `description` may arrive as a pandas NaN (float) for a row that had
+    # none — NaN is truthy, so guard on the type, not on `or ""`.
+    desc = rec.get("description")
+    return isinstance(desc, str) and "bank deposit" in desc.lower()
 
 
 def _is_comdirect_paypal_posting(rec: dict[str, Any]) -> bool:
@@ -737,6 +821,74 @@ def _match_santander_cc_settlement(records: list[dict[str, Any]]) -> set[Any]:
             used_cycles.add(key)
             break
     return flagged
+
+
+def _is_paypal_outgoing(rec: dict[str, Any]) -> bool:
+    """A PayPal debit that is a real spend — a purchase or a sent payment.
+
+    Excludes the bank-withdrawal event (money moved PayPal → bank): that
+    is also a debit, but an internal transfer, not a spend.
+    """
+    if _source_value(rec.get("source")) != DataSource.PAYPAL.value:
+        return False
+    if not rec.get("amount") or rec["amount"] >= 0:
+        return False
+    # A pandas NaN `description` (float) is not a withdrawal label — guard
+    # on the type rather than on `or ""`, since NaN is truthy.
+    desc = rec.get("description")
+    return not (isinstance(desc, str) and "withdrawal to bank" in desc.lower())
+
+
+def _match_paypal_purchases(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Pair each PayPal spend with its anonymous Comdirect "PAYPAL" debit.
+
+    Paired on equal absolute amount within ±INTERNAL_TRANSFER_DAY_WINDOW
+    days; each Comdirect posting is consumed at most once. Ambiguity is
+    resolved by *not guessing* — if a posting could match more than one
+    PayPal spend, it is skipped (a missing enrichment beats a wrong one).
+
+    Returns one dict per confident match, the PayPal merchant already
+    NaN-cleaned: ``{comdirect_id, paypal_id, merchant}``.
+    """
+    purchases = [r for r in records if _is_paypal_outgoing(r)]
+    cd_postings = [r for r in records if _is_comdirect_paypal_posting(r)]
+    if not purchases or not cd_postings:
+        return []
+
+    matches: list[dict[str, Any]] = []
+    used_paypal: set[Any] = set()
+    for posting in cd_postings:
+        post_cents = abs(int(Decimal(str(posting["amount"])) * 100))
+        post_date = pd.to_datetime(posting["booking_date"])
+        candidates = [
+            p
+            for p in purchases
+            if p["id"] not in used_paypal
+            and abs(int(Decimal(str(p["amount"])) * 100)) == post_cents
+            and abs((post_date - pd.to_datetime(p["booking_date"])).days)
+            <= INTERNAL_TRANSFER_DAY_WINDOW
+        ]
+        if len(candidates) != 1:
+            continue  # 0 → nothing to pair; >1 → ambiguous, do not guess
+        purchase = candidates[0]
+        used_paypal.add(purchase["id"])
+        matches.append(
+            {
+                "comdirect_id": posting["id"],
+                "paypal_id": purchase["id"],
+                "merchant": _nan_to_none(purchase.get("recipient")),
+            }
+        )
+    return matches
+
+
+def _merge_paypal_context(merchant: str, bank_desc: str | None) -> str:
+    """Compose the enriched bank-line description: the PayPal merchant
+    first (so rule matching and the categoriser see it), the original
+    bank text kept after a ``·`` separator so the line still reads as a
+    PayPal posting."""
+    bank = (bank_desc or "").strip()
+    return f"{merchant} · {bank}"[:500] if bank else merchant[:500]
 
 
 def _consecutive_runs(months: list[pd.Period]) -> list[list[pd.Period]]:

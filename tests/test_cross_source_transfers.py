@@ -24,6 +24,8 @@ def _row(**kw):
         "booking_date": kw["booking_date"],
         "description": kw.get("description"),
         "recipient": kw.get("recipient"),
+        "sender_iban": kw.get("sender_iban"),
+        "recipient_iban": kw.get("recipient_iban"),
         "internal_transfer": False,
     }
     return base
@@ -256,3 +258,187 @@ def test_unrelated_comdirect_debit_not_named_santander_is_untouched():
     )
     out = _flag(df)
     assert not out["internal_transfer"].any()
+
+
+# ── PayPal purchase → Comdirect "PAYPAL EUROPE" context enrichment ──────
+#
+# A PayPal-funded purchase appears twice: an anonymous Comdirect "PAYPAL
+# (EUROPE) S.A.R.L." debit and the PayPal row that holds the real
+# merchant. `_enrich_paypal_purchases` copies the merchant onto the bank
+# line; `_flag_cross_source_transfers` then flags the PayPal duplicate.
+
+
+_enrich = NormalizationPipeline._enrich_paypal_purchases
+
+
+def _enrich_and_flag(rows: list[dict]) -> pd.DataFrame:
+    """Run the two passes a purchase goes through — merchant enrichment,
+    then the cross-source flagging that consumes its marker."""
+    return _flag(_enrich(_frame(rows)))
+
+
+def test_paypal_purchase_enriches_the_comdirect_line():
+    out = _enrich_and_flag(
+        [
+            _row(
+                id="pp-1",
+                source=DataSource.PAYPAL,
+                amount=-19.99,
+                booking_date="2026-05-08",
+                recipient="STEAMGAMES",
+            ),
+            _row(
+                id="cd-1",
+                source=DataSource.COMDIRECT,
+                amount=-19.99,
+                booking_date="2026-05-09",
+                recipient="PAYPAL EUROPE SARL ET CIE",
+                description="PAYPAL Lastschrift 1234567890",
+            ),
+        ]
+    )
+    by_id = {r["id"]: r for r in out.to_dict("records")}
+    # the anonymous bank line now names the real merchant …
+    assert by_id["cd-1"]["recipient"] == "STEAMGAMES"
+    assert "STEAMGAMES" in by_id["cd-1"]["description"]
+    # … keeping the original bank text for audit
+    assert "1234567890" in by_id["cd-1"]["description"]
+    # the PayPal row is the duplicate leg → flagged; the bank line stays counted
+    assert by_id["pp-1"]["internal_transfer"]
+    assert not by_id["cd-1"]["internal_transfer"]
+    # the temp marker column is cleaned up
+    assert "_pp_purchase_dup" not in out.columns
+
+
+def test_ambiguous_purchases_are_not_enriched():
+    """Two PayPal purchases of the same amount could both match the one
+    bank debit — the matcher refuses to guess, so nothing is enriched."""
+    out = _enrich_and_flag(
+        [
+            _row(id="pp-1", source=DataSource.PAYPAL, amount=-19.99,
+                 booking_date="2026-05-08", recipient="STEAMGAMES"),
+            _row(id="pp-2", source=DataSource.PAYPAL, amount=-19.99,
+                 booking_date="2026-05-08", recipient="NETFLIX.COM"),
+            _row(id="cd-1", source=DataSource.COMDIRECT, amount=-19.99,
+                 booking_date="2026-05-09", recipient="PAYPAL EUROPE"),
+        ]
+    )
+    by_id = {r["id"]: r for r in out.to_dict("records")}
+    assert by_id["cd-1"]["recipient"] == "PAYPAL EUROPE"  # untouched
+    assert not any(by_id[i]["internal_transfer"] for i in ("pp-1", "pp-2", "cd-1"))
+
+
+def test_purchase_without_a_bank_match_is_kept_as_spend():
+    """A balance-funded PayPal purchase has no Comdirect counterpart — it
+    must stay counted, not be flagged as a transfer."""
+    out = _enrich_and_flag(
+        [
+            _row(id="pp-1", source=DataSource.PAYPAL, amount=-19.99,
+                 booking_date="2026-05-08", recipient="STEAMGAMES"),
+        ]
+    )
+    assert not out.to_dict("records")[0]["internal_transfer"]
+
+
+def test_purchase_outside_date_window_does_not_match():
+    out = _enrich_and_flag(
+        [
+            _row(id="pp-1", source=DataSource.PAYPAL, amount=-19.99,
+                 booking_date="2026-05-01", recipient="STEAMGAMES"),
+            _row(id="cd-1", source=DataSource.COMDIRECT, amount=-19.99,
+                 booking_date="2026-05-10", recipient="PAYPAL EUROPE"),
+        ]
+    )
+    by_id = {r["id"]: r for r in out.to_dict("records")}
+    assert by_id["cd-1"]["recipient"] == "PAYPAL EUROPE"
+    assert not by_id["pp-1"]["internal_transfer"]
+
+
+def test_enrichment_marker_survives_internal_transfer_reset():
+    """`_flag_internal_transfers` rebuilds the `internal_transfer` column;
+    the enrichment marker must outlive that so the purchase is still
+    flagged by the later cross-source pass."""
+    df = _enrich(
+        _frame(
+            [
+                _row(id="pp-1", source=DataSource.PAYPAL, amount=-19.99,
+                     booking_date="2026-05-08", recipient="STEAMGAMES"),
+                _row(id="cd-1", source=DataSource.COMDIRECT, amount=-19.99,
+                     booking_date="2026-05-09", recipient="PAYPAL EUROPE"),
+            ]
+        )
+    )
+    df = NormalizationPipeline._flag_internal_transfers(df, own_ibans=set())
+    out = _flag(df)
+    assert {r["id"]: r for r in out.to_dict("records")}["pp-1"]["internal_transfer"]
+
+
+def test_topup_and_purchase_do_not_interfere():
+    """A bank top-up and an unrelated purchase in one frame: the top-up
+    flags both sides, the purchase flags only the PayPal duplicate."""
+    out = _enrich_and_flag(
+        [
+            _row(id="pp-dep", source=DataSource.PAYPAL, amount=50.00,
+                 booking_date="2026-05-02",
+                 description="Bank Deposit to PP Account"),
+            _row(id="cd-dep", source=DataSource.COMDIRECT, amount=-50.00,
+                 booking_date="2026-05-02", recipient="PAYPAL EUROPE"),
+            _row(id="pp-buy", source=DataSource.PAYPAL, amount=-19.99,
+                 booking_date="2026-05-08", recipient="STEAMGAMES"),
+            _row(id="cd-buy", source=DataSource.COMDIRECT, amount=-19.99,
+                 booking_date="2026-05-09", recipient="PAYPAL EUROPE"),
+        ]
+    )
+    by_id = {r["id"]: r for r in out.to_dict("records")}
+    assert by_id["pp-dep"]["internal_transfer"] and by_id["cd-dep"]["internal_transfer"]
+    assert by_id["pp-buy"]["internal_transfer"]
+    assert not by_id["cd-buy"]["internal_transfer"]
+    assert by_id["cd-buy"]["recipient"] == "STEAMGAMES"
+
+
+# ── _flag_internal_transfers — IBAN-less rows are never own-account legs ─
+#
+# The IBAN matcher pairs opposite-sign, equal-amount rows. A PayPal
+# payment and its same-amount refund a day apart look exactly like such
+# a pair — but PayPal (and Santander credit-card) rows carry no IBAN and
+# cannot be legs of an own-account transfer. Regression for the
+# false-positive found during the first dev import.
+
+_flag_internal = NormalizationPipeline._flag_internal_transfers
+
+
+def test_paypal_payment_refund_pair_not_flagged_internal_transfer():
+    """A PayPal payment and its same-amount refund one day apart must not
+    be mistaken for an internal transfer — PayPal rows have no IBAN."""
+    out = _flag_internal(
+        _frame(
+            [
+                _row(id="pp-pay", source=DataSource.PAYPAL, amount=-24.99,
+                     booking_date="2026-04-02", recipient="Some Merchant"),
+                _row(id="pp-refund", source=DataSource.PAYPAL, amount=24.99,
+                     booking_date="2026-04-03", description="Rückzahlung"),
+            ]
+        ),
+        own_ibans=set(),
+    )
+    assert not out["internal_transfer"].any()
+
+
+def test_iban_carrying_transfer_pair_is_still_flagged():
+    """The guard only excludes IBAN-less rows — a genuine own-account
+    transfer (both legs carry an IBAN) still pairs, even with no
+    `own_ibans` configured."""
+    out = _flag_internal(
+        _frame(
+            [
+                _row(id="cd-out", source=DataSource.COMDIRECT, amount=-200.00,
+                     booking_date="2026-04-02",
+                     sender_iban="DE00000000000000000001"),
+                _row(id="cd-in", source=DataSource.COMDIRECT, amount=200.00,
+                     booking_date="2026-04-02",
+                     recipient_iban="DE00000000000000000002"),
+            ]
+        ),
+        own_ibans=set(),
+    )
+    assert out["internal_transfer"].all()

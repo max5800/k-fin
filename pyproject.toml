@@ -22,6 +22,7 @@ dependencies = [
     "argon2-cffi>=23.1.0",
     "pyjwt>=2.9.0",
     "yfinance>=0.2.50",
+    "python-multipart>=0.0.26",
 ]
 
 [project.scripts]
