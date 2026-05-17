@@ -76,7 +76,6 @@ class Settings(BaseSettings):
 
     # Database / normalization
     database_url: str = ""
-    own_ibans: str = ""
 
     # Dev-only DB tools (wipe transactions, seed mock dataset).
     # Default False; the dev router's destructive endpoints (/wipe, /seed)
@@ -118,10 +117,6 @@ class Settings(BaseSettings):
                 )
                 self.bootstrap_login_enabled = False
         return self
-
-    def get_own_ibans(self) -> list[str]:
-        """Parse comma-separated OWN_IBANS into a list."""
-        return [s.strip() for s in self.own_ibans.split(",") if s.strip()]
 
     def get_cors_origins(self) -> list[str]:
         """Parse comma-separated CORS_ORIGINS into a list."""

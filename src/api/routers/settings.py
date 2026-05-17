@@ -1,5 +1,6 @@
 """App-settings endpoints — singleton config editable from the UI."""
 
+import re
 import threading
 import time
 from collections import deque
@@ -112,6 +113,30 @@ def _validate_webhook_url(url: str) -> str:
     return url
 
 
+_IBAN_RE = re.compile(r"^[A-Z]{2}[0-9]{2}[A-Z0-9]{10,30}$")
+
+
+def _validate_own_ibans(ibans: list[str]) -> str:
+    """Normalise + lightly validate own-account IBANs into the storage form.
+
+    Each entry is space-stripped and upper-cased; an entry that is not
+    IBAN-shaped raises a 400 naming it. Returns the comma-separated string
+    persisted on ``app_settings.own_ibans``.
+    """
+    cleaned: list[str] = []
+    for raw in ibans:
+        iban = raw.replace(" ", "").strip().upper()
+        if not iban:
+            continue
+        if not _IBAN_RE.match(iban):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Not a valid IBAN: {raw!r}",
+            )
+        cleaned.append(iban)
+    return ",".join(cleaned)
+
+
 def _mask_webhook_url(url: str | None) -> str | None:
     """Mask a Discord webhook URL so the bot-token suffix isn't exposed.
 
@@ -144,6 +169,7 @@ class SettingsOut(BaseModel):
     auto_apply_confidence: float
     page_size: int
     webhook_url: str | None = None
+    own_ibans: list[str] = []
 
     @classmethod
     def from_row(
@@ -162,6 +188,7 @@ class SettingsOut(BaseModel):
             auto_apply_confidence=float(row.auto_apply_confidence),
             page_size=row.page_size,
             webhook_url=webhook,
+            own_ibans=[s for s in (row.own_ibans or "").split(",") if s],
         )
 
 
@@ -178,6 +205,9 @@ class SettingsUpdate(BaseModel):
     # would cross the type system; instead we read it from the raw body
     # in the PUT handler.
     webhook_url: str | None = Field(default=None, max_length=WEBHOOK_URL_MAX_LEN)
+    # None = leave unchanged; a list (including the empty list) replaces the
+    # stored set of own-account IBANs.
+    own_ibans: list[str] | None = Field(default=None)
 
 
 def _get_or_create(db: Session) -> AppSettings:
@@ -247,6 +277,15 @@ def update_settings(
             row.webhook_url = None
         else:
             row.webhook_url = _validate_webhook_url(payload.webhook_url)
+    if payload.own_ibans is not None:
+        # Own-account IBANs are personal data — only a logged-in user may
+        # rewrite the list, never an automated service principal.
+        if not isinstance(principal, User):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="own_ibans can only be set by a logged-in user.",
+            )
+        row.own_ibans = _validate_own_ibans(payload.own_ibans)
     db.commit()
     db.refresh(row)
     return SettingsOut.from_row(row, principal=principal)

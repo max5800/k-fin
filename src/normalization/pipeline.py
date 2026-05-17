@@ -21,9 +21,11 @@ from typing import Any, Iterable
 import pandas as pd
 from sqlalchemy import create_engine, func, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from src.core.db.models import (
+    AppSettings,
     DataSource,
     NormalizedTransaction,
     RawTransaction,
@@ -130,9 +132,28 @@ def match_rule(rules_sorted: Sequence[Rule], haystack: str) -> Rule | None:
     return None
 
 
+def _load_own_ibans(engine) -> list[str]:
+    """Load the user's own-account IBANs from the ``app_settings`` singleton.
+
+    Defensive: a missing table / column (a fresh in-memory test DB) or any
+    DB error yields an empty list rather than failing pipeline construction.
+    """
+    try:
+        with Session(engine) as session:
+            row = session.get(AppSettings, 1)
+            ibans = row.own_ibans if row is not None else ""
+    except SQLAlchemyError:
+        return []
+    return [s.strip() for s in (ibans or "").split(",") if s.strip()]
+
+
 class NormalizationPipeline:
     def __init__(self, database_url: str, own_ibans: Iterable[str] | None = None):
         self.engine = create_engine(database_url)
+        # `own_ibans` defaults to the UI-managed list on the app_settings
+        # row; an explicit argument (tests, special callers) overrides it.
+        if own_ibans is None:
+            own_ibans = _load_own_ibans(self.engine)
         self.own_ibans = {i for i in (own_ibans or []) if i}
 
     # ------------------------------------------------------------------
