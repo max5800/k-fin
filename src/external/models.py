@@ -79,7 +79,12 @@ class ComdirectTransaction(BaseModel):
             return data
         tx_value = data.get("transactionValue") or data.get("amount") or {}
         creditor = data.get("creditor") or {}
-        debtor = data.get("debtor") or {}
+        # Comdirect delivers the incoming counterparty (credit side) under
+        # `remitter`. Its `deptor` field — sic, Comdirect's own typo — is
+        # always empty, and there is no `debtor` key. Reading the wrong key
+        # left `debtor_*` blank for every credit, so own-account transfers
+        # carried no sender IBAN (canonicalize maps debtor_iban→sender_iban).
+        debtor = data.get("remitter") or data.get("deptor") or {}
 
         # Extractor for either native flat float or dict
         if isinstance(tx_value, dict):
