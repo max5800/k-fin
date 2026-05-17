@@ -145,6 +145,10 @@
           "nullable": false,
           "type": "INTEGER"
         },
+        "own_ibans": {
+          "nullable": false,
+          "type": "VARCHAR(500)"
+        },
         "page_size": {
           "nullable": false,
           "type": "INTEGER"

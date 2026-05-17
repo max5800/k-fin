@@ -339,10 +339,7 @@ def internal_normalize():
     """
     from src.normalization.pipeline import NormalizationPipeline
 
-    pipeline = NormalizationPipeline(
-        database_url=settings.database_url,
-        own_ibans=settings.get_own_ibans(),
-    )
+    pipeline = NormalizationPipeline(database_url=settings.database_url)
     try:
         df, run_id = pipeline.process_and_normalize()
         return {"status": "done", "normalized": len(df), "run_id": run_id}
@@ -397,10 +394,7 @@ async def _finalize_provider_sync(
     ingest_result: dict | None = None
     pipeline: NormalizationPipeline | None = None
     try:
-        pipeline = NormalizationPipeline(
-            database_url=settings.database_url,
-            own_ibans=settings.get_own_ibans(),
-        )
+        pipeline = NormalizationPipeline(database_url=settings.database_url)
         inserted = ingest_canonical(pipeline, transactions, source=source)
         logger.info("Ingested %d raw transactions from %s", inserted, source.value)
 
@@ -564,10 +558,7 @@ def _execute_backfill_in_worker(
         run_backfill,
     )
 
-    pipeline = NormalizationPipeline(
-        database_url=settings.database_url,
-        own_ibans=settings.get_own_ibans(),
-    )
+    pipeline = NormalizationPipeline(database_url=settings.database_url)
 
     async def _drive() -> None:
         try:

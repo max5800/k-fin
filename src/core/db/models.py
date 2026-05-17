@@ -492,6 +492,13 @@ class AppSettings(Base):
     webhook_url: Mapped[Optional[str]] = mapped_column(
         String(500), nullable=True
     )
+    # Comma-separated IBANs of the user's own accounts. The normalization
+    # pipeline flags a debit+credit between two of these as an internal
+    # transfer (kept out of income/expense). UI-editable on the Settings
+    # page — replaced the former OWN_IBANS env var.
+    own_ibans: Mapped[str] = mapped_column(
+        String(500), nullable=False, default="", server_default=""
+    )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),

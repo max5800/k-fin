@@ -141,9 +141,7 @@ def main() -> int:
                 }
 
     # --- re-ingest as new versions, then re-normalize -----------------
-    pipeline = NormalizationPipeline(
-        settings.database_url, own_ibans=settings.get_own_ibans()
-    )
+    pipeline = NormalizationPipeline(settings.database_url)
     inserted = pipeline.load_raw_transactions(reingest)
     print(f"Re-ingested {inserted} row(s) as new versions (old rows superseded).")
 

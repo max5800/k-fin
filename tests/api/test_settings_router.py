@@ -256,6 +256,84 @@ class TestUpdateBoth:
 
 
 # ---------------------------------------------------------------------------
+# own_ibans — UI-editable internal-transfer IBAN list (replaced OWN_IBANS env)
+# ---------------------------------------------------------------------------
+
+
+_IBAN_A = "DE00000000000000000000"
+_IBAN_B = "DE00000000000000000001"
+
+
+class TestOwnIbansSetting:
+    """own_ibans is user-only on PUT (personal data), returned as a list."""
+
+    def test_default_is_empty_list(self, api_client):
+        resp = api_client.get("/api/v1/settings", headers=AUTH)
+        assert resp.status_code == 200
+        assert resp.json()["own_ibans"] == []
+
+    def test_set_and_read_back(self, api_client, db_engine, user_auth):
+        resp = api_client.put(
+            "/api/v1/settings",
+            json={"own_ibans": [_IBAN_A, _IBAN_B]},
+            headers=user_auth,
+        )
+        assert resp.status_code == 200
+        assert resp.json()["own_ibans"] == [_IBAN_A, _IBAN_B]
+        # Stored comma-separated on the singleton row.
+        with Session(db_engine) as s:
+            assert s.get(AppSettings, 1).own_ibans == f"{_IBAN_A},{_IBAN_B}"
+
+    def test_normalises_spaces_and_case(self, api_client, user_auth):
+        resp = api_client.put(
+            "/api/v1/settings",
+            json={"own_ibans": ["de00 0000 0000 0000 0000 00"]},
+            headers=user_auth,
+        )
+        assert resp.status_code == 200
+        assert resp.json()["own_ibans"] == [_IBAN_A]
+
+    def test_rejects_invalid_iban(self, api_client, user_auth):
+        resp = api_client.put(
+            "/api/v1/settings",
+            json={"own_ibans": ["not-an-iban"]},
+            headers=user_auth,
+        )
+        assert resp.status_code == 400
+        assert "not-an-iban" in resp.json()["detail"]
+
+    def test_empty_list_clears_the_set(self, api_client, user_auth):
+        api_client.put(
+            "/api/v1/settings", json={"own_ibans": [_IBAN_A]}, headers=user_auth
+        )
+        resp = api_client.put(
+            "/api/v1/settings", json={"own_ibans": []}, headers=user_auth
+        )
+        assert resp.status_code == 200
+        assert resp.json()["own_ibans"] == []
+
+    def test_omitted_field_keeps_existing(self, api_client, user_auth):
+        api_client.put(
+            "/api/v1/settings", json={"own_ibans": [_IBAN_A]}, headers=user_auth
+        )
+        # A page_size-only update (service token) must not wipe own_ibans.
+        resp = api_client.put(
+            "/api/v1/settings", json={"page_size": 50}, headers=AUTH
+        )
+        assert resp.status_code == 200
+        assert resp.json()["own_ibans"] == [_IBAN_A]
+
+    def test_service_token_cannot_set(self, api_client):
+        # Own IBANs are personal data — a service principal gets 403.
+        resp = api_client.put(
+            "/api/v1/settings",
+            json={"own_ibans": [_IBAN_A]},
+            headers=AUTH,
+        )
+        assert resp.status_code == 403
+
+
+# ---------------------------------------------------------------------------
 # webhook_url — Stream D
 # ---------------------------------------------------------------------------
 
