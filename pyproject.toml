@@ -23,6 +23,7 @@ dependencies = [
     "pyjwt>=2.9.0",
     "yfinance>=0.2.50",
     "python-multipart>=0.0.26",
+    "pdfplumber>=0.11.9",
 ]
 
 [project.scripts]
