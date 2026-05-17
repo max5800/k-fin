@@ -6,6 +6,7 @@ Receives sync requests from the public comdirect-api service.
 
 import asyncio
 import re
+import time
 import uuid
 from contextlib import asynccontextmanager
 from datetime import date
@@ -103,6 +104,36 @@ if _origins:
 # ---------------------------------------------------------------------------
 
 _pending_sessions: dict[str, dict] = {}
+
+# A pending TAN session pins a live provider / bank client (an open
+# httpx.AsyncClient) in memory. If the user never resolves the TAN, the
+# entry would leak for the worker's whole lifetime. Each session records
+# a `created_at`; `_evict_stale_sessions` drops the abandoned ones on the
+# next session-creating call, releasing the client for garbage collection.
+_SESSION_TTL_SECONDS = 900  # 15 minutes
+
+
+def _evict_stale_sessions() -> None:
+    """Drop pending TAN sessions older than `_SESSION_TTL_SECONDS`.
+
+    Called before a new session is opened. A session the user abandoned
+    (never completed the TAN) would otherwise pin its provider / bank
+    client forever; dropping the dict entry releases it so the GC can
+    reclaim the underlying socket.
+    """
+    now = time.monotonic()
+    stale = [
+        sid
+        for sid, entry in _pending_sessions.items()
+        if now - entry.get("created_at", now) > _SESSION_TTL_SECONDS
+    ]
+    for sid in stale:
+        _pending_sessions.pop(sid, None)
+        logger.warning(
+            "Evicted stale pending session %s — TAN not completed within %ds",
+            sid,
+            _SESSION_TTL_SECONDS,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -374,8 +405,7 @@ async def _finalize_provider_sync(
     *persist* an otherwise-good fetch is best-effort — the response is
     still 200 with ``ingest: null``, matching the legacy sync contract.
     """
-    from src.normalization.ingest import ingest_canonical
-    from src.normalization.pipeline import NormalizationPipeline
+    from src.normalization.ingest import ingest_and_normalize
 
     # --- Fetch: auth + provider API. Hard failure. ----------------------
     try:
@@ -392,13 +422,11 @@ async def _finalize_provider_sync(
 
     # --- Persist: ingest + normalize. Best-effort. ----------------------
     ingest_result: dict | None = None
-    pipeline: NormalizationPipeline | None = None
     try:
-        pipeline = NormalizationPipeline(database_url=settings.database_url)
-        inserted = ingest_canonical(pipeline, transactions, source=source)
+        inserted, _df, _normalize_run_id = ingest_and_normalize(
+            transactions, source=source, database_url=settings.database_url
+        )
         logger.info("Ingested %d raw transactions from %s", inserted, source.value)
-
-        _df, _normalize_run_id = pipeline.process_and_normalize()
         logger.info("Normalization completed (%d rows)", len(_df))
 
         ingest_result = {
@@ -410,9 +438,6 @@ async def _finalize_provider_sync(
         logger.exception(
             "Ingest/normalization failed for %s (fetch still succeeded)", source.value
         )
-    finally:
-        if pipeline is not None:
-            pipeline.engine.dispose()
 
     # --- Provider-specific tail (Comdirect: CSV export + depot ingest).
     #     The hook guards itself; this try is belt-and-braces. The agent
@@ -447,6 +472,7 @@ async def internal_sync_start(
     challenge and returns ``status=pending_tan`` with a ``provider`` block
     the UI modal renders.
     """
+    _evict_stale_sessions()
     source = _parse_source(source_id)
     provider_cls = get_provider(source)
     config = payload.model_dump(exclude_none=True) if payload else {}
@@ -470,6 +496,7 @@ async def internal_sync_start(
         "kind": "sync",
         "source": source,
         "provider": provider,
+        "created_at": time.monotonic(),
     }
     logger.info("TAN challenge sent for %s, session_id=%s", source.value, session_id)
     return {
@@ -628,6 +655,7 @@ async def internal_backfill_start(
                 detail="Ein Backfill läuft bereits — bitte warten oder abbrechen.",
             )
 
+    _evict_stale_sessions()
     client = ComdirectClient()
     try:
         auth_state = await client.begin_auth()
@@ -642,6 +670,7 @@ async def internal_backfill_start(
         "session_identifier": auth_state["session_identifier"],
         "challenge_id": auth_state["challenge_id"],
         "config": config,
+        "created_at": time.monotonic(),
     }
 
     logger.info("Backfill TAN challenge sent, session_id=%s", session_id)

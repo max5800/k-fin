@@ -104,12 +104,12 @@ def canonicalize(raw: dict[str, Any]) -> dict[str, Any]:
     # debit (negative amount): money flows to creditor → recipient=creditor
     # credit (positive amount): money comes from debtor → sender=debtor
     #
-    # P2b/P2c extension point: PayPal/Santander transactions carry no IBAN.
-    # When `*_iban` is empty, `sender`/`recipient` must fall back to the
-    # payer email / merchant name supplied by those providers. Not wired
-    # up here yet — no non-Comdirect source exists, and the adapters in
-    # `paypal_canonicalize.py` / `santander_canonicalize.py` will produce
-    # the canonical dict for those sources (see plan M16-P2b/P2c).
+    # This adapter is Comdirect-only. PayPal and Santander carry no IBAN
+    # and have their own adapters — `paypal_csv.paypal_csv_canonicalize`
+    # and `santander_canonicalize.santander_canonicalize` — which resolve
+    # `sender`/`recipient` from the merchant / payer name instead. The
+    # pipeline dispatches on a row's `source` (see
+    # `pipeline._canonicalize_for_source`).
     if amount < 0:
         sender = None
         sender_iban = None
@@ -216,6 +216,30 @@ def _to_decimal(value: Any) -> Decimal:
     if isinstance(value, Decimal):
         return value.quantize(Decimal("0.01"))
     return Decimal(str(value or 0)).quantize(Decimal("0.01"))
+
+
+def parse_german_decimal(raw: str) -> Decimal:
+    """Convert a German-formatted amount string into a :class:`Decimal`.
+
+    German number format: ``.`` groups thousands, ``,`` is the decimal
+    separator — ``-1.234,56`` → ``Decimal('-1234.56')``. A string with
+    multiple dots and no comma is read as all-thousands-grouped
+    (``1.234.567`` → ``1234567``).
+
+    Shared by the PayPal and Santander parsers so the one fiddly bit of
+    locale handling has a single definition. Raises
+    :class:`decimal.InvalidOperation` / :class:`ValueError` on an
+    unparseable string — callers wrap it with their own context. Does
+    **not** strip surrounding whitespace or special-case an empty string;
+    that is the caller's contract.
+    """
+    s = raw
+    if "," in s:
+        s = s.replace(".", "").replace(",", ".")
+    elif s.count(".") > 1:
+        # multiple dots, no comma → every dot is a thousands separator
+        s = s.replace(".", "")
+    return Decimal(s)
 
 
 def _parse_date(value: Any) -> date | None:

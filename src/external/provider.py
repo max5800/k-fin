@@ -1,18 +1,27 @@
-"""Provider contract — the bank-neutral interface every data source implements.
+"""Provider contract — the bank-neutral interface every live-API sync source implements.
 
 M16-P2a generalizes the previously Comdirect-hardwired sync path into a
-``BankProvider`` contract. Comdirect is the first implementation
-(:mod:`src.external.comdirect_provider`); PayPal (P2b) and Santander-CC
-(P2c) dock onto the *same* contract as new classes in the registry
-(:mod:`src.external.providers`) — no change here.
+``BankProvider`` contract. The current registered implementations are:
+
+* Comdirect (:mod:`src.external.comdirect_provider`) — full live-API sync
+  with decoupled-push photoTAN.
+* Santander credit card (:mod:`src.external.santander_provider`) — live
+  MySantander scraping session, gated behind ``ENDPOINTS_VERIFIED``.
+
+**File-import sources are NOT ``BankProvider`` implementations.**  PayPal
+(CSV import via :mod:`src.normalization.paypal_csv`) and the Santander PDF
+statement importer (:mod:`src.normalization.santander_pdf`) feed into the
+same downstream canonical layer but bypass this contract entirely — they
+have no ``start_sync`` / ``complete_sync`` lifecycle and are not in the
+``PROVIDERS`` registry (:mod:`src.external.providers`).
 
 The capability flags are deliberately cut so a future FinTS-Generic
 provider (DKB / ING / Sparkasse via ``python-fints``) docks unchanged:
 ``supports_depot=PARTIAL`` (FinTS exposes holdings but no performance),
 ``supports_watchlist=False``, ``supports_orders=False``,
-``tan_kind=DECOUPLED_APP_PUSH``. Adding a source is exactly one registry
-line plus one provider class implementing the three required methods
-(``start_sync``, ``complete_sync``, ``list_accounts``).
+``tan_kind=DECOUPLED_APP_PUSH``. Adding a live-API source is exactly one
+registry line plus one provider class implementing the three required
+methods (``start_sync``, ``complete_sync``, ``list_accounts``).
 """
 
 from __future__ import annotations
@@ -45,7 +54,7 @@ class TanKind(str, enum.Enum):
     user-triggered, no silent background sync.
     """
 
-    NONE_OAUTH_M2M = "none_oauth_m2m"  # machine-to-machine OAuth, no user step (PayPal)
+    NONE_OAUTH_M2M = "none_oauth_m2m"  # machine-to-machine OAuth, no user step (reserved for future m2m providers)
     DECOUPLED_APP_PUSH = "decoupled_app_push"  # push to a banking app (Comdirect photoTAN, FinTS)
     SMS = "sms"
     EMAIL_OTP = "email_otp"
@@ -181,7 +190,7 @@ class BankProviderBase:
 
     A :class:`Protocol` cannot carry implementations, so concrete
     providers inherit this and override only what they actually support.
-    A provider with ``supports_depot=NONE`` and no tail work (PayPal,
+    A provider with ``supports_depot=NONE`` and no tail work (e.g.
     Santander-CC) needs neither override.
     """
 

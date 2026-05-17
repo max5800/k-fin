@@ -184,3 +184,76 @@ def test_corrected_transaction_creates_new_version(postgres_url, db_engine):
         assert rows_for_id[0].superseded_by == rows_for_id[1].content_hash
         assert rows_for_id[1].superseded_by is None
         assert rows_for_id[1].version == 2
+
+
+def test_paypal_enrichment_is_idempotent_across_reruns(postgres_url, db_engine):
+    """Regression (full-review H5): re-running process_and_normalize must
+    produce a byte-stable result.
+
+    `_build_dataframe` re-canonicalizes from `raw_transactions` on every
+    run, so `_enrich_paypal_purchases` always starts from un-enriched
+    data — but nothing pinned that property. Lock it: a PayPal purchase
+    enriched onto its Comdirect "PAYPAL EUROPE" debit must look identical
+    after a second normalize pass (`POST /sync/normalize` re-runs it).
+    """
+    from src.core.db.models import DataSource
+    from src.external.provider import CanonicalTransaction
+    from src.normalization.canonicalize import canonicalize
+    from src.normalization.ingest import ingest_canonical
+    from src.normalization.paypal_csv import parse_paypal_csv, paypal_csv_canonicalize
+
+    cd_raw = {
+        "transaction_id": "CD-PP-1",
+        "booking_date": "2026-05-09",
+        "value_date": "2026-05-09",
+        "amount": -19.99,
+        "currency": "EUR",
+        "type_text": "Lastschrift",
+        "remittance_info": "PAYPAL",
+        "creditor_name": "PAYPAL EUROPE SARL ET CIE",
+        "creditor_iban": "",
+        "debtor_name": "",
+        "debtor_iban": "",
+    }
+    pp_csv = (
+        "Datum,Beschreibung,Währung,Brutto,Transaktionscode,Name\r\n"
+        '08.05.2026,Allgemeine Zahlung,EUR,"-19,99",PP-BUY-1,STEAMGAMES\r\n'
+    ).encode("utf-8")
+    pp_row = parse_paypal_csv(pp_csv)[0]
+
+    pipeline = NormalizationPipeline(postgres_url, own_ibans=[])
+    ingest_canonical(
+        pipeline,
+        [
+            CanonicalTransaction(
+                canonical=canonicalize(cd_raw),
+                raw_data=cd_raw,
+                source=DataSource.COMDIRECT,
+            ),
+            CanonicalTransaction(
+                canonical=paypal_csv_canonicalize(pp_row),
+                raw_data=pp_row,
+                source=DataSource.PAYPAL,
+            ),
+        ],
+        batch_id="h5-idempotency",
+    )
+
+    def _snapshot() -> dict:
+        pipeline.process_and_normalize()
+        with Session(db_engine) as session:
+            return {
+                n.id: (n.recipient, n.description, n.internal_transfer)
+                for n in session.query(NormalizedTransaction).all()
+            }
+
+    first = _snapshot()
+    second = _snapshot()
+    assert first == second, "process_and_normalize is not idempotent"
+
+    # The enrichment actually happened — the anonymous bank line now names
+    # the real merchant, and the PayPal duplicate leg is flagged so the
+    # spend is counted exactly once.
+    bank_line = next(v for v in first.values() if v[0] == "STEAMGAMES")
+    assert "STEAMGAMES" in bank_line[1]
+    assert any(internal_transfer for _, _, internal_transfer in first.values())

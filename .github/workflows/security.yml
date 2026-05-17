@@ -26,3 +26,30 @@ jobs:
           # Custom rules + allowlists tuned for k-fin
           GITLEAKS_CONFIG: .gitleaks.toml
           # No GITLEAKS_LICENSE — only required for org accounts.
+
+  dependency-audit:
+    name: Dependency CVE audit (pip-audit)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          version: "0.6"
+
+      - name: Set up Python
+        run: uv python install 3.13
+
+      - name: Install dependencies
+        run: uv sync --dev
+
+      - name: Export locked requirements and run pip-audit
+        # Non-blocking (continue-on-error) until false-positive rate is
+        # understood for the native-code deps added in M16 (pdfplumber,
+        # pdfminer.six, pillow, pypdfium2, python-multipart). Promote to
+        # blocking once the baseline is clean. `uv export` produces a
+        # requirements.txt from the lockfile; `uvx pip-audit` runs in an
+        # isolated env so it doesn't require pip-audit to be in uv.lock.
+        run: uv export --format requirements-txt --no-emit-project | uvx pip-audit -r /dev/stdin
+        continue-on-error: true

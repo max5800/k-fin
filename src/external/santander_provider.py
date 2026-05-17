@@ -1,7 +1,7 @@
 """Santander credit-card adapter — a :class:`BankProvider` over MySantander.
 
-M16-P2c. The third provider on the P2a contract. Santander Consumer Bank's
-credit-card surface needs an interactive strong-auth step, so
+M16-P2c. The second live-API ``BankProvider`` alongside Comdirect. Santander
+Consumer Bank's credit-card surface needs an interactive strong-auth step, so
 ``tan_kind`` is :attr:`TanKind.SCRAPING_SESSION` and the sync is two-phase:
 
 * :meth:`start_sync` logs in and triggers the 2FA challenge, returning a
@@ -17,6 +17,11 @@ A remembered device (``settings.santander_device_id``) can skip 2FA — then
 Santander follows the TAN-in-the-loop rule (Spike §3): ``SCRAPING_SESSION`` is
 strictly user-triggered — never an unattended background sync. No depot, no
 watchlist, no orders; pending (not-yet-billed) authorisations *are* surfaced.
+
+Note: the Santander PDF statement importer (:mod:`src.normalization.santander_pdf`)
+is a *separate* file-import front-end that shares the downstream canonical layer
+but is NOT a ``BankProvider`` — it has no ``start_sync`` / ``complete_sync``
+lifecycle and is not registered in :mod:`src.external.providers`.
 """
 
 from __future__ import annotations

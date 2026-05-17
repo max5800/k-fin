@@ -11,14 +11,29 @@ every existing content_hash and break the FK chain (`raw_transactions`
 → `normalized_transactions` + `superseded_by`). Identity stays hash-
 stable: `external_id` is a pure rename of `comdirect_id`, the hash
 serializer keeps the legacy `comdirect_id` JSON key for
-`source=comdirect`, and cross-source uniqueness is enforced by a
-DB-level `UNIQUE(source, external_id)` partial index instead.
+`source=comdirect`. Cross-source deduplication is enforced in
+application code (`load_raw_transactions`), NOT by a DB-level
+constraint. The `ix_raw_transactions_source_external_id` and
+`ix_normalized_transactions_source_external_id` indexes created below
+are plain NON-UNIQUE indexes (no `unique=True`) — version/correction
+chains from a single provider may briefly have multiple rows sharing
+the same `(source, external_id)` pair while the supersession chain is
+being written.
+
+Locking note: the `UPDATE ... SET source='comdirect'` + `ALTER COLUMN
+... SET NOT NULL` + `external_id` backfill all run in a single
+transaction and therefore take an `ACCESS EXCLUSIVE` lock for the
+duration. This is safe only because the personal dataset is small
+(<10^5 rows). This is NOT an online migration pattern: a future
+at-scale provider import must NOT copy the add-nullable → backfill →
+SET NOT NULL in one transaction approach; use a multi-step online
+migration (add nullable, backfill in batches, separate ALTER) instead.
 
 Forward:
 - create the `data_source` enum type
 - add `raw_transactions.source` (default `comdirect`, then NOT NULL)
 - add `raw_transactions.external_id`, backfill from `comdirect_id`
-- swap the comdirect_id index for external_id, add partial UNIQUE
+- swap the comdirect_id index for external_id, add composite index
 - drop `raw_transactions.comdirect_id`
 - mirror all of the above on `normalized_transactions`
 - add `sync_runs.data_source` (nullable; existing rows are stage-only)

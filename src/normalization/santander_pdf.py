@@ -56,7 +56,15 @@ from typing import Any, BinaryIO
 
 import pdfplumber
 
+from src.normalization.canonicalize import parse_german_decimal
+
 __all__ = ["SantanderPdfError", "parse_statement"]
+
+# A monthly 1plus-Card statement is a handful of pages. Cap generously so
+# a crafted many-page PDF cannot make pdfplumber/pdfminer burn CPU and RAM
+# unbounded — the upload byte-size cap alone does not bound page count
+# (a small file can still decompress into thousands of pages).
+_MAX_PAGES = 40
 
 
 class SantanderPdfError(ValueError):
@@ -92,8 +100,13 @@ _FX_RE = re.compile(
 
 
 def _to_decimal(value: str) -> Decimal:
-    """Parse a German-formatted amount (``1.234,56``) into a :class:`Decimal`."""
-    return Decimal(value.replace(".", "").replace(",", "."))
+    """Parse a German-formatted amount (``1.234,56``) into a :class:`Decimal`.
+
+    Delegates to the shared :func:`canonicalize.parse_german_decimal`; the
+    ``_AMOUNT`` regex guarantees a comma decimal so the value is always
+    well-formed by the time it reaches here.
+    """
+    return parse_german_decimal(value)
 
 
 def _resolve_date(ddmm: str, stmt_year: int, stmt_month: int) -> date:
@@ -125,6 +138,14 @@ def _build(
     distinguishing fields plus a per-statement occurrence index — two genuinely
     identical rows on one statement (same date, merchant, amount) still get
     distinct, re-import-stable ids.
+
+    Known limitation: the occurrence index is per-statement, so re-import is
+    stable only when a statement is uploaded whole and unchanged. If the bank
+    re-issues a statement with a corrected row, the surviving rows can shift
+    occurrence index and land new ids — a corrected duplicate is then *added*
+    rather than versioned. Acceptable for a personal tool where statements are
+    final once issued; the balance check still guarantees per-statement
+    integrity.
     """
     merchant = merchant.strip()
     key = (
@@ -170,7 +191,15 @@ def parse_statement(source: str | bytes | BinaryIO) -> list[dict[str, Any]]:
     pdf_source: Any = io.BytesIO(source) if isinstance(source, bytes) else source
     try:
         with pdfplumber.open(pdf_source) as pdf:
+            page_count = len(pdf.pages)
+            if page_count > _MAX_PAGES:
+                raise SantanderPdfError(
+                    f"PDF has {page_count} pages — exceeds the {_MAX_PAGES}-page "
+                    "limit for a monthly statement; refusing to parse"
+                )
             text = "\n".join((page.extract_text() or "") for page in pdf.pages)
+    except SantanderPdfError:
+        raise  # an explicit page-cap rejection — keep its own message
     except Exception as exc:  # pdfplumber / pdfminer surface a broad range
         raise SantanderPdfError(f"could not read PDF: {exc}") from exc
 

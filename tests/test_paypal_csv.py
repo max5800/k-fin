@@ -93,22 +93,47 @@ def test_german_thousands_separator():
 
 
 def test_funding_rows_are_skipped():
-    """A funding row (empty Name) is internal plumbing — skipped, the
-    real merchant payment is kept."""
+    """A plumbing funding row (empty Name, not a bank top-up) is internal
+    PayPal bookkeeping — skipped; the real merchant payment is kept."""
     rows = parse_paypal_csv(
         _csv(
             [
                 _cell(Transaktionscode="REAL", Name="Test Merchant Ltd"),
                 _cell(
-                    Transaktionscode="FUNDING",
+                    Transaktionscode="HOLD",
                     Name="",
-                    Beschreibung="Bankgutschrift auf PayPal-Konto",
-                    Brutto="19,99",
+                    Beschreibung="Reservierung",
+                    Brutto="-19,99",
                 ),
             ]
         )
     )
     assert [r["transaction_id"] for r in rows] == ["REAL"]
+
+
+def test_bank_topup_row_is_imported():
+    """The "Bankgutschrift auf PayPal-Konto" row has no Name but is *not*
+    plumbing — it is the PayPal-side leg of a cross-source top-up, so the
+    importer keeps it (the pipeline reconciles it against the Comdirect
+    "PAYPAL EUROPE" debit). Regression for the dead-matcher bug."""
+    rows = parse_paypal_csv(
+        _csv(
+            [
+                _cell(Transaktionscode="REAL", Name="Test Merchant Ltd"),
+                _cell(
+                    Transaktionscode="TOPUP",
+                    Name="",
+                    Beschreibung="Bankgutschrift auf PayPal-Konto",
+                    Brutto="50,00",
+                ),
+            ]
+        )
+    )
+    assert {r["transaction_id"] for r in rows} == {"REAL", "TOPUP"}
+    topup = next(r for r in rows if r["transaction_id"] == "TOPUP")
+    canon = paypal_csv_canonicalize(topup)
+    assert canon["amount"] == Decimal("50.00")  # a credit — money into PayPal
+    assert canon["description"] == "Bankgutschrift auf PayPal-Konto"
 
 
 def test_paypal_internal_rows_are_skipped():

@@ -65,12 +65,15 @@ keywords = ["PAYPAL_"]
 [rules.allowlist]
 description = "Placeholder values + test fixtures are safe — only real credentials should fail"
 regexes = [
+    # Anchored placeholder templates — must be the entire captured secret
+    # group so a real credential containing "your_" as a substring cannot
+    # slip through (e.g. `your_[a-z_]+_here` only matches the literal
+    # template form used in .env.example and chart values).
     '''your_[a-z_]+_here''',
     '''change_me''',
     '''dummy''',
     '''placeholder''',
-    '''example''',
-    '''sandbox''',
+    # `test-` / `test_` prefixed IDs used in unit fixtures (test-client-id, etc.)
     '''test[-_]''',
     '''<[^>]+>''',
     '''^\$\{[A-Za-z_][A-Za-z0-9_]*(:[-?+][^}]*)?\}$''',
@@ -118,8 +121,12 @@ keywords = ["DE"]
 [rules.allowlist]
 description = "Documented dummy IBANs used in fixtures, .env.example, and docs"
 regexes = [
-    '''DE0{20}''',                  # DE00000000000000000000
-    '''DE0{19}1''',                  # DE00000000000000000001 (own-IBAN counter)
+    # Any DE + 18 zeros + 2 digits: covers DE00000000000000000000 through
+    # DE00000000000000000099. The all-zeros block is the canonical dummy
+    # IBAN range used in test fixtures — real German IBANs never have 18
+    # consecutive zero digits in positions 3-20, so this cannot match a
+    # valid bank account.
+    '''DE0{18}\d{2}''',
     '''DE99999999999999\d{6}''',    # DE9999... — dummy creditor in fixtures
 ]
 paths = [
