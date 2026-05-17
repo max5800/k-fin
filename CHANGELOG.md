@@ -1,3 +1,23 @@
+# [1.36.0](https://github.com/max5800/k-fin/compare/v1.35.2...v1.36.0) (2026-05-17)
+
+
+### Bug Fixes
+
+* address /full-review findings on M16 multi-source ingestion ([455b1d8](https://github.com/max5800/k-fin/commit/455b1d81193478396ce0baf828df871e5a87f232))
+
+
+### Features
+
+* add PayPal provider — second BankProvider on the P2a contract (M16-P2b) ([76bc888](https://github.com/max5800/k-fin/commit/76bc8885fcf303c81390ac39c80e6a24dba55d9c))
+* add Santander 1plus-Card PDF-statement importer (M16-P2c) ([df5265c](https://github.com/max5800/k-fin/commit/df5265ccb5889f897234d544aa738f43761c30e4))
+* add Santander credit-card provider — third BankProvider on the P2a contract (M16-P2c) ([d08eee6](https://github.com/max5800/k-fin/commit/d08eee67f68a06d099c80614fa19bc694bcf670e))
+* detect Comdirect own-account transfers (M16 P4-Vorstufe) ([0c76a59](https://github.com/max5800/k-fin/commit/0c76a59e636ce0f141d2a0c12d0a32e796b8d6f7))
+* finish M16-P1 + Comdirect external_id sourcing (reference) ([56f5020](https://github.com/max5800/k-fin/commit/56f5020e21082da1d2b563379ed31a7255037254))
+* generalize transaction identity for multi-source ingestion (M16-P1) ([3547bf0](https://github.com/max5800/k-fin/commit/3547bf0b7a37e731b5249204274508fd5d1170b8))
+* own-account IBANs as a UI-editable app_settings setting ([86e70ed](https://github.com/max5800/k-fin/commit/86e70edb437ea04e14fd4092b9b95702c5e74501))
+* provider-contract + TAN-flow generalization (M16-P2a) ([db15af5](https://github.com/max5800/k-fin/commit/db15af5e5ca9b2f975f558cce14a1f74388e4243))
+* replace PayPal REST provider with Kontoauszug CSV importer (M16-P2b) ([fb035d2](https://github.com/max5800/k-fin/commit/fb035d2d2d61dbc355fe0b3dd48edb8a384e4b5a))
+
 ## [1.35.2](https://github.com/max5800/k-fin/compare/v1.35.1...v1.35.2) (2026-05-10)
 
 
