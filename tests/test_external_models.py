@@ -7,6 +7,7 @@ from src.external.models import (
     DepotPosition,
     DepotTransaction,
 )
+from src.normalization.canonicalize import canonicalize
 
 
 class TestComdirectAccount:
@@ -60,14 +61,36 @@ class TestComdirectTransaction:
         assert tx.amount == -42.5
 
     def test_credit(self):
+        # Comdirect delivers the incoming counterparty under `remitter`
+        # (its `deptor` field — sic — is always empty).
         tx = ComdirectTransaction.model_validate(
             {
                 "transactionValue": {"value": "1500", "unit": "EUR"},
-                "debtor": {"holderName": "Arbeitgeber GmbH"},
+                "remitter": {
+                    "holderName": "Arbeitgeber GmbH",
+                    "iban": "DE00000000000000000001",
+                },
             }
         )
         assert tx.is_debit is False
         assert tx.counterpart_name == "Arbeitgeber GmbH"
+        assert tx.counterpart_iban == "DE00000000000000000001"
+
+    def test_credit_remitter_iban_reaches_canonical_sender(self):
+        """The remitter IBAN must survive model → canonicalize as
+        `sender_iban` — the field own-account-transfer detection pairs on."""
+        tx = ComdirectTransaction.model_validate(
+            {
+                "transactionValue": {"value": "500", "unit": "EUR"},
+                "remitter": {
+                    "holderName": "John Doe",
+                    "iban": "DE00000000000000000001",
+                },
+            }
+        )
+        canonical = canonicalize(tx.model_dump())
+        assert canonical["sender"] == "John Doe"
+        assert canonical["sender_iban"] == "DE00000000000000000001"
 
     def test_description_fallback(self):
         tx = ComdirectTransaction.model_validate(

@@ -45,6 +45,11 @@ api:
     # injected at runtime from the ESO-generated Secret (see infraSecrets).
     # Only the static display name is set here; secrets stay in Vault.
     BOOTSTRAP_USER_DISPLAY_NAME: "Max"
+    # Comma-separated IBANs of the user's own accounts. The normalization
+    # pipeline flags a debit+credit between two of these as an internal
+    # transfer (kept out of income/expense). Empty default — set the real
+    # IBANs in dev/values.local.yaml (git-ignored), never here.
+    OWN_IBANS: ""
 
 service:
   type: ClusterIP
@@ -126,6 +131,10 @@ worker:
     BOOTSTRAP_LOGIN_ENABLED: "false"
     BOOTSTRAP_EMAIL: ""
     CORS_ORIGINS: ""
+    # Comma-separated IBANs of the user's own accounts — see api.env. The
+    # worker runs the comdirect normalize pass, so it needs the same list.
+    # Set the real IBANs in dev/values.local.yaml (git-ignored).
+    OWN_IBANS: ""
     # Optional examples:
     # ACCOUNT_TRANSACTION_MIN_BOOKING_DATE: "-90d"
 
