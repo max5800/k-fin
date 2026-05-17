@@ -12,6 +12,13 @@ __pycache__/
 *.py[cod]
 *.egg-info/
 .python-version
+# Test/lint caches + atomic-write temp files. Excluded so Tilt does not
+# rebuild the whole image on every `pytest` / `ruff` run in a watched repo.
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+**/*.tmp
+**/*.tmp.*
 
 
 # Docs & tests (not needed in production image)

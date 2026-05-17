@@ -10,7 +10,6 @@ from __future__ import annotations
 
 from src.core.db.models import DataSource
 from src.external.comdirect_provider import ComdirectProvider
-from src.external.paypal_provider import PayPalProvider
 from src.external.provider import BankProvider
 from src.external.santander_provider import SantanderProvider
 
@@ -19,7 +18,6 @@ from src.external.santander_provider import SantanderProvider
 #: worker's ``/internal/sync/{source_id}`` route).
 PROVIDERS: dict[DataSource, type[BankProvider]] = {
     DataSource.COMDIRECT: ComdirectProvider,
-    DataSource.PAYPAL: PayPalProvider,
     DataSource.SANTANDER_CC: SantanderProvider,
 }
 

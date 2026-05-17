@@ -98,27 +98,6 @@ def _mock_comdirect():
     )
 
 
-def _mock_paypal():
-    """Patch PayPalClient so the PayPal lifecycle runs without network."""
-    mock_client = AsyncMock()
-    mock_client.get_transactions_range.return_value = [
-        {
-            "transaction_info": {
-                "transaction_id": "TEST-PP-1",
-                "transaction_initiation_date": "2026-02-01T10:00:00+0000",
-                "transaction_amount": {"currency_code": "EUR", "value": "-12.50"},
-                "transaction_subject": "Test purchase",
-            },
-            "payer_info": {
-                "payer_name": {"alternate_full_name": "Example Store"}
-            },
-        }
-    ]
-    return patch(
-        "src.external.paypal_provider.PayPalClient", return_value=mock_client
-    )
-
-
 def _mock_santander():
     """Patch SantanderClient so the Santander lifecycle runs without network."""
     from src.external.santander_models import SantanderCard, SantanderTransaction
@@ -154,7 +133,6 @@ def _mock_santander():
 #: Maps a registered source to a context manager that mocks its network.
 _LIFECYCLE_MOCKS = {
     DataSource.COMDIRECT: _mock_comdirect,
-    DataSource.PAYPAL: _mock_paypal,
     DataSource.SANTANDER_CC: _mock_santander,
 }
 
