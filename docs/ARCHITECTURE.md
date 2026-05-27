@@ -26,7 +26,7 @@ One-line overviews. The code is the source of truth.
 | `src/api/` | FastAPI app, routers, JWT auth (`src/api/auth/`), schemas, dependency wiring. |
 | `src/normalization/` | Ingest + canonicalize raw Comdirect payloads into the canonical Postgres schema. |
 | `src/agents/` | LLM agents — categorization, anomaly detection, monthly/weekly analysis, orchestrator, synthesizer. |
-| `src/mcp_server/` | MCP server exposing the read-only Finance API as agent tools. |
+| `src/mcp_server/` | MCP server exposing the Finance API as agent tools; read-only unless write tools are explicitly enabled. |
 | `src/exporter/` | Finance agent mapper + model-based JSON export. |
 | `src/scheduler/` | Sync job orchestration and backfill driver (worker-side). |
 | `src/core/` | Config (pydantic-settings), logging, SQLAlchemy DB models. |
@@ -83,6 +83,21 @@ Models and prompts live under `src/agents/`.
 
 ## MCP Server
 
-_TODO_: document the tool surface, the explicit write allowlist (currently only
-budget upsert), and how the MCP server reads from the Finance API rather than
-the DB directly. Code: `src/mcp_server/`.
+The MCP server in `src/mcp_server/` is a stdio adapter over the Finance API,
+not a direct database client. On startup it fetches `/openapi.json`, converts
+safe operations into MCP tools, and forwards calls back to the API with
+`FINANCE_API_TOKEN`.
+
+The default tool surface is read-only: only `GET` operations are registered.
+Write tools are opt-in via `MCP_ENABLE_WRITE_TOOLS=true` and still pass through
+an explicit allowlist in `src/mcp_server/openapi_tools.py`. At the moment the
+only allowed write is budget upsert:
+
+```text
+PUT /api/v1/categories/budgets/{category_id}
+```
+
+This keeps OpenClaw portable and safe by default while still allowing a trusted
+local session to adjust budgets through the same API path the UI uses. The E2E
+guard in `tests/test_mcp_finance_api_e2e.py` verifies the intended chain:
+OpenAPI -> MCP tool descriptor -> Finance API -> Postgres.

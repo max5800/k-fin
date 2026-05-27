@@ -19,7 +19,7 @@ Connects to the Comdirect REST API (read-only), normalizes your financial data i
 - **Finance API** — REST API for normalized financial data (transactions, categorization, aggregates)
 - **Normalization pipeline** — Ingests raw Comdirect data into a canonical schema in Postgres
 - **AI categorization** — LLM agents (pydantic-ai + Claude) categorize transactions, detect anomalies, generate monthly summaries
-- **MCP server** — Exposes the read-only Finance API as MCP tools for agent use
+- **MCP server** — Exposes the Finance API as MCP tools for agent use; read-only by default, with a tiny opt-in write allowlist for trusted local sessions
 - **Self-hostable** — `docker compose up` for a single laptop or a Helm chart for K3s/K8s; two-microservice split keeps bank credentials off the public-facing API
 
 ## Architecture
@@ -41,7 +41,7 @@ A Kubernetes NetworkPolicy ensures only `comdirect-api` can reach `comdirect-wor
 | `src/api/` | FastAPI app, routers, JWT auth (`src/api/auth/`) |
 | `src/normalization/` | Ingest + canonicalize pipeline for Postgres |
 | `src/agents/` | LLM agents — categorization, anomaly detection, monthly analysis, orchestrator |
-| `src/mcp_server/` | MCP server exposing the Finance API as agent tools |
+| `src/mcp_server/` | MCP server exposing the Finance API as agent tools; read-only unless write tools are explicitly enabled |
 | `src/exporter/` | Finance agent mapper + model-based JSON export |
 | `src/scheduler/` | Sync job orchestration (comdirect-worker) |
 | `src/core/` | Config (pydantic-settings), logging, SQLAlchemy DB models |

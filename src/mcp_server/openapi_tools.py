@@ -97,6 +97,7 @@ def _request_body_schema(
 def build_tools_from_openapi(
     spec: dict[str, Any],
     methods: tuple[str, ...] = ("get",),
+    include_write_tools: bool = False,
 ) -> list[ToolSpec]:
     tools: list[ToolSpec] = []
     for path, path_item in (spec.get("paths") or {}).items():
@@ -104,8 +105,8 @@ def build_tools_from_openapi(
             continue
         for method, op in path_item.items():
             method_l = method.lower()
-            allow_via_methods = method_l in methods
-            allow_via_writelist = (method_l, path) in WRITE_ALLOWLIST
+            allow_via_methods = method_l == "get" and method_l in methods
+            allow_via_writelist = include_write_tools and (method_l, path) in WRITE_ALLOWLIST
             if not (allow_via_methods or allow_via_writelist):
                 continue
             if not isinstance(op, dict):

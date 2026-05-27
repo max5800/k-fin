@@ -218,7 +218,7 @@ def test_non_allowlisted_writes_are_not_registered():
 
 
 def test_budget_put_is_registered_with_body_schema():
-    [tool] = build_tools_from_openapi(_budget_spec())
+    [tool] = build_tools_from_openapi(_budget_spec(), include_write_tools=True)
     assert tool.name == BUDGET_OP_ID
     assert tool.method == "PUT"
     assert tool.path_template == BUDGET_PATH
@@ -232,7 +232,7 @@ def test_budget_put_is_registered_with_body_schema():
 
 
 def test_build_request_splits_body_for_budget_upsert():
-    [tool] = build_tools_from_openapi(_budget_spec())
+    [tool] = build_tools_from_openapi(_budget_spec(), include_write_tools=True)
     path, query, body = build_request(
         tool,
         {"category_id": "groceries", "monthly_limit": "250.00", "currency": "EUR"},
@@ -243,7 +243,7 @@ def test_build_request_splits_body_for_budget_upsert():
 
 
 def test_build_request_omits_unsupplied_optional_body_fields():
-    [tool] = build_tools_from_openapi(_budget_spec())
+    [tool] = build_tools_from_openapi(_budget_spec(), include_write_tools=True)
     _, _, body = build_request(
         tool, {"category_id": "groceries", "monthly_limit": "250.00"}
     )
@@ -251,11 +251,10 @@ def test_build_request_omits_unsupplied_optional_body_fields():
 
 
 def test_default_get_scope_still_excludes_allowlisted_writes_when_get_only():
-    """Caller asking only for GETs gets only GETs, even though the budget PUT is allowlisted.
+    """The default MCP surface remains read-only even though a write allowlist exists.
 
-    This proves the allowlist *adds* writes on top of `methods=` rather than
-    replacing it, and that arbitrary GET callers don't accidentally pick up
-    writes — only the live server (which doesn't pass `methods=`) does.
+    The live server must opt in via `include_write_tools=True`; keeping the
+    default read-only makes OpenClaw installs portable and safer by default.
     """
     spec = _budget_spec()
     # Add a GET sibling so we can verify it still comes through.
@@ -263,6 +262,36 @@ def test_default_get_scope_still_excludes_allowlisted_writes_when_get_only():
         "get": {"operationId": "list_budgets"}
     }
     names = sorted(t.name for t in build_tools_from_openapi(spec))
-    # Default call still includes the allowlisted budget PUT — the allowlist
-    # is an explicit opt-in baked into the module, not gated on `methods=`.
+    assert names == ["list_budgets"]
+
+
+def test_write_allowlist_opt_in_adds_budget_put():
+    spec = _budget_spec()
+    spec["paths"]["/api/v1/categories/budgets"] = {
+        "get": {"operationId": "list_budgets"}
+    }
+    names = sorted(
+        t.name for t in build_tools_from_openapi(spec, include_write_tools=True)
+    )
     assert names == sorted(["list_budgets", BUDGET_OP_ID])
+
+
+def test_broader_methods_do_not_register_arbitrary_writes():
+    spec = {
+        "paths": {
+            "/api/v1/categories": {
+                "post": {"operationId": "create_category"},
+            },
+            BUDGET_PATH: _budget_spec()["paths"][BUDGET_PATH],
+        },
+        "components": _budget_spec()["components"],
+    }
+    names = sorted(
+        t.name
+        for t in build_tools_from_openapi(
+            spec,
+            methods=("get", "post", "put", "patch", "delete"),
+            include_write_tools=True,
+        )
+    )
+    assert names == [BUDGET_OP_ID]

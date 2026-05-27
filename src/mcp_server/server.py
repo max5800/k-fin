@@ -134,7 +134,10 @@ async def main() -> None:
 
     async with httpx.AsyncClient(timeout=settings.request_timeout_s) as client:
         spec = await fetch_openapi(client)
-        tools = build_tools_from_openapi(spec)
+        tools = build_tools_from_openapi(
+            spec,
+            include_write_tools=settings.mcp_enable_write_tools,
+        )
         logger.info("Registered %d MCP tools from OpenAPI", len(tools))
         server = build_server(tools, client)
 
