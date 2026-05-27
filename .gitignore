@@ -18,3 +18,4 @@ data/
 node_modules/
 .claude/scheduled_tasks.lock
 dev/values.local.yaml
+.DS_Store

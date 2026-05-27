@@ -1,0 +1,36 @@
+{
+  "name": "k-fin-agent-suite",
+  "version": "0.1.0",
+  "description": "Codex skills for the k-fin Claude-style agent review commands.",
+  "author": {
+    "name": "Max"
+  },
+  "homepage": "https://github.com/",
+  "license": "MIT",
+  "keywords": [
+    "k-fin",
+    "codex",
+    "agents",
+    "review",
+    "security"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "k-fin Agent Suite",
+    "shortDescription": "Run k-fin review and plan agents from Codex.",
+    "longDescription": "Adds Codex-native adapters for the k-fin Claude Code commands while reusing the repo's existing Markdown agent definitions. Review skills are read-only; the suite-level Write capability exists for plan-status, which may edit only the canonical plan according to its source agent rules.",
+    "developerName": "Max",
+    "category": "Coding",
+    "capabilities": [
+      "Interactive",
+      "Read",
+      "Write"
+    ],
+    "defaultPrompt": [
+      "/full-review",
+      "/security-check",
+      "/plan-status M11"
+    ],
+    "brandColor": "#0F766E"
+  }
+}
