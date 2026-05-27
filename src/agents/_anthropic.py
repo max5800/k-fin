@@ -29,7 +29,7 @@ _DEFAULT_TIMEOUT = httpx.Timeout(connect=10.0, read=180.0, write=10.0, pool=10.0
 def make_anthropic_model(
     model: str,
     *,
-    prefer_native_output: bool = False,
+    prefer_prompted_output: bool = False,
 ) -> AnthropicModel | str:
     """Return an `AnthropicModel` with a timeout-bounded httpx client.
 
@@ -39,12 +39,12 @@ def make_anthropic_model(
     without secrets, where pydantic-ai will use its lazy provider
     construction (and fail at first `.run()` instead of at import).
 
-    When ``prefer_native_output`` is true and the selected Anthropic model
-    advertises JSON-schema output support, AutoOutputSchema resolves to
-    Anthropic's native structured-output mode instead of the default
-    output-tool mode. That avoids brittle final-result tool calls for the
-    narrative analysis agents while keeping TestModel overrides on their
-    default test-friendly mode.
+    When ``prefer_prompted_output`` is true, AutoOutputSchema resolves to
+    prompted JSON output instead of the default output-tool mode. This avoids
+    brittle final-result tool calls for the narrative analysis agents without
+    using Anthropic native structured output, whose strict schema validator
+    rejects our intentionally free-form ``Observation.metrics`` object.
+    TestModel overrides keep their own default test-friendly mode.
     """
     bare_id = model.removeprefix("anthropic:")
     api_key = os.environ.get("ANTHROPIC_API_KEY")
@@ -54,8 +54,8 @@ def make_anthropic_model(
     client = httpx.AsyncClient(timeout=_DEFAULT_TIMEOUT)
     provider = AnthropicProvider(api_key=api_key, http_client=client)
     profile = None
-    if prefer_native_output:
+    if prefer_prompted_output:
         base_profile = anthropic_model_profile(bare_id)
-        if base_profile and base_profile.supports_json_schema_output:
-            profile = replace(base_profile, default_structured_output_mode="native")
+        if base_profile:
+            profile = replace(base_profile, default_structured_output_mode="prompted")
     return AnthropicModel(bare_id, provider=provider, profile=profile)

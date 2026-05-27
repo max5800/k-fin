@@ -29,7 +29,7 @@ MODEL = "anthropic:claude-sonnet-4-6"
 ANOMALY_MAX_TOKENS = 8000
 
 anomaly_agent = Agent(
-    make_anthropic_model(MODEL, prefer_native_output=True),
+    make_anthropic_model(MODEL, prefer_prompted_output=True),
     output_type=AnomalyResult,
     system_prompt=ANOMALY_SYSTEM_PROMPT,
     retries=2,

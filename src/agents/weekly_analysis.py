@@ -31,7 +31,7 @@ MODEL = "anthropic:claude-sonnet-4-6"
 WEEKLY_ANALYSIS_MAX_TOKENS = 8000
 
 weekly_analysis_agent = Agent(
-    make_anthropic_model(MODEL, prefer_native_output=True),
+    make_anthropic_model(MODEL, prefer_prompted_output=True),
     output_type=AnalysisResult,
     system_prompt=WEEKLY_ANALYSIS_SYSTEM_PROMPT,
     retries=2,

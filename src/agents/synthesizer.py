@@ -28,7 +28,7 @@ MODEL = "anthropic:claude-sonnet-4-6"
 SYNTHESIZER_MAX_TOKENS = 8000
 
 synthesizer_agent = Agent(
-    make_anthropic_model(MODEL, prefer_native_output=True),
+    make_anthropic_model(MODEL, prefer_prompted_output=True),
     output_type=SynthesisResult,
     system_prompt=SYNTHESIZER_SYSTEM_PROMPT,
     retries=2,
