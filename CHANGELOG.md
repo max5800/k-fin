@@ -1,3 +1,10 @@
+## [1.37.2](https://github.com/max5800/k-fin/compare/v1.37.1...v1.37.2) (2026-05-27)
+
+
+### Bug Fixes
+
+* **agents:** use prompted structured output ([28048f7](https://github.com/max5800/k-fin/commit/28048f7e0725450671d008e7a7991644d2fcc822))
+
 ## [1.37.1](https://github.com/max5800/k-fin/compare/v1.37.0...v1.37.1) (2026-05-27)
 
 
