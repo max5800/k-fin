@@ -7,6 +7,7 @@ import logging
 from datetime import date
 
 from pydantic_ai import Agent
+from pydantic_ai.settings import ModelSettings
 from sqlalchemy import Engine
 
 from src.agents._anthropic import make_anthropic_model
@@ -27,12 +28,14 @@ from src.agents.types import AnalysisResult
 logger = logging.getLogger(__name__)
 
 MODEL = "anthropic:claude-sonnet-4-6"
+MONTHLY_ANALYSIS_MAX_TOKENS = 8000
 
 monthly_analysis_agent = Agent(
-    make_anthropic_model(MODEL),
+    make_anthropic_model(MODEL, prefer_native_output=True),
     output_type=AnalysisResult,
     system_prompt=MONTHLY_ANALYSIS_SYSTEM_PROMPT,
     retries=2,
+    model_settings=ModelSettings(max_tokens=MONTHLY_ANALYSIS_MAX_TOKENS),
 )
 
 

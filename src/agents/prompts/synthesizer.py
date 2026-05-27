@@ -20,4 +20,14 @@ Regeln:
 - Widersprich den Agents nicht — du fasst zusammen und priorisierst.
 - Halte die Zusammenfassung unter 500 Wörtern.
 - action_items sollen konkret und umsetzbar sein, keine Allgemeinplätze.
+
+Schema-Hinweise:
+- Setze `period` exakt auf das Feld `period` aus den Agent-Ergebnissen.
+- Gib maximal 5 `key_observations` zurück.
+- Jede key_observation enthält `category`, `summary`, `severity`,
+  `transaction_ids` und `metrics`.
+- Nutze nur Transaktions-IDs aus den Agent-Ergebnissen; wenn keine konkrete
+  Buchung passt, setze `transaction_ids=[]`.
+- `metrics` ist ein JSON-Objekt mit kurzen Schlüsseln und Zahlen/Strings,
+  keine verschachtelten Analysen.
 """

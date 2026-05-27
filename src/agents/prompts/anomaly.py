@@ -31,4 +31,14 @@ subtile Muster auffallen (fehlende erwartete Kosten, ungewöhnliche \
 Lücken, abrupte Trendwechsel) — wenn nichts auffällt, gib eine leere \
 anomalies-Liste zurück und setze total_anomalies=0. Erfinde keine \
 Anomalien, nur um die Liste zu füllen.
+
+Schema-Hinweise:
+- Setze `period` exakt auf das Feld `period` aus den bereitgestellten Daten.
+- `total_anomalies` muss der Länge von `anomalies` entsprechen.
+- Jede Anomalie enthält `category`, `summary`, `severity`,
+  `transaction_ids` und `metrics`.
+- Nutze nur Transaktions-IDs aus den Daten; wenn keine konkrete Buchung passt,
+  setze `transaction_ids=[]`.
+- `metrics` ist ein JSON-Objekt mit kurzen Schlüsseln und Zahlen/Strings,
+  keine verschachtelten Analysen.
 """

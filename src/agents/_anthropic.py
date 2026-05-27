@@ -13,9 +13,11 @@ while still surfacing a real "stuck" call within 3 minutes.
 from __future__ import annotations
 
 import os
+from dataclasses import replace
 
 import httpx
 from pydantic_ai.models.anthropic import AnthropicModel
+from pydantic_ai.profiles.anthropic import anthropic_model_profile
 from pydantic_ai.providers.anthropic import AnthropicProvider
 
 # Numbers tuned to the largest known operation (50-tx categorization batch
@@ -24,7 +26,11 @@ from pydantic_ai.providers.anthropic import AnthropicProvider
 _DEFAULT_TIMEOUT = httpx.Timeout(connect=10.0, read=180.0, write=10.0, pool=10.0)
 
 
-def make_anthropic_model(model: str) -> AnthropicModel | str:
+def make_anthropic_model(
+    model: str,
+    *,
+    prefer_native_output: bool = False,
+) -> AnthropicModel | str:
     """Return an `AnthropicModel` with a timeout-bounded httpx client.
 
     Falls back to the bare `"anthropic:..."` model string when the
@@ -32,6 +38,13 @@ def make_anthropic_model(model: str) -> AnthropicModel | str:
     behaviour at module-import time for tests and dev environments
     without secrets, where pydantic-ai will use its lazy provider
     construction (and fail at first `.run()` instead of at import).
+
+    When ``prefer_native_output`` is true and the selected Anthropic model
+    advertises JSON-schema output support, AutoOutputSchema resolves to
+    Anthropic's native structured-output mode instead of the default
+    output-tool mode. That avoids brittle final-result tool calls for the
+    narrative analysis agents while keeping TestModel overrides on their
+    default test-friendly mode.
     """
     bare_id = model.removeprefix("anthropic:")
     api_key = os.environ.get("ANTHROPIC_API_KEY")
@@ -40,4 +53,9 @@ def make_anthropic_model(model: str) -> AnthropicModel | str:
 
     client = httpx.AsyncClient(timeout=_DEFAULT_TIMEOUT)
     provider = AnthropicProvider(api_key=api_key, http_client=client)
-    return AnthropicModel(bare_id, provider=provider)
+    profile = None
+    if prefer_native_output:
+        base_profile = anthropic_model_profile(bare_id)
+        if base_profile and base_profile.supports_json_schema_output:
+            profile = replace(base_profile, default_structured_output_mode="native")
+    return AnthropicModel(bare_id, provider=provider, profile=profile)
