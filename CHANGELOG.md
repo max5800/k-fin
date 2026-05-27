@@ -1,3 +1,10 @@
+## [1.37.1](https://github.com/max5800/k-fin/compare/v1.37.0...v1.37.1) (2026-05-27)
+
+
+### Bug Fixes
+
+* **agents:** keep heartbeat alive during llm calls ([47f69a3](https://github.com/max5800/k-fin/commit/47f69a3715aa6eed282d79bdee2776211fb81ec6))
+
 # [1.37.0](https://github.com/max5800/k-fin/compare/v1.36.1...v1.37.0) (2026-05-27)
 
 
