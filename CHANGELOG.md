@@ -1,3 +1,10 @@
+## [1.37.3](https://github.com/max5800/k-fin/compare/v1.37.2...v1.37.3) (2026-05-27)
+
+
+### Bug Fixes
+
+* **agents:** make output schemas anthropic strict ([e932dcc](https://github.com/max5800/k-fin/commit/e932dcc662d714d41d0c2672cb1f6d41cb438518))
+
 ## [1.37.2](https://github.com/max5800/k-fin/compare/v1.37.1...v1.37.2) (2026-05-27)
 
 
