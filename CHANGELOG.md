@@ -1,3 +1,10 @@
+# [1.37.0](https://github.com/max5800/k-fin/compare/v1.36.1...v1.37.0) (2026-05-27)
+
+
+### Features
+
+* **api:** expose backend version metadata ([fcb30f3](https://github.com/max5800/k-fin/commit/fcb30f3dbe07ffa1dcbb30a1d0d63b20afd7d3b6))
+
 ## [1.36.1](https://github.com/max5800/k-fin/compare/v1.36.0...v1.36.1) (2026-05-27)
 
 
