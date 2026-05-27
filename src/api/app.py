@@ -19,6 +19,7 @@ from src.api.routers import (
     depots,
     dev,
     import_csv,
+    meta,
     portfolio,
     reports,
     rules,
@@ -124,6 +125,7 @@ def create_app() -> FastAPI:
     app.include_router(tags.router, prefix="/api/v1")
     app.include_router(sync.router, prefix="/api/v1")
     app.include_router(import_csv.router, prefix="/api/v1")
+    app.include_router(meta.router, prefix="/api/v1")
     app.include_router(settings_router.router, prefix="/api/v1")
     app.include_router(categorization.router, prefix="/api/v1")
     app.include_router(depots.router, prefix="/api/v1")

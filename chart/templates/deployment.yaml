@@ -44,6 +44,8 @@ spec:
           env:
             - name: PYTHONPATH
               value: /app
+            - name: K_FIN_BACKEND_VERSION
+              value: {{ (.Values.api.image.tag | default (printf "v%s" .Chart.Version)) | quote }}
             - name: WORKER_URL
               value: "http://{{ include "k-fin.fullname" . }}-worker:8001"
             - name: API_TOKEN

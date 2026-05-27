@@ -119,6 +119,7 @@ services:
     restart: unless-stopped
     environment:
       APP_ENV: ${APP_ENV:-development}
+      K_FIN_BACKEND_VERSION: ${K_FIN_VERSION:-latest}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       DATABASE_URL: postgresql+psycopg://finance:${POSTGRES_PASSWORD:-finance}@postgres:5432/finance
       WORKER_URL: http://worker:8001
