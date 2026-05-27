@@ -414,6 +414,7 @@ def test_topup_and_purchase_do_not_interfere():
 def _seed_normalized(session: Session, tx_id: str, amount: str = "-1.00") -> None:
     raw_hash = tx_id.ljust(64, "0")[:64]
     session.add(RawTransaction(content_hash=raw_hash, raw_data={"stub": True}))
+    session.flush()
     session.add(
         NormalizedTransaction(
             id=tx_id,

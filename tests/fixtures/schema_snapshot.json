@@ -1073,6 +1073,59 @@
         "id"
       ]
     },
+    "transaction_links": {
+      "columns": {
+        "child_transaction_id": {
+          "nullable": false,
+          "type": "VARCHAR(64)"
+        },
+        "created_at": {
+          "nullable": false,
+          "type": "TIMESTAMP"
+        },
+        "id": {
+          "nullable": false,
+          "type": "VARCHAR(64)"
+        },
+        "link_type": {
+          "nullable": false,
+          "type": "VARCHAR(32)"
+        },
+        "parent_transaction_id": {
+          "nullable": false,
+          "type": "VARCHAR(64)"
+        }
+      },
+      "foreign_keys": [
+        "['child_transaction_id']->normalized_transactions.['id']",
+        "['parent_transaction_id']->normalized_transactions.['id']"
+      ],
+      "indexes": {
+        "ix_transaction_links_child": {
+          "columns": [
+            "child_transaction_id"
+          ],
+          "unique": false
+        },
+        "ix_transaction_links_parent": {
+          "columns": [
+            "parent_transaction_id"
+          ],
+          "unique": false
+        },
+        "uq_transaction_links_parent_child_type": {
+          "columns": [
+            "parent_transaction_id",
+            "child_transaction_id",
+            "link_type"
+          ],
+          "unique": true
+        }
+      },
+      "primary_key": [
+        "id"
+      ]
+    },
     "transaction_tags": {
       "columns": {
         "tag_id": {

@@ -109,6 +109,7 @@ def _seed_pending_tx(
             raw_data={"stub": True},
         )
     )
+    session.flush()
     session.add(
         NormalizedTransaction(
             id=tx_id,
