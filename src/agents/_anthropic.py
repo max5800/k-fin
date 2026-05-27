@@ -42,9 +42,9 @@ def make_anthropic_model(
     When ``prefer_prompted_output`` is true, AutoOutputSchema resolves to
     prompted JSON output instead of the default output-tool mode. This avoids
     brittle final-result tool calls for the narrative analysis agents without
-    using Anthropic native structured output, whose strict schema validator
-    rejects our intentionally free-form ``Observation.metrics`` object.
-    TestModel overrides keep their own default test-friendly mode.
+    depending on Anthropic native structured output. Native output is still
+    safe as a fallback because the agent output models expose strict object
+    schemas.
     """
     bare_id = model.removeprefix("anthropic:")
     api_key = os.environ.get("ANTHROPIC_API_KEY")

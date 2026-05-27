@@ -24,6 +24,6 @@ Schema-Hinweise:
   `transaction_ids` und `metrics`.
 - Nutze nur Transaktions-IDs aus den Daten; wenn keine konkrete Buchung passt,
   setze `transaction_ids=[]`.
-- `metrics` ist ein JSON-Objekt mit kurzen Schlüsseln und Zahlen/Strings,
-  keine verschachtelten Analysen.
+- `metrics` ist eine Liste kurzer `{key, value}`-Einträge; `value` ist
+  immer ein kurzer String, keine verschachtelten Analysen.
 """
