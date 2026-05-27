@@ -183,6 +183,29 @@ class RunListOut(BaseModel):
     offset: int
 
 
+class RunHealthPendingSource(BaseModel):
+    source: str
+    pending: int
+
+
+class RunHealthOut(BaseModel):
+    window_days: int
+    threshold: float
+    runs_total: int
+    suggestions_total: int
+    high_confidence_total: int
+    auto_apply_rate: float | None = None
+    avg_confidence: float | None = None
+    memory_batches_total: int
+    memory_batches_with_hits: int
+    memory_hit_rate: float | None = None
+    memory_hits_total: int
+    low_conf_with_memory: int
+    low_conf_without_memory: int
+    pending_by_source: list[RunHealthPendingSource]
+    pending_total: int
+
+
 # ---------------------------------------------------------------------------
 # Aggregates
 # ---------------------------------------------------------------------------

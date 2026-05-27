@@ -13,7 +13,8 @@ config module mid-suite and would leave a stale singleton bound here.
 from __future__ import annotations
 
 import os
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
+from decimal import Decimal
 from unittest.mock import patch
 
 import httpx
@@ -21,7 +22,15 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
-from src.core.db.models import AgentRun, RunStatus, RunTrigger
+from src.core.db.models import (
+    AgentRun,
+    AppSettings,
+    DataSource,
+    NormalizedTransaction,
+    RawTransaction,
+    RunStatus,
+    RunTrigger,
+)
 
 
 @pytest.fixture
@@ -30,6 +39,7 @@ def runs_router():
     from src.api.routers import runs as _runs
 
     return _runs
+
 
 AUTH = {"Authorization": "Bearer test-secret"}
 
@@ -81,6 +91,43 @@ def _seed_run(
             )
         )
         s.commit()
+
+
+def _seed_pending_tx(
+    session: Session,
+    *,
+    tx_id: str,
+    raw_hash: str,
+    source: DataSource,
+    internal_transfer: bool = False,
+) -> None:
+    session.add(
+        RawTransaction(
+            content_hash=raw_hash,
+            source=source,
+            external_id=tx_id,
+            raw_data={"stub": True},
+        )
+    )
+    session.add(
+        NormalizedTransaction(
+            id=tx_id,
+            raw_content_hash=raw_hash,
+            source=source,
+            external_id=tx_id,
+            booking_date=date(2026, 5, 20),
+            valuation_date=date(2026, 5, 20),
+            amount=Decimal("-12.34"),
+            currency="EUR",
+            sender="John Doe",
+            recipient="Demo Merchant",
+            description="test fixture",
+            category_id=None,
+            is_recurring=False,
+            is_outlier=False,
+            internal_transfer=internal_transfer,
+        )
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -186,9 +233,7 @@ class TestStartRunDispatch:
             lambda p, payload: calls.append((p, payload)),
         )
 
-        resp = api_client.post(
-            "/api/v1/runs/anomaly?period_days=14", headers=AUTH
-        )
+        resp = api_client.post("/api/v1/runs/anomaly?period_days=14", headers=AUTH)
         assert resp.status_code == 201
         run_id = resp.json()["id"]
 
@@ -224,19 +269,157 @@ class TestStartRunDispatch:
         self, api_client, db_engine, monkeypatch, runs_router
     ):
         # Don't even bother dispatching for an invalid period.
-        monkeypatch.setattr(
-            runs_router, "_dispatch_to_worker", lambda *_a, **_kw: None
-        )
+        monkeypatch.setattr(runs_router, "_dispatch_to_worker", lambda *_a, **_kw: None)
 
-        resp = api_client.post(
-            "/api/v1/runs/weekly_analysis?period_days=0", headers=AUTH
-        )
+        resp = api_client.post("/api/v1/runs/weekly_analysis?period_days=0", headers=AUTH)
         assert resp.status_code == 422
 
-        resp = api_client.post(
-            "/api/v1/runs/weekly_analysis?period_days=99999", headers=AUTH
-        )
+        resp = api_client.post("/api/v1/runs/weekly_analysis?period_days=99999", headers=AUTH)
         assert resp.status_code == 422
+
+
+# ---------------------------------------------------------------------------
+# GET /runs/health
+# ---------------------------------------------------------------------------
+
+
+class TestRunsHealth:
+    def test_returns_categorization_health_metrics(self, api_client, db_engine):
+        now = datetime.now(timezone.utc)
+        with Session(db_engine) as s:
+            s.add(AppSettings(id=1, auto_apply_confidence=Decimal("0.60")))
+            s.add_all(
+                [
+                    AgentRun(
+                        id="health-categorization",
+                        agent_name="categorization",
+                        status=RunStatus.SUCCEEDED,
+                        trigger=RunTrigger.MANUAL,
+                        started_at=now - timedelta(days=1),
+                        finished_at=now,
+                        result={
+                            "categorization": {
+                                "suggestions": [
+                                    {
+                                        "transaction_id": "tx-a",
+                                        "suggested_category_id": "groceries",
+                                        "confidence": 0.9,
+                                        "reasoning": "fixture",
+                                    },
+                                    {
+                                        "transaction_id": "tx-b",
+                                        "suggested_category_id": "fun",
+                                        "confidence": 0.4,
+                                        "reasoning": "fixture",
+                                    },
+                                ],
+                                "high_confidence_count": 1,
+                            }
+                        },
+                        usage_detail={
+                            "categorization": {
+                                "memory": {
+                                    "hits_per_batch": [2, 0, 3],
+                                    "batches_total": 3,
+                                    "batches_with_memory": 2,
+                                    "low_conf_with_memory": 1,
+                                    "low_conf_without_memory": 1,
+                                }
+                            }
+                        },
+                    ),
+                    AgentRun(
+                        id="health-full",
+                        agent_name="full",
+                        status=RunStatus.SUCCEEDED,
+                        trigger=RunTrigger.MANUAL,
+                        started_at=now - timedelta(days=2),
+                        finished_at=now,
+                        result={
+                            "categorization": {
+                                "suggestions": [
+                                    {
+                                        "transaction_id": "tx-c",
+                                        "suggested_category_id": "rent",
+                                        "confidence": 0.8,
+                                        "reasoning": "fixture",
+                                    },
+                                    {
+                                        "transaction_id": "tx-d",
+                                        "suggested_category_id": "fun",
+                                        "confidence": 0.7,
+                                        "reasoning": "fixture",
+                                    },
+                                ]
+                            }
+                        },
+                    ),
+                    AgentRun(
+                        id="health-old",
+                        agent_name="categorization",
+                        status=RunStatus.SUCCEEDED,
+                        trigger=RunTrigger.MANUAL,
+                        started_at=now - timedelta(days=30),
+                        finished_at=now,
+                        result={
+                            "categorization": {
+                                "suggestions": [
+                                    {
+                                        "transaction_id": "tx-old",
+                                        "suggested_category_id": "rent",
+                                        "confidence": 1.0,
+                                        "reasoning": "fixture",
+                                    }
+                                ],
+                                "high_confidence_count": 1,
+                            }
+                        },
+                    ),
+                ]
+            )
+            _seed_pending_tx(
+                s,
+                tx_id="pending-paypal",
+                raw_hash="a" * 64,
+                source=DataSource.PAYPAL,
+            )
+            _seed_pending_tx(
+                s,
+                tx_id="pending-santander",
+                raw_hash="b" * 64,
+                source=DataSource.SANTANDER_CC,
+            )
+            _seed_pending_tx(
+                s,
+                tx_id="pending-internal",
+                raw_hash="c" * 64,
+                source=DataSource.COMDIRECT,
+                internal_transfer=True,
+            )
+            s.commit()
+
+        resp = api_client.get("/api/v1/runs/health?window_days=7", headers=AUTH)
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["window_days"] == 7
+        assert body["threshold"] == pytest.approx(0.60)
+        assert body["runs_total"] == 2
+        assert body["suggestions_total"] == 4
+        assert body["high_confidence_total"] == 3
+        assert body["auto_apply_rate"] == pytest.approx(0.75)
+        assert body["avg_confidence"] == pytest.approx(0.7)
+        assert body["memory_batches_total"] == 3
+        assert body["memory_batches_with_hits"] == 2
+        assert body["memory_hit_rate"] == pytest.approx(2 / 3)
+        assert body["memory_hits_total"] == 5
+        assert body["low_conf_with_memory"] == 1
+        assert body["low_conf_without_memory"] == 1
+        assert body["pending_total"] == 2
+        assert body["pending_by_source"] == [
+            {"source": "paypal", "pending": 1},
+            {"source": "santander_cc", "pending": 1},
+        ]
 
 
 # ---------------------------------------------------------------------------
@@ -245,9 +428,7 @@ class TestStartRunDispatch:
 
 
 class TestDeleteRun:
-    def test_cancel_running_returns_204_and_marks_cancelled(
-        self, api_client, db_engine
-    ):
+    def test_cancel_running_returns_204_and_marks_cancelled(self, api_client, db_engine):
         run_id = "running-1"
         _seed_run(db_engine, run_id=run_id, status=RunStatus.RUNNING)
 
@@ -327,9 +508,7 @@ class TestDeleteRun:
 
 class TestRerunRun:
     def test_rerun_unknown_returns_404(self, api_client):
-        resp = api_client.post(
-            "/api/v1/runs/does-not-exist/rerun", headers=AUTH
-        )
+        resp = api_client.post("/api/v1/runs/does-not-exist/rerun", headers=AUTH)
         assert resp.status_code == 404
 
     def test_rerun_running_returns_400(self, api_client, db_engine):
@@ -353,9 +532,7 @@ class TestRerunRun:
         assert resp.status_code == 400
         assert "succeeded" in resp.json()["detail"]
 
-    def test_rerun_failed_dispatches_new_run(
-        self, api_client, db_engine, monkeypatch, runs_router
-    ):
+    def test_rerun_failed_dispatches_new_run(self, api_client, db_engine, monkeypatch, runs_router):
         run_id = "failed-rerun"
         _seed_run(
             db_engine,
@@ -390,9 +567,7 @@ class TestRerunRun:
             assert new_row.agent_name == "categorization"
             assert new_row.status == RunStatus.PENDING
 
-        assert calls == [
-            ("/internal/runs/start?agent_name=categorization", {"run_id": new_id})
-        ]
+        assert calls == [("/internal/runs/start?agent_name=categorization", {"run_id": new_id})]
 
     def test_rerun_cancelled_dispatches_new_run(
         self, api_client, db_engine, monkeypatch, runs_router
@@ -416,9 +591,7 @@ class TestRerunRun:
         assert resp.status_code == 201
         new_id = resp.json()["id"]
 
-        assert calls == [
-            ("/internal/runs/start?agent_name=categorization", {"run_id": new_id})
-        ]
+        assert calls == [("/internal/runs/start?agent_name=categorization", {"run_id": new_id})]
 
     def test_rerun_full_run_uses_start_full_path(
         self, api_client, db_engine, monkeypatch, runs_router

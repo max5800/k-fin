@@ -10,7 +10,7 @@ from __future__ import annotations
 from datetime import date
 from decimal import Decimal
 
-from sqlalchemy import Engine, and_, case, func, or_, select
+from sqlalchemy import Engine, and_, case, func, literal, or_, select
 from sqlalchemy.orm import Session
 
 from src.core.db.models import (
@@ -23,6 +23,9 @@ from src.core.db.models import (
 
 def _to_float(val: Decimal | float | None) -> float:
     return float(val) if val is not None else 0.0
+
+
+MEMORY_MATCH_MIN_CHARS = 4
 
 
 # ---------------------------------------------------------------------------
@@ -74,13 +77,8 @@ def count_uncategorized_transactions(engine: Engine) -> int:
 def get_available_categories(engine: Engine) -> list[dict]:
     """All categories with id, name, type."""
     with Session(engine) as session:
-        rows = session.execute(
-            select(Category.id, Category.name, Category.type)
-        ).all()
-    return [
-        {"id": r.id, "name": r.name, "type": r.type.value}
-        for r in rows
-    ]
+        rows = session.execute(select(Category.id, Category.name, Category.type)).all()
+    return [{"id": r.id, "name": r.name, "type": r.type.value} for r in rows]
 
 
 def get_similar_categorized_transactions(
@@ -91,10 +89,11 @@ def get_similar_categorized_transactions(
     """Few-shot memory for Categorization: previously categorized txns whose
     sender or recipient matches anything in the current batch.
 
-    SQL-only Phase 1a — case-insensitive substring match (`ILIKE %key%`).
+    SQL-only Phase 1a — case-insensitive substring match in both directions.
     Catches stable bank-side identifiers ("VATTENFALL EUROPE SALES",
-    "NETFLIX.COM") which dominate recurring transactions. Long-tail
-    variable descriptions stay uncovered until Phase 1b (pgvector).
+    "NETFLIX.COM") and imported-source merchants whose current label may be
+    longer than the already categorized historical label. Long-tail variable
+    descriptions stay uncovered until Phase 1b (pgvector).
 
     Dedup: max one example per (sender_lower, category_id) pair, newest
     booking_date first, capped at `limit_per_batch`.
@@ -103,14 +102,16 @@ def get_similar_categorized_transactions(
     for tx in batch:
         s = (tx.get("sender") or "").strip().lower()
         r = (tx.get("recipient") or "").strip().lower()
-        if s:
+        if len(s) >= MEMORY_MATCH_MIN_CHARS:
             keys.add(s)
-        if r:
+        if len(r) >= MEMORY_MATCH_MIN_CHARS:
             keys.add(r)
     if not keys:
         return []
 
     ilike_clauses = []
+    sender_norm = func.lower(func.trim(func.coalesce(NormalizedTransaction.sender, "")))
+    recipient_norm = func.lower(func.trim(func.coalesce(NormalizedTransaction.recipient, "")))
     for key in keys:
         # Escape SQL LIKE wildcards: a sender like "%PROMO%" or
         # "Verein A_B" would otherwise expand to a wildcard match and pull
@@ -119,6 +120,26 @@ def get_similar_categorized_transactions(
         pattern = f"%{escaped}%"
         ilike_clauses.append(NormalizedTransaction.sender.ilike(pattern, escape="\\"))
         ilike_clauses.append(NormalizedTransaction.recipient.ilike(pattern, escape="\\"))
+
+        # Reverse direction: current key contains the historical label.
+        # This catches imported sources where the parser exposes a richer
+        # merchant string than an older already-categorized row did.
+        current_key = literal(key)
+        for column_norm in (sender_norm, recipient_norm):
+            column_escaped = func.replace(
+                func.replace(func.replace(column_norm, "\\", "\\\\"), "%", "\\%"),
+                "_",
+                "\\_",
+            )
+            ilike_clauses.append(
+                and_(
+                    func.length(column_norm) >= MEMORY_MATCH_MIN_CHARS,
+                    current_key.ilike(
+                        literal("%") + column_escaped + literal("%"),
+                        escape="\\",
+                    ),
+                )
+            )
 
     stmt = (
         select(
@@ -260,9 +281,11 @@ def get_category_breakdown(
 def get_recurring_patterns(engine: Engine) -> list[dict]:
     """All detected recurring patterns."""
     with Session(engine) as session:
-        rows = session.execute(
-            select(RecurringPattern).order_by(RecurringPattern.avg_amount)
-        ).scalars().all()
+        rows = (
+            session.execute(select(RecurringPattern).order_by(RecurringPattern.avg_amount))
+            .scalars()
+            .all()
+        )
     return [
         {
             "recipient": r.recipient,
@@ -280,9 +303,7 @@ def get_recurring_patterns(engine: Engine) -> list[dict]:
 # ---------------------------------------------------------------------------
 
 
-def get_period_transactions(
-    engine: Engine, date_from: date, date_to: date
-) -> list[dict]:
+def get_period_transactions(engine: Engine, date_from: date, date_to: date) -> list[dict]:
     """All transactions in a date range, with category info.
 
     Includes `is_refund` so the analysis/anomaly agents can distinguish a
@@ -338,15 +359,15 @@ def get_new_counterparties(engine: Engine, since_date: date) -> list[str]:
     ).subquery()
 
     with Session(engine) as session:
-        rows = session.execute(
-            select(subq.c.recipient).where(subq.c.first_seen >= since_date)
-        ).scalars().all()
+        rows = (
+            session.execute(select(subq.c.recipient).where(subq.c.first_seen >= since_date))
+            .scalars()
+            .all()
+        )
     return list(rows)
 
 
-def get_outlier_transactions(
-    engine: Engine, date_from: date, date_to: date
-) -> list[dict]:
+def get_outlier_transactions(engine: Engine, date_from: date, date_to: date) -> list[dict]:
     """Outlier-flagged transactions in a date range. `is_refund` is
     surfaced so anomaly scoring can dampen positive-amount refunds.
     """
@@ -438,10 +459,7 @@ def get_recent_reports(engine: Engine, report_type: str, limit: int = 3) -> list
             .order_by(Report.created_at.desc())
             .limit(limit)
         ).all()
-    return [
-        {"content": r.content, "created_at": r.created_at.isoformat()}
-        for r in rows
-    ]
+    return [{"content": r.content, "created_at": r.created_at.isoformat()} for r in rows]
 
 
 def get_latest_report_content(engine: Engine, report_type: str) -> dict | None:

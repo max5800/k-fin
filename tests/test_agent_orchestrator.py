@@ -175,6 +175,47 @@ def agent_seed(db_engine):
         s.commit()
 
 
+def _seed_categorized_memory_tx(
+    db_engine,
+    *,
+    tx_id: str,
+    raw_char: str,
+    sender: str,
+    recipient: str,
+    category_id: str = "fun",
+):
+    """Seed one categorized transaction for M7a memory-retrieval tests."""
+    raw_hash = raw_char * 64
+    with Session(db_engine) as s:
+        if s.get(Category, category_id) is None:
+            s.add(Category(id=category_id, name="Freizeit", type=TypeEnum.DISKRETIONAER))
+        s.add(
+            RawTransaction(
+                content_hash=raw_hash,
+                external_id=f"MEM-{raw_char}",
+                raw_data={"stub": True},
+            )
+        )
+        s.flush()
+        s.add(
+            NormalizedTransaction(
+                id=tx_id,
+                raw_content_hash=raw_hash,
+                booking_date=date(2026, 4, 12),
+                valuation_date=date(2026, 4, 12),
+                amount=Decimal("-19.99"),
+                sender=sender,
+                recipient=recipient,
+                description="memory fixture",
+                category_id=category_id,
+                is_recurring=False,
+                is_outlier=False,
+                internal_transfer=False,
+            )
+        )
+        s.commit()
+
+
 # ---------------------------------------------------------------------------
 # gather.py tests
 # ---------------------------------------------------------------------------
@@ -226,9 +267,7 @@ class TestGather:
     def test_get_outlier_transactions(self, db_engine, agent_seed):
         from src.agents.gather import get_outlier_transactions
 
-        result = get_outlier_transactions(
-            db_engine, date(2026, 4, 1), date(2026, 4, 30)
-        )
+        result = get_outlier_transactions(db_engine, date(2026, 4, 1), date(2026, 4, 30))
         assert len(result) == 1
         assert result[0]["id"] == "txn-outlier-1"
 
@@ -314,6 +353,90 @@ class TestGather:
         ]
         result = get_similar_categorized_transactions(db_engine, batch)
         assert any(r["category_id"] == "rent" for r in result)
+
+    def test_get_similar_imported_short_key_matches_long_history(self, db_engine):
+        """A short imported merchant key still finds a richer historical label."""
+        from src.agents.gather import get_similar_categorized_transactions
+
+        _seed_categorized_memory_tx(
+            db_engine,
+            tx_id="txn-memory-long-history",
+            raw_char="m",
+            sender="",
+            recipient="ACME Online GmbH",
+        )
+
+        result = get_similar_categorized_transactions(
+            db_engine,
+            [
+                {
+                    "id": "new-import-short",
+                    "sender": "",
+                    "recipient": "ACME",
+                    "amount": -19.99,
+                    "booking_date": "2026-04-20",
+                    "description": "",
+                }
+            ],
+        )
+
+        assert any(r["recipient"] == "ACME Online GmbH" for r in result)
+
+    def test_get_similar_imported_long_key_matches_short_history(self, db_engine):
+        """A richer imported merchant key can match a shorter historical label."""
+        from src.agents.gather import get_similar_categorized_transactions
+
+        _seed_categorized_memory_tx(
+            db_engine,
+            tx_id="txn-memory-short-history",
+            raw_char="n",
+            sender="",
+            recipient="ACME",
+        )
+
+        result = get_similar_categorized_transactions(
+            db_engine,
+            [
+                {
+                    "id": "new-import-long",
+                    "sender": "",
+                    "recipient": "ACME Online GmbH",
+                    "amount": -19.99,
+                    "booking_date": "2026-04-20",
+                    "description": "",
+                }
+            ],
+        )
+
+        assert any(r["recipient"] == "ACME" for r in result)
+
+    def test_get_similar_ignores_too_short_keys(self, db_engine):
+        """Very short merchant labels are too noisy for substring memory."""
+        from src.agents.gather import get_similar_categorized_transactions
+
+        _seed_categorized_memory_tx(
+            db_engine,
+            tx_id="txn-memory-short-key",
+            raw_char="o",
+            sender="",
+            recipient="DB",
+        )
+
+        result = get_similar_categorized_transactions(
+            db_engine,
+            [
+                {
+                    "id": "new-short-key",
+                    "sender": "",
+                    "recipient": "DB",
+                    "amount": -19.99,
+                    "booking_date": "2026-04-20",
+                    "description": "",
+                }
+            ],
+        )
+
+        assert result == []
 
     def test_get_similar_empty_batch_returns_empty(self, db_engine, agent_seed):
         from src.agents.gather import get_similar_categorized_transactions
@@ -516,7 +639,11 @@ class TestSearchWebTool:
 
         fake_payload = {
             "results": [
-                {"title": "Böhnlich Bamberg", "url": "https://example.de/1", "content": "Fleischerei in Bamberg seit 1898"},
+                {
+                    "title": "Böhnlich Bamberg",
+                    "url": "https://example.de/1",
+                    "content": "Fleischerei in Bamberg seit 1898",
+                },
                 {"title": "Bewertungen", "url": "https://example.de/2", "content": "4.7 Sterne"},
                 {"title": "Karte", "url": "https://example.de/3", "content": "Lange Str. 1"},
                 {"title": "EXTRA", "url": "https://example.de/4", "content": "should be dropped"},
