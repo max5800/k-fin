@@ -5,10 +5,26 @@ from __future__ import annotations
 import os
 from unittest.mock import patch
 
+from fastapi.testclient import TestClient
+
+from src.api.app import create_app
+from src.core.db import get_db
+
 AUTH = {"Authorization": "Bearer test-secret"}
 
 
-def test_version_requires_auth():
+def _client(monkeypatch):
+    from src.api import deps
+
+    monkeypatch.setattr(deps.settings, "api_token", "test-secret")
+    monkeypatch.setattr(deps.settings, "jwt_secret", "")
+
+    app = create_app()
+    app.dependency_overrides[get_db] = lambda: None
+    return TestClient(app)
+
+
+def test_version_requires_auth(monkeypatch):
     with patch.dict(
         os.environ,
         {
@@ -16,17 +32,13 @@ def test_version_requires_auth():
             "K_FIN_BACKEND_VERSION": "v9.8.7",
         },
     ):
-        from src.api.app import create_app
-        from fastapi.testclient import TestClient
-
-        client = TestClient(create_app())
-
+        client = _client(monkeypatch)
         resp = client.get("/api/v1/meta/version")
 
     assert resp.status_code == 401
 
 
-def test_version_returns_deployed_backend_version():
+def test_version_returns_deployed_backend_version(monkeypatch):
     with patch.dict(
         os.environ,
         {
@@ -34,11 +46,7 @@ def test_version_returns_deployed_backend_version():
             "K_FIN_BACKEND_VERSION": "v9.8.7",
         },
     ):
-        from fastapi.testclient import TestClient
-
-        from src.api.app import create_app
-
-        client = TestClient(create_app())
+        client = _client(monkeypatch)
         resp = client.get("/api/v1/meta/version", headers=AUTH)
 
     assert resp.status_code == 200
