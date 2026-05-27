@@ -1,3 +1,10 @@
+# [1.39.0](https://github.com/max5800/k-fin/compare/v1.38.0...v1.39.0) (2026-05-27)
+
+
+### Features
+
+* **agents:** improve memory matching and health metrics ([8811836](https://github.com/max5800/k-fin/commit/88118369d0bafee77dd7788b4854e1043e558c0a))
+
 # [1.38.0](https://github.com/max5800/k-fin/compare/v1.37.3...v1.38.0) (2026-05-27)
 
 
