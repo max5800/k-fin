@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+      - develop
 
 # Serialise releases per branch so a re-run can't race the prior one
 # at the `:latest` image push or the Fleet bundle commit. We do not
@@ -56,7 +57,7 @@ jobs:
   publish:
     name: Publish Images & Helm Chart
     needs: release
-    if: needs.release.outputs.published == 'true' && github.ref == 'refs/heads/main'
+    if: needs.release.outputs.published == 'true'
     runs-on: ubuntu-latest
 
     steps:
@@ -70,15 +71,31 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Resolve image tags
+        id: image-tags
+        run: |
+          {
+            echo "api<<EOF"
+            echo "ghcr.io/max5800/k-fin-api:v${{ needs.release.outputs.version }}"
+            if [ "${{ github.ref }}" = "refs/heads/main" ]; then
+              echo "ghcr.io/max5800/k-fin-api:latest"
+            fi
+            echo "EOF"
+            echo "worker<<EOF"
+            echo "ghcr.io/max5800/k-fin-worker:v${{ needs.release.outputs.version }}"
+            if [ "${{ github.ref }}" = "refs/heads/main" ]; then
+              echo "ghcr.io/max5800/k-fin-worker:latest"
+            fi
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Build and push API image
         uses: docker/build-push-action@v5
         with:
           context: .
           file: Dockerfile.api
           push: true
-          tags: |
-            ghcr.io/max5800/k-fin-api:v${{ needs.release.outputs.version }}
-            ghcr.io/max5800/k-fin-api:latest
+          tags: ${{ steps.image-tags.outputs.api }}
 
       - name: Build and push Worker image
         uses: docker/build-push-action@v5
@@ -86,9 +103,7 @@ jobs:
           context: .
           file: Dockerfile
           push: true
-          tags: |
-            ghcr.io/max5800/k-fin-worker:v${{ needs.release.outputs.version }}
-            ghcr.io/max5800/k-fin-worker:latest
+          tags: ${{ steps.image-tags.outputs.worker }}
 
       - name: Helm registry login
         run: helm registry login ghcr.io -u ${{ github.actor }} -p ${{ secrets.GITHUB_TOKEN }}
