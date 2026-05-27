@@ -1,3 +1,10 @@
+# [1.40.0-develop.1](https://github.com/max5800/k-fin/compare/v1.39.0...v1.40.0-develop.1) (2026-05-27)
+
+
+### Features
+
+* add transaction link reconciliation ([c0c5f2c](https://github.com/max5800/k-fin/commit/c0c5f2c8b1dcb6c55fc16c3fb0bae25ad3965236))
+
 # [1.39.0](https://github.com/max5800/k-fin/compare/v1.38.0...v1.39.0) (2026-05-27)
 
 
