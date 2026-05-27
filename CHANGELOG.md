@@ -1,3 +1,10 @@
+## [1.36.1](https://github.com/max5800/k-fin/compare/v1.36.0...v1.36.1) (2026-05-27)
+
+
+### Bug Fixes
+
+* **agents:** use native structured output for analyses ([954c1f1](https://github.com/max5800/k-fin/commit/954c1f12636feba963628e3bf2f2c124dedd3118))
+
 # [1.36.0](https://github.com/max5800/k-fin/compare/v1.35.2...v1.36.0) (2026-05-17)
 
 
