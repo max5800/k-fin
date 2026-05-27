@@ -1,3 +1,10 @@
+# [1.38.0](https://github.com/max5800/k-fin/compare/v1.37.3...v1.38.0) (2026-05-27)
+
+
+### Features
+
+* **mcp:** gate write tools behind opt-in ([97bdc54](https://github.com/max5800/k-fin/commit/97bdc5483c99a38222572edd1d47beafed654432))
+
 ## [1.37.3](https://github.com/max5800/k-fin/compare/v1.37.2...v1.37.3) (2026-05-27)
 
 
