@@ -4,7 +4,6 @@ on:
   push:
     branches:
       - main
-      - develop
 
 # Serialise releases per branch so a re-run can't race the prior one
 # at the `:latest` image push or the Fleet bundle commit. We do not
@@ -57,7 +56,7 @@ jobs:
   publish:
     name: Publish Images & Helm Chart
     needs: release
-    if: needs.release.outputs.published == 'true'
+    if: needs.release.outputs.published == 'true' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
 
     steps:
@@ -105,7 +104,7 @@ jobs:
     needs: [release, publish]
     # Homelab-only step. Skipped on forks because the target repo and the
     # HOME_LAB_PAT secret only exist for max5800.
-    if: needs.release.outputs.published == 'true' && github.repository_owner == 'max5800'
+    if: needs.release.outputs.published == 'true' && github.ref == 'refs/heads/main' && github.repository_owner == 'max5800'
     runs-on: ubuntu-latest
 
     steps:
