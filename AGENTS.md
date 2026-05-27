@@ -65,5 +65,23 @@ source command Markdown and apply the agent mapping above.
   `plan-status` through the Codex role listed above and pass along any milestone
   argument exactly.
 
+If a Codex skill or plugin summarizes one of these commands, the source
+`.claude/commands/*.md` file is still authoritative. Preserve its scope rules
+exactly, including dirty working-tree files, staged changes, untracked files, and
+changes since the latest release tag.
+
+## Claude Hook Parity
+
+Codex does not execute `.claude/settings.json` hooks automatically. To preserve
+the Claude Code safety model, manually apply the configured Stop hook before
+finishing any implementation, commit, or review that touched files:
+
+1. Identify files modified in this session.
+2. Run a quick `security-reviewer`-perspective scan over those files for
+   hardcoded secrets, credentials in logs, sensitive data exposure, and path
+   traversal risks.
+3. Report actual issues only. If clean, state that the modified files passed the
+   security hook check.
+
 Only spawn Codex subagents when the user explicitly asks for agents, delegation,
 or parallel agent work. Otherwise, apply the relevant role instructions locally.
