@@ -15,6 +15,8 @@ otherwise leave a stale singleton bound on the orchestrator side.
 
 from __future__ import annotations
 
+import time
+import threading
 from datetime import datetime, timezone
 
 import pytest
@@ -105,6 +107,107 @@ class TestUpdateProgressCancellation:
         _seed_run(db_engine, run_id="ok-1", status=RunStatus.RUNNING)
         # Should be a no-op exception-wise.
         orchestrator._update_progress("ok-1", message="still going")
+
+
+# ---------------------------------------------------------------------------
+# _run_with_heartbeat
+# ---------------------------------------------------------------------------
+
+
+class TestRunWithHeartbeat:
+    def test_refreshes_heartbeat_while_callable_is_blocked_without_db(
+        self, monkeypatch
+    ):
+        from src.agents.orchestrator import AgentOrchestrator
+
+        monkeypatch.setitem(
+            AgentOrchestrator._run_with_heartbeat.__globals__,
+            "AGENT_HEARTBEAT_INTERVAL_S",
+            0.01,
+        )
+        o = AgentOrchestrator.__new__(AgentOrchestrator)
+        pulsed = threading.Event()
+
+        def _update_progress(run_id: str, **_kw):
+            assert run_id == "watchdog-unit-1"
+            pulsed.set()
+
+        monkeypatch.setattr(o, "_update_progress", _update_progress)
+
+        def _blocked_call():
+            assert pulsed.wait(timeout=1)
+            return "ok"
+
+        assert o._run_with_heartbeat("watchdog-unit-1", _blocked_call) == "ok"
+
+    def test_propagates_cancel_observed_by_watchdog_without_db(
+        self, monkeypatch, RunCancelled
+    ):
+        from src.agents.orchestrator import AgentOrchestrator
+
+        monkeypatch.setitem(
+            AgentOrchestrator._run_with_heartbeat.__globals__,
+            "AGENT_HEARTBEAT_INTERVAL_S",
+            0.01,
+        )
+        o = AgentOrchestrator.__new__(AgentOrchestrator)
+        cancel_seen = threading.Event()
+
+        def _update_progress(*_a, **_kw):
+            cancel_seen.set()
+            raise RunCancelled("test cancel")
+
+        monkeypatch.setattr(o, "_update_progress", _update_progress)
+
+        def _blocked_call():
+            assert cancel_seen.wait(timeout=1)
+            return "should not win"
+
+        with pytest.raises(RunCancelled):
+            o._run_with_heartbeat("watchdog-unit-cancel-1", _blocked_call)
+
+    def test_refreshes_heartbeat_while_callable_is_blocked(
+        self, db_engine, orchestrator, monkeypatch
+    ):
+        from src.agents.orchestrator import AgentOrchestrator
+
+        monkeypatch.setitem(
+            AgentOrchestrator._run_with_heartbeat.__globals__,
+            "AGENT_HEARTBEAT_INTERVAL_S",
+            0.01,
+        )
+        _seed_run(db_engine, run_id="watchdog-1", status=RunStatus.RUNNING)
+
+        def _blocked_call():
+            deadline = time.monotonic() + 1
+            while time.monotonic() < deadline:
+                with Session(db_engine) as s:
+                    row = s.get(AgentRun, "watchdog-1")
+                    if row.heartbeat_at is not None:
+                        return "ok"
+                time.sleep(0.01)
+            raise AssertionError("heartbeat watchdog did not pulse")
+
+        assert orchestrator._run_with_heartbeat("watchdog-1", _blocked_call) == "ok"
+
+    def test_propagates_cancel_observed_by_watchdog(
+        self, db_engine, orchestrator, monkeypatch, RunCancelled
+    ):
+        from src.agents.orchestrator import AgentOrchestrator
+
+        monkeypatch.setitem(
+            AgentOrchestrator._run_with_heartbeat.__globals__,
+            "AGENT_HEARTBEAT_INTERVAL_S",
+            0.01,
+        )
+        _seed_run(db_engine, run_id="watchdog-cancel-1", status=RunStatus.CANCELLED)
+
+        def _blocked_call():
+            time.sleep(0.05)
+            return "should not win"
+
+        with pytest.raises(RunCancelled):
+            orchestrator._run_with_heartbeat("watchdog-cancel-1", _blocked_call)
 
 
 # ---------------------------------------------------------------------------

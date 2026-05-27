@@ -38,7 +38,8 @@ class RunCancelled(Exception):
     """
 
 
-# Heartbeats are written at every batch boundary. A 5-minute gap means the
+# Heartbeats are written at every batch boundary and by the orchestrator's
+# watchdog while a blocking LLM call is in-flight. A 5-minute gap means the
 # process is either dead or genuinely stalled — both warrant reaping.
 DEFAULT_STALE_HEARTBEAT_S = 300
 

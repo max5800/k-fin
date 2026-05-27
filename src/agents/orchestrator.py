@@ -9,9 +9,11 @@ from __future__ import annotations
 import calendar
 import logging
 import re
+import threading
 import uuid
+from collections.abc import Callable
 from datetime import date, datetime, timezone
-from typing import Any
+from typing import Any, TypeVar
 
 from sqlalchemy import Engine, create_engine, delete, select, update
 from sqlalchemy.orm import Session
@@ -69,6 +71,9 @@ def _usage_to_dict(usage: AgentUsage, model: str) -> dict[str, Any]:
     return out
 
 logger = logging.getLogger(__name__)
+
+AGENT_HEARTBEAT_INTERVAL_S = 60
+T = TypeVar("T")
 
 def _classify_error(msg: str) -> str:
     """Translate raw exception messages into something a user can act on."""
@@ -321,24 +326,36 @@ class AgentOrchestrator:
                 if agent_type == "categorization":
                     cb = self._make_progress_callback(run_id, label) if run_id else None
                     err_cb = self._make_batch_error_callback(run_id) if run_id else None
-                    result = run_categorization(
-                        self.engine,
-                        on_progress=cb,
-                        on_batch_error=err_cb,
-                        auto_apply_threshold=threshold,
-                        usage=agent_usage,
+                    result = self._run_with_heartbeat(
+                        run_id,
+                        lambda: run_categorization(
+                            self.engine,
+                            on_progress=cb,
+                            on_batch_error=err_cb,
+                            auto_apply_threshold=threshold,
+                            usage=agent_usage,
+                        ),
                     )
                 elif agent_type == "weekly_analysis":
-                    result = run_weekly_analysis(
-                        self.engine, period_days=period_days, usage=agent_usage
+                    result = self._run_with_heartbeat(
+                        run_id,
+                        lambda: run_weekly_analysis(
+                            self.engine, period_days=period_days, usage=agent_usage
+                        ),
                     )
                 elif agent_type == "monthly_analysis":
-                    result = run_monthly_analysis(
-                        self.engine, period_days=period_days, usage=agent_usage
+                    result = self._run_with_heartbeat(
+                        run_id,
+                        lambda: run_monthly_analysis(
+                            self.engine, period_days=period_days, usage=agent_usage
+                        ),
                     )
                 elif agent_type == "anomaly":
-                    result = run_anomaly_detection(
-                        self.engine, period_days=period_days, usage=agent_usage
+                    result = self._run_with_heartbeat(
+                        run_id,
+                        lambda: run_anomaly_detection(
+                            self.engine, period_days=period_days, usage=agent_usage
+                        ),
                     )
                 else:
                     raise ValueError(f"Unhandled agent_type {agent_type}")
@@ -367,13 +384,16 @@ class AgentOrchestrator:
             )
         synth_usage = AgentUsage()
         try:
-            result = run_synthesizer(
-                engine=self.engine,
-                categorization=results.get("categorization"),
-                weekly=results.get("weekly_analysis"),
-                monthly=results.get("monthly_analysis"),
-                anomaly=results.get("anomaly"),
-                usage=synth_usage,
+            result = self._run_with_heartbeat(
+                run_id,
+                lambda: run_synthesizer(
+                    engine=self.engine,
+                    categorization=results.get("categorization"),
+                    weekly=results.get("weekly_analysis"),
+                    monthly=results.get("monthly_analysis"),
+                    anomaly=results.get("anomaly"),
+                    usage=synth_usage,
+                ),
             )
             results["synthesis"] = result
             self._persist_report("synthesis", result)
@@ -427,11 +447,14 @@ class AgentOrchestrator:
                 if run_id
                 else None
             )
-            result = run_categorization(
-                self.engine,
-                on_progress=cb,
-                auto_apply_threshold=self._load_auto_apply_threshold(),
-                usage=usage,
+            result = self._run_with_heartbeat(
+                run_id,
+                lambda: run_categorization(
+                    self.engine,
+                    on_progress=cb,
+                    auto_apply_threshold=self._load_auto_apply_threshold(),
+                    usage=usage,
+                ),
             )
             return result, usage
         if run_id:
@@ -441,28 +464,93 @@ class AgentOrchestrator:
             self._update_progress(run_id, message=f"{label} läuft…")
         if agent_type == "weekly_analysis":
             return (
-                run_weekly_analysis(
-                    self.engine, period_days=period_days, usage=usage
+                self._run_with_heartbeat(
+                    run_id,
+                    lambda: run_weekly_analysis(
+                        self.engine, period_days=period_days, usage=usage
+                    ),
                 ),
                 usage,
             )
         elif agent_type == "monthly_analysis":
             return (
-                run_monthly_analysis(
-                    self.engine, period_days=period_days, usage=usage
+                self._run_with_heartbeat(
+                    run_id,
+                    lambda: run_monthly_analysis(
+                        self.engine, period_days=period_days, usage=usage
+                    ),
                 ),
                 usage,
             )
         elif agent_type == "anomaly":
             return (
-                run_anomaly_detection(
-                    self.engine, period_days=period_days, usage=usage
+                self._run_with_heartbeat(
+                    run_id,
+                    lambda: run_anomaly_detection(
+                        self.engine, period_days=period_days, usage=usage
+                    ),
                 ),
                 usage,
             )
         elif agent_type == "synthesis":
-            return run_synthesizer(engine=self.engine, usage=usage), usage
+            return (
+                self._run_with_heartbeat(
+                    run_id,
+                    lambda: run_synthesizer(engine=self.engine, usage=usage),
+                ),
+                usage,
+            )
         raise ValueError(f"Unknown agent type: {agent_type}")
+
+    def _run_with_heartbeat(
+        self,
+        run_id: str | None,
+        func: Callable[[], T],
+    ) -> T:
+        """Run a blocking agent call while refreshing the run heartbeat.
+
+        Period-aware agents can spend several minutes inside one pydantic-ai
+        call, especially when structured-output retries happen. The reaper is
+        correct to kill rows with no heartbeat, but a live worker stuck inside
+        an LLM request still needs to pulse between progress boundaries.
+        """
+        if run_id is None:
+            return func()
+
+        stop = threading.Event()
+        heartbeat_errors: list[BaseException] = []
+
+        def _heartbeat_loop() -> None:
+            while not stop.wait(AGENT_HEARTBEAT_INTERVAL_S):
+                try:
+                    self._update_progress(run_id)
+                except BaseException as exc:  # propagate after func returns
+                    heartbeat_errors.append(exc)
+                    stop.set()
+                    return
+
+        thread = threading.Thread(
+            target=_heartbeat_loop,
+            name=f"agent-heartbeat-{run_id}",
+            daemon=True,
+        )
+        thread.start()
+
+        result: T | None = None
+        call_error: BaseException | None = None
+        try:
+            result = func()
+        except BaseException as exc:
+            call_error = exc
+        finally:
+            stop.set()
+            thread.join(timeout=1)
+
+        if heartbeat_errors:
+            raise heartbeat_errors[0]
+        if call_error is not None:
+            raise call_error
+        return result  # type: ignore[return-value]
 
     def _make_progress_callback(
         self, run_id: str, prefix: str
@@ -676,4 +764,3 @@ class AgentOrchestrator:
                 )
             )
             session.commit()
-
