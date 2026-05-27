@@ -75,6 +75,7 @@ router = APIRouter(
 # print-out; the SQL itself uses TRUNCATE ... CASCADE so FK direction is
 # handled by Postgres.
 _WIPE_TABLES = (
+    "transaction_links",
     "transaction_tags",
     "reviewed_suggestions",
     "agent_runs",

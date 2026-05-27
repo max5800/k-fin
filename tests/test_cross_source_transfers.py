@@ -13,11 +13,15 @@ the German `Beschreibung` label the parser really emits.
 from __future__ import annotations
 
 import pandas as pd
+from datetime import date
+from decimal import Decimal
+from sqlalchemy.orm import Session
 
-from src.core.db.models import DataSource
+from src.core.db.models import DataSource, NormalizedTransaction, RawTransaction, TransactionLink
 from src.normalization.pipeline import NormalizationPipeline
 
 _flag = NormalizationPipeline._flag_cross_source_transfers
+_reconcile = NormalizationPipeline._reconcile_cross_source_transfers
 
 
 def _row(**kw):
@@ -27,6 +31,7 @@ def _row(**kw):
         "amount": kw["amount"],
         "booking_date": kw["booking_date"],
         "description": kw.get("description"),
+        "sender": kw.get("sender"),
         "recipient": kw.get("recipient"),
         "sender_iban": kw.get("sender_iban"),
         "recipient_iban": kw.get("recipient_iban"),
@@ -200,12 +205,14 @@ def test_santander_settlement_flags_only_the_comdirect_posting():
             ),
         ]
     )
-    out = _flag(df)
+    out, links = _reconcile(df)
     flags = dict(zip(out["id"], out["internal_transfer"]))
     assert flags["cd-1"] is True or flags["cd-1"]
     # The real spend stays counted exactly once — the charges are not flagged.
     assert not flags["s-1"]
     assert not flags["s-2"]
+    assert {link["child_transaction_id"] for link in links} == {"s-1", "s-2"}
+    assert {link["parent_transaction_id"] for link in links} == {"cd-1"}
 
 
 def test_santander_sum_includes_refunds():
@@ -224,8 +231,9 @@ def test_santander_sum_includes_refunds():
             ),
         ]
     )
-    out = _flag(df)
+    out, links = _reconcile(df)
     assert dict(zip(out["id"], out["internal_transfer"]))["cd-1"]
+    assert {link["child_transaction_id"] for link in links} == {"s-1", "s-2", "s-3"}
 
 
 def test_teilzahlung_does_not_match():
@@ -264,25 +272,15 @@ def test_unrelated_comdirect_debit_not_named_santander_is_untouched():
     assert not out["internal_transfer"].any()
 
 
-# ── PayPal purchase → Comdirect "PAYPAL EUROPE" context enrichment ──────
-#
-# A PayPal-funded purchase appears twice: an anonymous Comdirect "PAYPAL
-# (EUROPE) S.A.R.L." debit and the PayPal row that holds the real
-# merchant. `_enrich_paypal_purchases` copies the merchant onto the bank
-# line; `_flag_cross_source_transfers` then flags the PayPal duplicate.
+# ── PayPal purchase aggregate → detail links ────────────────────────────
 
 
-_enrich = NormalizationPipeline._enrich_paypal_purchases
+def _reconcile_rows(rows: list[dict]) -> tuple[pd.DataFrame, list[dict]]:
+    return _reconcile(_frame(rows))
 
 
-def _enrich_and_flag(rows: list[dict]) -> pd.DataFrame:
-    """Run the two passes a purchase goes through — merchant enrichment,
-    then the cross-source flagging that consumes its marker."""
-    return _flag(_enrich(_frame(rows)))
-
-
-def test_paypal_purchase_enriches_the_comdirect_line():
-    out = _enrich_and_flag(
+def test_paypal_purchase_links_parent_and_keeps_child_countable():
+    out, links = _reconcile_rows(
         [
             _row(
                 id="pp-1",
@@ -302,22 +300,55 @@ def test_paypal_purchase_enriches_the_comdirect_line():
         ]
     )
     by_id = {r["id"]: r for r in out.to_dict("records")}
-    # the anonymous bank line now names the real merchant …
-    assert by_id["cd-1"]["recipient"] == "STEAMGAMES"
-    assert "STEAMGAMES" in by_id["cd-1"]["description"]
-    # … keeping the original bank text for audit
-    assert "1234567890" in by_id["cd-1"]["description"]
-    # the PayPal row is the duplicate leg → flagged; the bank line stays counted
-    assert by_id["pp-1"]["internal_transfer"]
-    assert not by_id["cd-1"]["internal_transfer"]
-    # the temp marker column is cleaned up
-    assert "_pp_purchase_dup" not in out.columns
+    assert by_id["cd-1"]["internal_transfer"]
+    assert not by_id["pp-1"]["internal_transfer"]
+    assert by_id["cd-1"]["recipient"] == "PAYPAL EUROPE SARL ET CIE"
+    assert links == [
+        {
+            "id": links[0]["id"],
+            "parent_transaction_id": "cd-1",
+            "child_transaction_id": "pp-1",
+            "link_type": "paypal_aggregate",
+        }
+    ]
 
 
-def test_ambiguous_purchases_are_not_enriched():
-    """Two PayPal purchases of the same amount could both match the one
-    bank debit — the matcher refuses to guess, so nothing is enriched."""
-    out = _enrich_and_flag(
+def test_paypal_aggregate_exact_net_set_links_multiple_children():
+    out, links = _reconcile_rows(
+        [
+            _row(id="pp-1", source=DataSource.PAYPAL, amount=-20.00,
+                 booking_date="2026-05-08", recipient="STEAMGAMES"),
+            _row(id="pp-2", source=DataSource.PAYPAL, amount=-10.00,
+                 booking_date="2026-05-08", recipient="NETFLIX.COM"),
+            _row(id="pp-3", source=DataSource.PAYPAL, amount=5.00,
+                 booking_date="2026-05-08", sender="Refund"),
+            _row(id="cd-1", source=DataSource.COMDIRECT, amount=-25.00,
+                 booking_date="2026-05-09", recipient="PAYPAL EUROPE"),
+        ]
+    )
+    flags = dict(zip(out["id"], out["internal_transfer"]))
+    assert flags["cd-1"]
+    assert not flags["pp-1"]
+    assert not flags["pp-2"]
+    assert not flags["pp-3"]
+    assert {link["child_transaction_id"] for link in links} == {"pp-1", "pp-2", "pp-3"}
+
+
+def test_paypal_residual_amount_does_not_link():
+    out, links = _reconcile_rows(
+        [
+            _row(id="pp-1", source=DataSource.PAYPAL, amount=-20.00,
+                 booking_date="2026-05-08", recipient="STEAMGAMES"),
+            _row(id="cd-1", source=DataSource.COMDIRECT, amount=-25.00,
+                 booking_date="2026-05-09", recipient="PAYPAL EUROPE"),
+        ]
+    )
+    assert not out["internal_transfer"].any()
+    assert links == []
+
+
+def test_paypal_ambiguous_exact_subsets_do_not_link():
+    out, links = _reconcile_rows(
         [
             _row(id="pp-1", source=DataSource.PAYPAL, amount=-19.99,
                  booking_date="2026-05-08", recipient="STEAMGAMES"),
@@ -327,25 +358,23 @@ def test_ambiguous_purchases_are_not_enriched():
                  booking_date="2026-05-09", recipient="PAYPAL EUROPE"),
         ]
     )
-    by_id = {r["id"]: r for r in out.to_dict("records")}
-    assert by_id["cd-1"]["recipient"] == "PAYPAL EUROPE"  # untouched
-    assert not any(by_id[i]["internal_transfer"] for i in ("pp-1", "pp-2", "cd-1"))
+    assert not out["internal_transfer"].any()
+    assert links == []
 
 
 def test_purchase_without_a_bank_match_is_kept_as_spend():
-    """A balance-funded PayPal purchase has no Comdirect counterpart — it
-    must stay counted, not be flagged as a transfer."""
-    out = _enrich_and_flag(
+    out, links = _reconcile_rows(
         [
             _row(id="pp-1", source=DataSource.PAYPAL, amount=-19.99,
                  booking_date="2026-05-08", recipient="STEAMGAMES"),
         ]
     )
     assert not out.to_dict("records")[0]["internal_transfer"]
+    assert links == []
 
 
 def test_purchase_outside_date_window_does_not_match():
-    out = _enrich_and_flag(
+    out, links = _reconcile_rows(
         [
             _row(id="pp-1", source=DataSource.PAYPAL, amount=-19.99,
                  booking_date="2026-05-01", recipient="STEAMGAMES"),
@@ -356,31 +385,12 @@ def test_purchase_outside_date_window_does_not_match():
     by_id = {r["id"]: r for r in out.to_dict("records")}
     assert by_id["cd-1"]["recipient"] == "PAYPAL EUROPE"
     assert not by_id["pp-1"]["internal_transfer"]
-
-
-def test_enrichment_marker_survives_internal_transfer_reset():
-    """`_flag_internal_transfers` rebuilds the `internal_transfer` column;
-    the enrichment marker must outlive that so the purchase is still
-    flagged by the later cross-source pass."""
-    df = _enrich(
-        _frame(
-            [
-                _row(id="pp-1", source=DataSource.PAYPAL, amount=-19.99,
-                     booking_date="2026-05-08", recipient="STEAMGAMES"),
-                _row(id="cd-1", source=DataSource.COMDIRECT, amount=-19.99,
-                     booking_date="2026-05-09", recipient="PAYPAL EUROPE"),
-            ]
-        )
-    )
-    df = NormalizationPipeline._flag_internal_transfers(df, own_ibans=set())
-    out = _flag(df)
-    assert {r["id"]: r for r in out.to_dict("records")}["pp-1"]["internal_transfer"]
+    assert links == []
 
 
 def test_topup_and_purchase_do_not_interfere():
-    """A bank top-up and an unrelated purchase in one frame: the top-up
-    flags both sides, the purchase flags only the PayPal duplicate."""
-    out = _enrich_and_flag(
+    """A top-up pair does not consume a separate exact purchase aggregate."""
+    out, links = _reconcile_rows(
         [
             _row(id="pp-dep", source=DataSource.PAYPAL, amount=50.00,
                  booking_date="2026-05-02",
@@ -395,9 +405,77 @@ def test_topup_and_purchase_do_not_interfere():
     )
     by_id = {r["id"]: r for r in out.to_dict("records")}
     assert by_id["pp-dep"]["internal_transfer"] and by_id["cd-dep"]["internal_transfer"]
-    assert by_id["pp-buy"]["internal_transfer"]
-    assert not by_id["cd-buy"]["internal_transfer"]
-    assert by_id["cd-buy"]["recipient"] == "STEAMGAMES"
+    assert not by_id["pp-buy"]["internal_transfer"]
+    assert by_id["cd-buy"]["internal_transfer"]
+    assert {link["parent_transaction_id"] for link in links} == {"cd-buy"}
+    assert {link["child_transaction_id"] for link in links} == {"pp-buy"}
+
+
+def _seed_normalized(session: Session, tx_id: str, amount: str = "-1.00") -> None:
+    raw_hash = tx_id.ljust(64, "0")[:64]
+    session.add(RawTransaction(content_hash=raw_hash, raw_data={"stub": True}))
+    session.add(
+        NormalizedTransaction(
+            id=tx_id,
+            raw_content_hash=raw_hash,
+            source=DataSource.COMDIRECT,
+            booking_date=date(2026, 5, 1),
+            valuation_date=date(2026, 5, 1),
+            amount=Decimal(amount),
+            currency="EUR",
+            sender="John Doe",
+            recipient="Test Merchant",
+            description="Test",
+            is_recurring=False,
+            is_outlier=False,
+            internal_transfer=False,
+        )
+    )
+
+
+def test_replace_transaction_links_cleans_stale_auto_links(db_engine):
+    with Session(db_engine) as session:
+        for tx_id in ("parent", "old-child", "new-child"):
+            _seed_normalized(session, tx_id)
+        session.add(
+            TransactionLink(
+                id="stale-auto",
+                parent_transaction_id="parent",
+                child_transaction_id="old-child",
+                link_type="paypal_aggregate",
+            )
+        )
+        session.add(
+            TransactionLink(
+                id="manual-link",
+                parent_transaction_id="parent",
+                child_transaction_id="old-child",
+                link_type="manual",
+            )
+        )
+        session.commit()
+
+    with Session(db_engine) as session:
+        NormalizationPipeline._replace_transaction_links(
+            session,
+            [
+                {
+                    "id": "fresh-auto",
+                    "parent_transaction_id": "parent",
+                    "child_transaction_id": "new-child",
+                    "link_type": "paypal_aggregate",
+                }
+            ],
+        )
+
+    with Session(db_engine) as session:
+        links = {
+            link.id: (link.parent_transaction_id, link.child_transaction_id, link.link_type)
+            for link in session.query(TransactionLink).all()
+        }
+    assert "stale-auto" not in links
+    assert links["fresh-auto"] == ("parent", "new-child", "paypal_aggregate")
+    assert links["manual-link"] == ("parent", "old-child", "manual")
 
 
 # ── _flag_internal_transfers — IBAN-less rows are never own-account legs ─

@@ -81,6 +81,18 @@ class TransactionListOut(BaseModel):
     offset: int
 
 
+class TransactionLinkOut(BaseModel):
+    id: str
+    link_type: str
+    transaction: TransactionOut
+
+
+class TransactionLinksOut(BaseModel):
+    transaction_id: str
+    children: list[TransactionLinkOut]
+    parents: list[TransactionLinkOut]
+
+
 # ── Categorization rules ────────────────────────────────────────
 
 

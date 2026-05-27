@@ -186,17 +186,16 @@ def test_corrected_transaction_creates_new_version(postgres_url, db_engine):
         assert rows_for_id[1].version == 2
 
 
-def test_paypal_enrichment_is_idempotent_across_reruns(postgres_url, db_engine):
+def test_paypal_links_are_idempotent_across_reruns(postgres_url, db_engine):
     """Regression (full-review H5): re-running process_and_normalize must
     produce a byte-stable result.
 
-    `_build_dataframe` re-canonicalizes from `raw_transactions` on every
-    run, so `_enrich_paypal_purchases` always starts from un-enriched
-    data — but nothing pinned that property. Lock it: a PayPal purchase
-    enriched onto its Comdirect "PAYPAL EUROPE" debit must look identical
-    after a second normalize pass (`POST /sync/normalize` re-runs it).
+    A PayPal purchase and its anonymous bank aggregate should produce the same
+    parent/child link after every normalize pass (`POST /sync/normalize` re-runs
+    it), with the bank aggregate excluded from spend and the PayPal detail row
+    still counted.
     """
-    from src.core.db.models import DataSource
+    from src.core.db.models import DataSource, TransactionLink
     from src.external.provider import CanonicalTransaction
     from src.normalization.canonicalize import canonicalize
     from src.normalization.ingest import ingest_canonical
@@ -243,17 +242,27 @@ def test_paypal_enrichment_is_idempotent_across_reruns(postgres_url, db_engine):
         pipeline.process_and_normalize()
         with Session(db_engine) as session:
             return {
-                n.id: (n.recipient, n.description, n.internal_transfer)
-                for n in session.query(NormalizedTransaction).all()
+                "tx": {
+                    n.id: (n.source.value, n.recipient, n.description, n.internal_transfer)
+                    for n in session.query(NormalizedTransaction).all()
+                },
+                "links": [
+                    (
+                        link.parent_transaction_id,
+                        link.child_transaction_id,
+                        link.link_type,
+                    )
+                    for link in session.query(TransactionLink).all()
+                ],
             }
 
     first = _snapshot()
     second = _snapshot()
     assert first == second, "process_and_normalize is not idempotent"
 
-    # The enrichment actually happened — the anonymous bank line now names
-    # the real merchant, and the PayPal duplicate leg is flagged so the
-    # spend is counted exactly once.
-    bank_line = next(v for v in first.values() if v[0] == "STEAMGAMES")
-    assert "STEAMGAMES" in bank_line[1]
-    assert any(internal_transfer for _, _, internal_transfer in first.values())
+    bank_line = next(v for v in first["tx"].values() if v[1] == "PAYPAL EUROPE SARL ET CIE")
+    paypal_line = next(v for v in first["tx"].values() if v[1] == "STEAMGAMES")
+    assert bank_line[3]
+    assert not paypal_line[3]
+    assert len(first["links"]) == 1
+    assert first["links"][0][2] == "paypal_aggregate"

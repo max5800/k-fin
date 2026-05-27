@@ -13,13 +13,12 @@ from __future__ import annotations
 import logging
 import re
 import uuid
-from typing import Sequence
 from datetime import datetime, timezone
 from decimal import Decimal
-from typing import Any, Iterable
+from typing import Any, Iterable, Sequence
 
 import pandas as pd
-from sqlalchemy import create_engine, func, select, update
+from sqlalchemy import create_engine, delete, func, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
@@ -34,6 +33,7 @@ from src.core.db.models import (
     SyncRun,
     SyncStage,
     SyncStatus,
+    TransactionLink,
 )
 from src.normalization.canonicalize import canonicalize
 from src.normalization.paypal_csv import BANK_DEPOSIT_LABEL, paypal_csv_canonicalize
@@ -45,6 +45,11 @@ INTERNAL_TRANSFER_DAY_WINDOW = 2
 # Tolerance on the Santander credit-card billing-period boundary when
 # matching the Comdirect settlement lump posting (M16-P2c).
 SANTANDER_SETTLEMENT_DAY_WINDOW = 3
+MAX_PAYPAL_AGGREGATE_CANDIDATES = 18
+
+PAYPAL_AGGREGATE_LINK = "paypal_aggregate"
+SANTANDER_SETTLEMENT_LINK = "santander_settlement"
+AUTO_TRANSACTION_LINK_TYPES = (PAYPAL_AGGREGATE_LINK, SANTANDER_SETTLEMENT_LINK)
 
 # Source-aware canonicalisation. `_build_dataframe` re-projects every active
 # raw payload onto the canonical shape; a PayPal or Santander payload is
@@ -80,6 +85,8 @@ def _canonicalize_for_source(source: Any, raw_data: dict[str, Any]) -> dict[str,
         raise ValueError(
             f"no canonical adapter registered for source {source.value!r}"
         ) from exc
+
+
 RECURRING_MIN_MONTHS = 3
 RECURRING_AMOUNT_TOLERANCE = Decimal("0.10")  # ±10 %
 # Modified z-score threshold (Iglewicz & Hoaglin, 1993). Robust against
@@ -251,18 +258,19 @@ class NormalizationPipeline:
             try:
                 df = self._build_dataframe(session)
                 if df.empty:
+                    self._replace_transaction_links(session, [])
                     self._finish_run(session, run_id, rows=0)
                     return df, run_id
 
-                df = self._enrich_paypal_purchases(df)
                 df = self._apply_rules(df, session)
                 df = self._flag_internal_transfers(df, self.own_ibans)
-                df = self._flag_cross_source_transfers(df)
+                df, transaction_links = self._reconcile_cross_source_transfers(df)
                 df, patterns = self._flag_recurring(df)
                 df = self._flag_outliers(df)
 
                 self._upsert_recurring_patterns(session, patterns, df)
                 self._upsert_normalized(session, df)
+                self._replace_transaction_links(session, transaction_links)
                 self._finish_run(session, run_id, rows=len(df))
                 return df, run_id
             except Exception as exc:  # surface the failure in sync_runs
@@ -315,48 +323,6 @@ class NormalizationPipeline:
                 }
             )
         return pd.DataFrame(records)
-
-    @staticmethod
-    def _enrich_paypal_purchases(df: pd.DataFrame) -> pd.DataFrame:
-        """Copy PayPal merchant context onto the matching Comdirect lines.
-
-        A PayPal-funded purchase appears twice: the bank statement shows
-        only an anonymous "PAYPAL (EUROPE) S.A.R.L." direct debit, while
-        the PayPal row carries the real merchant and item. This pass joins
-        the two (equal amount, ±INTERNAL_TRANSFER_DAY_WINDOW days) and
-        rewrites the bank row's ``recipient`` / ``description`` with the
-        merchant. It runs **before `_apply_rules`** so rules and the
-        categoriser match on the real merchant, not on "PAYPAL EUROPE".
-
-        The matched PayPal row is the duplicate leg of that spend; it is
-        marked in the temp column ``_pp_purchase_dup``, which
-        `_flag_cross_source_transfers` turns into ``internal_transfer`` so
-        the spend is counted exactly once.
-        """
-        if df.empty:
-            return df
-        df = df.copy()
-        df["_pp_purchase_dup"] = False
-
-        matches = _match_paypal_purchases(df.to_dict("records"))
-        for match in matches:
-            merchant = match["merchant"]
-            if merchant:
-                bank_row = df["id"] == match["comdirect_id"]
-                existing = df.loc[bank_row, "description"]
-                bank_desc = _nan_to_none(existing.iloc[0]) if len(existing) else None
-                df.loc[bank_row, "recipient"] = merchant
-                df.loc[bank_row, "description"] = _merge_paypal_context(
-                    merchant, bank_desc
-                )
-            df.loc[df["id"] == match["paypal_id"], "_pp_purchase_dup"] = True
-
-        if matches:
-            logger.info(
-                "PayPal: enriched %d Comdirect 'PAYPAL' line(s) with merchant context",
-                len(matches),
-            )
-        return df
 
     def _apply_rules(self, df: pd.DataFrame, session: Session) -> pd.DataFrame:
         rules = session.execute(select(Rule)).scalars().all()
@@ -441,56 +407,75 @@ class NormalizationPipeline:
 
     @staticmethod
     def _flag_cross_source_transfers(df: pd.DataFrame) -> pd.DataFrame:
-        """Cross-source internal-transfer matching (M16-P2b / P2c).
+        """Compatibility wrapper for tests/callers that only need flags."""
+        flagged, _links = NormalizationPipeline._reconcile_cross_source_transfers(df)
+        return flagged
 
-        The IBAN matcher above only pairs Comdirect↔Comdirect transfers
-        (PayPal/Santander carry no IBAN). This site matches the collapsed
-        counterparts on amount + date instead, in two independent passes:
+    @staticmethod
+    def _reconcile_cross_source_transfers(
+        df: pd.DataFrame,
+    ) -> tuple[pd.DataFrame, list[dict[str, Any]]]:
+        """Flag cross-source aggregate parents and build transaction links.
 
-        - **P2b — PayPal top-up.** A PayPal "Bankgutschrift auf
-          PayPal-Konto" credit against the Comdirect "PAYPAL EUROPE" debit
-          lump posting, opposite signs, exact amount,
-          ±INTERNAL_TRANSFER_DAY_WINDOW days → **both**
-          `internal_transfer=True`.
+        The IBAN matcher covers own-account bank transfers. Imported PayPal and
+        Santander rows need a separate, conservative reconciliation layer:
 
-        - **P2c — Santander credit-card settlement.** The Comdirect
-          "Santander … Kartenabrechnung" debit lump posting against the
-          *sum* of the Santander credit-card transactions in that billing
-          cycle, exact sum match → **only the Comdirect lump posting**
-          `internal_transfer=True`. The individual Santander charges stay
-          un-flagged: they are the real spend and must be counted exactly
-          once (in the Santander source, with the real merchant). A
-          partial payment / instalment (Teilzahlung) makes the debit ≠ the
-          cycle sum, so it simply does not match — no false positive.
+        - PayPal balance top-ups remain a 1:1 internal-transfer pair.
+        - PayPal purchase aggregates are linked only when one anonymous
+          PayPal posting equals exactly one unique net subset of PayPal detail
+          rows within the date window.
+        - Santander card settlements link the Comdirect settlement debit to
+          every Santander row in the matching billing month when the exact net
+          sum matches.
 
-        It also turns the ``_pp_purchase_dup`` marker — set upstream by
-        `_enrich_paypal_purchases` on a PayPal spend whose merchant was
-        copied onto a Comdirect "PAYPAL EUROPE" line — into
-        ``internal_transfer``, so that spend is counted exactly once.
-
-        Each side is consumed at most once per match so a run of equal-
-        value transfers cannot fan out into spurious pairings.
+        Parent aggregate rows are marked ``internal_transfer=True`` so they do
+        not inflate spend; detail rows keep their existing flags and remain the
+        counted source of truth. Ambiguous or residual matches stay unlinked.
         """
         if df.empty:
-            return df
+            return df, []
 
         df = df.copy()
         records = df.to_dict("records")
 
         flagged: set[Any] = set()
-        flagged |= _match_paypal_topups(records)
-        flagged |= _match_santander_cc_settlement(records)
+        links: list[dict[str, Any]] = []
 
-        # A PayPal spend whose merchant was copied onto a Comdirect
-        # "PAYPAL EUROPE" line (see `_enrich_paypal_purchases`) is the
-        # duplicate leg of that spend — flag it so the amount counts once.
-        if "_pp_purchase_dup" in df.columns:
-            flagged |= set(df.loc[df["_pp_purchase_dup"].astype(bool), "id"])
-            df = df.drop(columns=["_pp_purchase_dup"])
+        topup_pairs = _match_paypal_topups(records)
+        paypal_topup_parents = {parent_id for parent_id, _child_id in topup_pairs}
+        for parent_id, child_id in topup_pairs:
+            flagged.add(parent_id)
+            flagged.add(child_id)
+
+        for match in _match_paypal_aggregate_sets(
+            records, excluded_parent_ids=paypal_topup_parents
+        ):
+            parent_id = match["parent_id"]
+            flagged.add(parent_id)
+            for child_id in match["child_ids"]:
+                links.append(
+                    _build_transaction_link(
+                        parent_id=parent_id,
+                        child_id=child_id,
+                        link_type=PAYPAL_AGGREGATE_LINK,
+                    )
+                )
+
+        for match in _match_santander_cc_settlements(records):
+            parent_id = match["parent_id"]
+            flagged.add(parent_id)
+            for child_id in match["child_ids"]:
+                links.append(
+                    _build_transaction_link(
+                        parent_id=parent_id,
+                        child_id=child_id,
+                        link_type=SANTANDER_SETTLEMENT_LINK,
+                    )
+                )
 
         if flagged:
             df.loc[df["id"].isin(flagged), "internal_transfer"] = True
-        return df
+        return df, links
 
     @staticmethod
     def _flag_recurring(df: pd.DataFrame) -> tuple[pd.DataFrame, list[dict[str, Any]]]:
@@ -665,6 +650,8 @@ class NormalizationPipeline:
                 set_={
                     "raw_content_hash": stmt.excluded.raw_content_hash,
                     "amount": stmt.excluded.amount,
+                    "sender": stmt.excluded.sender,
+                    "recipient": stmt.excluded.recipient,
                     "category_id": func.coalesce(
                         NormalizedTransaction.category_id,
                         stmt.excluded.category_id,
@@ -680,6 +667,29 @@ class NormalizationPipeline:
                 },
             )
             session.execute(stmt)
+        session.commit()
+
+    @staticmethod
+    def _replace_transaction_links(
+        session: Session, links: list[dict[str, Any]]
+    ) -> None:
+        """Replace auto-derived cross-source links idempotently."""
+        session.execute(
+            delete(TransactionLink).where(
+                TransactionLink.link_type.in_(AUTO_TRANSACTION_LINK_TYPES)
+            )
+        )
+        seen: set[tuple[str, str, str]] = set()
+        for link in links:
+            key = (
+                str(link["parent_transaction_id"]),
+                str(link["child_transaction_id"]),
+                str(link["link_type"]),
+            )
+            if key in seen:
+                continue
+            seen.add(key)
+            session.add(TransactionLink(**link))
         session.commit()
 
     def _finish_run(
@@ -773,26 +783,27 @@ def _is_comdirect_santander_posting(rec: dict[str, Any]) -> bool:
     return "santander" in haystack
 
 
-def _match_paypal_topups(records: list[dict[str, Any]]) -> set[Any]:
+def _match_paypal_topups(records: list[dict[str, Any]]) -> list[tuple[Any, Any]]:
     """Pair PayPal bank-deposit credits with their Comdirect "PAYPAL" debits.
 
-    Returns the ids of every matched row (both sides). Each Comdirect
-    posting is consumed at most once.
+    Returns ``(parent_id, child_id)`` pairs. Each Comdirect posting is consumed
+    at most once. Top-ups are not aggregate spend links, but the matched parent
+    is excluded from the later PayPal detail-subset matcher.
     """
     pp_deposits = [r for r in records if _is_paypal_bank_deposit(r)]
     cd_paypal = [r for r in records if _is_comdirect_paypal_posting(r)]
     if not pp_deposits or not cd_paypal:
-        return set()
+        return []
 
-    flagged: set[Any] = set()
+    pairs: list[tuple[Any, Any]] = []
     used_comdirect: set[Any] = set()
     for deposit in pp_deposits:
-        dep_cents = abs(int(Decimal(str(deposit["amount"])) * 100))
+        dep_cents = abs(_amount_cents(deposit["amount"]))
         dep_date = pd.to_datetime(deposit["booking_date"])
         for posting in cd_paypal:
             if posting["id"] in used_comdirect:
                 continue
-            post_cents = abs(int(Decimal(str(posting["amount"])) * 100))
+            post_cents = abs(_amount_cents(posting["amount"]))
             if post_cents != dep_cents:
                 continue
             if (
@@ -800,22 +811,90 @@ def _match_paypal_topups(records: list[dict[str, Any]]) -> set[Any]:
                 > INTERNAL_TRANSFER_DAY_WINDOW
             ):
                 continue
-            flagged.add(deposit["id"])
-            flagged.add(posting["id"])
+            pairs.append((posting["id"], deposit["id"]))
             used_comdirect.add(posting["id"])
             break
-    return flagged
+    return pairs
 
 
-def _match_santander_cc_settlement(records: list[dict[str, Any]]) -> set[Any]:
-    """Match a Comdirect credit-card settlement debit to a Santander billing cycle.
+def _is_paypal_detail_transaction(rec: dict[str, Any]) -> bool:
+    if _source_value(rec.get("source")) != DataSource.PAYPAL.value:
+        return False
+    if _is_paypal_bank_deposit(rec):
+        return False
+    return bool(rec.get("amount")) and _amount_cents(rec["amount"]) != 0
 
-    The billing cycle is taken as the calendar month of the Santander
-    credit-card transactions; its expected settlement is the exact *net*
-    sum of that month's charges (purchases minus refunds). A Comdirect
-    "Santander" debit whose amount equals that sum is the lump posting —
-    only it is returned for flagging (the individual Santander charges are
-    the real spend and stay un-flagged). Each cycle is consumed once.
+
+def _is_paypal_aggregate_posting(rec: dict[str, Any]) -> bool:
+    """A collapsed PayPal debit in a non-PayPal source.
+
+    Comdirect direct debits and Santander card charges can both show only the
+    PayPal counterparty while the imported PayPal source contains the merchant
+    detail rows.
+    """
+    if _source_value(rec.get("source")) not in {
+        DataSource.COMDIRECT.value,
+        DataSource.SANTANDER_CC.value,
+    }:
+        return False
+    if not rec.get("amount") or _amount_cents(rec["amount"]) >= 0:
+        return False
+    haystack = " ".join(
+        str(part) for part in (rec.get("description"), rec.get("recipient")) if part
+    ).lower()
+    return "paypal" in haystack
+
+
+def _match_paypal_aggregate_sets(
+    records: list[dict[str, Any]], *, excluded_parent_ids: set[Any]
+) -> list[dict[str, Any]]:
+    """Link collapsed PayPal postings to one unique exact net detail set."""
+    parents = sorted(
+        (
+            r
+            for r in records
+            if _is_paypal_aggregate_posting(r)
+            and r.get("id") not in excluded_parent_ids
+        ),
+        key=lambda r: (pd.to_datetime(r["booking_date"]), str(r["id"])),
+    )
+    children = sorted(
+        (r for r in records if _is_paypal_detail_transaction(r)),
+        key=lambda r: (pd.to_datetime(r["booking_date"]), str(r["id"])),
+    )
+    if not parents or not children:
+        return []
+
+    matches: list[dict[str, Any]] = []
+    used_children: set[Any] = set()
+    for parent in parents:
+        parent_date = pd.to_datetime(parent["booking_date"])
+        candidates = [
+            child
+            for child in children
+            if child["id"] not in used_children
+            and abs((parent_date - pd.to_datetime(child["booking_date"])).days)
+            <= INTERNAL_TRANSFER_DAY_WINDOW
+        ]
+        if len(candidates) > MAX_PAYPAL_AGGREGATE_CANDIDATES:
+            continue
+        subset = _find_unique_exact_subset(
+            candidates, target_cents=_amount_cents(parent["amount"])
+        )
+        if subset is None:
+            continue
+        child_ids = [child["id"] for child in subset]
+        used_children.update(child_ids)
+        matches.append({"parent_id": parent["id"], "child_ids": child_ids})
+    return matches
+
+
+def _match_santander_cc_settlements(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Match Comdirect credit-card settlement debits to Santander billing cycles.
+
+    The billing cycle is the calendar month of the Santander credit-card
+    transactions. Its expected settlement is the exact net sum of that month's
+    charges and refunds. Ambiguous equal-sum cycles are left unlinked.
     """
     santander = [
         r
@@ -824,7 +903,7 @@ def _match_santander_cc_settlement(records: list[dict[str, Any]]) -> set[Any]:
     ]
     cd_postings = [r for r in records if _is_comdirect_santander_posting(r)]
     if not santander or not cd_postings:
-        return set()
+        return []
 
     # Bucket the Santander charges by calendar month → net sum + date span.
     buckets: dict[tuple[int, int], dict[str, Any]] = {}
@@ -832,98 +911,89 @@ def _match_santander_cc_settlement(records: list[dict[str, Any]]) -> set[Any]:
         bdate = pd.to_datetime(rec["booking_date"])
         key = (bdate.year, bdate.month)
         bucket = buckets.setdefault(
-            key, {"sum_cents": 0, "min_date": bdate, "max_date": bdate}
+            key,
+            {
+                "sum_cents": 0,
+                "min_date": bdate,
+                "max_date": bdate,
+                "child_ids": [],
+            },
         )
-        bucket["sum_cents"] += int(Decimal(str(rec["amount"])) * 100)
+        bucket["sum_cents"] += _amount_cents(rec["amount"])
         bucket["min_date"] = min(bucket["min_date"], bdate)
         bucket["max_date"] = max(bucket["max_date"], bdate)
+        bucket["child_ids"].append(rec["id"])
 
     tolerance = pd.Timedelta(days=SANTANDER_SETTLEMENT_DAY_WINDOW)
-    flagged: set[Any] = set()
+    matches: list[dict[str, Any]] = []
     used_cycles: set[tuple[int, int]] = set()
     for posting in sorted(cd_postings, key=lambda r: pd.to_datetime(r["booking_date"])):
-        post_cents = abs(int(Decimal(str(posting["amount"])) * 100))
+        post_cents = abs(_amount_cents(posting["amount"]))
         post_date = pd.to_datetime(posting["booking_date"])
-        for key in sorted(buckets):
-            if key in used_cycles:
-                continue
-            bucket = buckets[key]
-            if abs(bucket["sum_cents"]) != post_cents:
-                continue
+        candidates = [
+            (key, bucket)
+            for key, bucket in sorted(buckets.items())
+            if key not in used_cycles
+            and abs(bucket["sum_cents"]) == post_cents
             # The settlement debit posts no earlier than the billing cycle
             # opened (minus the tolerance) — guards against pairing a debit
             # with a far-off cycle that happens to net the same sum.
-            if post_date < bucket["min_date"] - tolerance:
-                continue
-            flagged.add(posting["id"])
-            used_cycles.add(key)
-            break
-    return flagged
-
-
-def _is_paypal_outgoing(rec: dict[str, Any]) -> bool:
-    """A PayPal debit — a real spend (a purchase or a sent payment).
-
-    Every funding row the PayPal CSV importer keeps is the "Bankgutschrift
-    auf PayPal-Konto" top-up, which is a *credit* (amount > 0); a
-    PayPal→bank withdrawal is not imported at all. So any PayPal debit
-    that reaches the pipeline is genuine spending.
-    """
-    if _source_value(rec.get("source")) != DataSource.PAYPAL.value:
-        return False
-    return bool(rec.get("amount")) and rec["amount"] < 0
-
-
-def _match_paypal_purchases(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Pair each PayPal spend with its anonymous Comdirect "PAYPAL" debit.
-
-    Paired on equal absolute amount within ±INTERNAL_TRANSFER_DAY_WINDOW
-    days; each Comdirect posting is consumed at most once. Ambiguity is
-    resolved by *not guessing* — if a posting could match more than one
-    PayPal spend, it is skipped (a missing enrichment beats a wrong one).
-
-    Returns one dict per confident match, the PayPal merchant already
-    NaN-cleaned: ``{comdirect_id, paypal_id, merchant}``.
-    """
-    purchases = [r for r in records if _is_paypal_outgoing(r)]
-    cd_postings = [r for r in records if _is_comdirect_paypal_posting(r)]
-    if not purchases or not cd_postings:
-        return []
-
-    matches: list[dict[str, Any]] = []
-    used_paypal: set[Any] = set()
-    for posting in cd_postings:
-        post_cents = abs(int(Decimal(str(posting["amount"])) * 100))
-        post_date = pd.to_datetime(posting["booking_date"])
-        candidates = [
-            p
-            for p in purchases
-            if p["id"] not in used_paypal
-            and abs(int(Decimal(str(p["amount"])) * 100)) == post_cents
-            and abs((post_date - pd.to_datetime(p["booking_date"])).days)
-            <= INTERNAL_TRANSFER_DAY_WINDOW
+            and post_date >= bucket["min_date"] - tolerance
         ]
         if len(candidates) != 1:
-            continue  # 0 → nothing to pair; >1 → ambiguous, do not guess
-        purchase = candidates[0]
-        used_paypal.add(purchase["id"])
+            continue
+        key, bucket = candidates[0]
+        used_cycles.add(key)
         matches.append(
-            {
-                "comdirect_id": posting["id"],
-                "paypal_id": purchase["id"],
-                "merchant": _nan_to_none(purchase.get("recipient")),
-            }
+            {"parent_id": posting["id"], "child_ids": list(bucket["child_ids"])}
         )
     return matches
 
 
-def _merge_paypal_context(merchant: str, bank_desc: str | None) -> str:
-    """Compose the enriched bank-line description: the PayPal merchant
-    first (so rule matching and the categoriser see it), the original
-    bank text kept after a ``·`` separator so the line still reads as a
-    PayPal posting."""
-    bank = (bank_desc or "").strip()
-    return f"{merchant} · {bank}"[:500] if bank else merchant[:500]
+def _find_unique_exact_subset(
+    candidates: list[dict[str, Any]], *, target_cents: int
+) -> list[dict[str, Any]] | None:
+    """Return the only subset summing to target cents; otherwise ``None``."""
+    if not candidates:
+        return None
+
+    sums: dict[int, list[tuple[int, ...]]] = {0: [()]}
+    for idx, rec in enumerate(candidates):
+        cents = _amount_cents(rec["amount"])
+        if cents == 0:
+            continue
+        for current_sum, combos in list(sums.items()):
+            next_sum = current_sum + cents
+            next_combos = sums.setdefault(next_sum, [])
+            for combo in combos:
+                candidate_combo = (*combo, idx)
+                if candidate_combo not in next_combos:
+                    next_combos.append(candidate_combo)
+                if len(next_combos) > 1:
+                    next_combos[:] = next_combos[:2]
+
+    exact = sums.get(target_cents) or []
+    if len(exact) != 1:
+        return None
+    return [candidates[idx] for idx in exact[0]]
+
+
+def _amount_cents(amount: Any) -> int:
+    return int((Decimal(str(amount)) * 100).quantize(Decimal("1")))
+
+
+def _build_transaction_link(
+    *, parent_id: Any, child_id: Any, link_type: str
+) -> dict[str, Any]:
+    stable_id = uuid.uuid5(
+        uuid.NAMESPACE_URL, f"k-fin:{link_type}:{parent_id}:{child_id}"
+    )
+    return {
+        "id": str(stable_id),
+        "parent_transaction_id": str(parent_id),
+        "child_transaction_id": str(child_id),
+        "link_type": link_type,
+    }
 
 
 def _consecutive_runs(months: list[pd.Period]) -> list[list[pd.Period]]:

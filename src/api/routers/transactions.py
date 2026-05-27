@@ -15,6 +15,8 @@ from src.api.deps import get_db, require_token
 from src.api.schemas import (
     CategoryOut,
     TagOut,
+    TransactionLinkOut,
+    TransactionLinksOut,
     TransactionListOut,
     TransactionOut,
     TransactionUpdate,
@@ -23,6 +25,7 @@ from src.core.db.models import (
     Category,
     NormalizedTransaction,
     Tag,
+    TransactionLink,
     TransactionTag,
 )
 
@@ -339,6 +342,54 @@ def export_transactions(
         _csv_stream(records),
         media_type="text/csv; charset=utf-8",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.get("/{transaction_id}/links", response_model=TransactionLinksOut)
+def get_transaction_links(
+    transaction_id: str,
+    db: Session = Depends(get_db),
+):
+    tx = db.get(NormalizedTransaction, transaction_id)
+    if not tx:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Transaction not found")
+
+    child_links = (
+        db.execute(
+            select(TransactionLink)
+            .where(TransactionLink.parent_transaction_id == transaction_id)
+            .order_by(TransactionLink.link_type, TransactionLink.child_transaction_id)
+        )
+        .scalars()
+        .all()
+    )
+    parent_links = (
+        db.execute(
+            select(TransactionLink)
+            .where(TransactionLink.child_transaction_id == transaction_id)
+            .order_by(TransactionLink.link_type, TransactionLink.parent_transaction_id)
+        )
+        .scalars()
+        .all()
+    )
+
+    def _link_out(link: TransactionLink, related_id: str) -> TransactionLinkOut:
+        related = db.get(NormalizedTransaction, related_id)
+        if related is None:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Transaction link points to a missing transaction",
+            )
+        return TransactionLinkOut(
+            id=link.id,
+            link_type=link.link_type,
+            transaction=_enrich(related, db),
+        )
+
+    return TransactionLinksOut(
+        transaction_id=transaction_id,
+        children=[_link_out(link, link.child_transaction_id) for link in child_links],
+        parents=[_link_out(link, link.parent_transaction_id) for link in parent_links],
     )
 
 

@@ -315,6 +315,38 @@ class TransactionTag(Base):
     tag_id: Mapped[str] = mapped_column(ForeignKey("tags.id"), primary_key=True)
 
 
+class TransactionLink(Base):
+    """Parent/child relationship between normalized transactions.
+
+    Used for cross-source funding aggregates: the bank/credit-card lump posting
+    is the parent, imported source-detail rows are the children.
+    """
+
+    __tablename__ = "transaction_links"
+    __table_args__ = (
+        UniqueConstraint(
+            "parent_transaction_id",
+            "child_transaction_id",
+            "link_type",
+            name="uq_transaction_links_parent_child_type",
+        ),
+        Index("ix_transaction_links_parent", "parent_transaction_id"),
+        Index("ix_transaction_links_child", "child_transaction_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    parent_transaction_id: Mapped[str] = mapped_column(
+        ForeignKey("normalized_transactions.id", ondelete="CASCADE"), nullable=False
+    )
+    child_transaction_id: Mapped[str] = mapped_column(
+        ForeignKey("normalized_transactions.id", ondelete="CASCADE"), nullable=False
+    )
+    link_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
 class AgentRun(Base):
     """Tracks individual agent runs triggered via the Runs API (M6).
 
