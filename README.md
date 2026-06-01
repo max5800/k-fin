@@ -6,6 +6,12 @@
 
 **Read-only financial data platform powered by the Comdirect REST API — CSV export, Finance API, and normalization pipeline.**
 
+<p align="center">
+  <a href="https://max5800.github.io/k-fin-ui/"><strong>Try the live mock demo</strong></a>
+  <br/>
+  <sub>Static browser demo with fake data. No backend, no Comdirect credentials, no real banking data.</sub>
+</p>
+
 > A personal project, not a finished product. I run it daily on my own bank data and iterate from real usage — features land when I miss them, not on a public roadmap. It works well enough that I trust it with my own finances; whether that bar is high enough for you is your call. No guarantees, no support.
 
 **Companion repo:** [k-fin-ui](https://github.com/max5800/k-fin-ui) — React frontend for this backend.
