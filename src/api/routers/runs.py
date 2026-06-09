@@ -43,6 +43,8 @@ router = APIRouter(
 
 KNOWN_AGENTS = {
     "categorization",
+    "category_audit",
+    "budget_analysis",
     "weekly_analysis",
     "monthly_analysis",
     "anomaly",

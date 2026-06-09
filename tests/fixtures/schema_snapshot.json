@@ -239,21 +239,41 @@
           "nullable": false,
           "type": "VARCHAR"
         },
+        "context_note": {
+          "nullable": true,
+          "type": "VARCHAR(500)"
+        },
         "created_at": {
           "nullable": false,
           "type": "TIMESTAMP"
+        },
+        "critical_threshold": {
+          "nullable": false,
+          "type": "NUMERIC(4, 2)"
         },
         "currency": {
           "nullable": false,
           "type": "VARCHAR(3)"
         },
+        "is_active": {
+          "nullable": false,
+          "type": "BOOLEAN"
+        },
         "monthly_limit": {
           "nullable": false,
           "type": "NUMERIC(14, 2)"
         },
+        "priority": {
+          "nullable": false,
+          "type": "INTEGER"
+        },
         "updated_at": {
           "nullable": false,
           "type": "TIMESTAMP"
+        },
+        "warning_threshold": {
+          "nullable": false,
+          "type": "NUMERIC(4, 2)"
         }
       },
       "foreign_keys": [
@@ -266,9 +286,37 @@
     },
     "categories": {
       "columns": {
+        "analysis_group": {
+          "nullable": true,
+          "type": "VARCHAR(64)"
+        },
+        "anti_examples": {
+          "nullable": true,
+          "type": "JSON"
+        },
+        "budgetable": {
+          "nullable": false,
+          "type": "BOOLEAN"
+        },
+        "description": {
+          "nullable": true,
+          "type": "VARCHAR(500)"
+        },
+        "examples": {
+          "nullable": true,
+          "type": "JSON"
+        },
         "id": {
           "nullable": false,
           "type": "VARCHAR"
+        },
+        "kind": {
+          "nullable": false,
+          "type": "VARCHAR(32)"
+        },
+        "llm_hints": {
+          "nullable": true,
+          "type": "VARCHAR(1000)"
         },
         "name": {
           "nullable": false,
@@ -509,6 +557,110 @@
       },
       "primary_key": [
         "isin"
+      ]
+    },
+    "mail_evidence": {
+      "columns": {
+        "confidence": {
+          "nullable": false,
+          "type": "NUMERIC(4, 3)"
+        },
+        "created_at": {
+          "nullable": false,
+          "type": "TIMESTAMP"
+        },
+        "currency": {
+          "nullable": false,
+          "type": "VARCHAR(3)"
+        },
+        "document_date": {
+          "nullable": true,
+          "type": "DATE"
+        },
+        "evidence_type": {
+          "nullable": false,
+          "type": "VARCHAR(32)"
+        },
+        "id": {
+          "nullable": false,
+          "type": "VARCHAR(64)"
+        },
+        "line_items": {
+          "nullable": true,
+          "type": "JSON"
+        },
+        "merchant_key": {
+          "nullable": true,
+          "type": "VARCHAR(200)"
+        },
+        "merchant_name": {
+          "nullable": true,
+          "type": "VARCHAR(200)"
+        },
+        "order_ref_hash": {
+          "nullable": true,
+          "type": "VARCHAR(64)"
+        },
+        "payment_hint": {
+          "nullable": true,
+          "type": "VARCHAR(200)"
+        },
+        "payment_method": {
+          "nullable": true,
+          "type": "VARCHAR(32)"
+        },
+        "redacted_snippet": {
+          "nullable": true,
+          "type": "VARCHAR(500)"
+        },
+        "source": {
+          "nullable": false,
+          "type": "VARCHAR(32)"
+        },
+        "subject_hint": {
+          "nullable": true,
+          "type": "VARCHAR(200)"
+        },
+        "total_amount": {
+          "nullable": true,
+          "type": "NUMERIC(14, 2)"
+        },
+        "updated_at": {
+          "nullable": false,
+          "type": "TIMESTAMP"
+        }
+      },
+      "foreign_keys": [],
+      "indexes": {
+        "ix_mail_evidence_document_date": {
+          "columns": [
+            "document_date"
+          ],
+          "unique": false
+        },
+        "ix_mail_evidence_merchant_key": {
+          "columns": [
+            "merchant_key"
+          ],
+          "unique": false
+        },
+        "ix_mail_evidence_order_ref_hash": {
+          "columns": [
+            "order_ref_hash"
+          ],
+          "unique": false
+        },
+        "uq_mail_evidence_source_order_type": {
+          "columns": [
+            "source",
+            "order_ref_hash",
+            "evidence_type"
+          ],
+          "unique": true
+        }
+      },
+      "primary_key": [
+        "id"
       ]
     },
     "normalized_transactions": {
@@ -1065,6 +1217,67 @@
         "tags_name_key": {
           "columns": [
             "name"
+          ],
+          "unique": true
+        }
+      },
+      "primary_key": [
+        "id"
+      ]
+    },
+    "transaction_evidence_links": {
+      "columns": {
+        "confidence": {
+          "nullable": false,
+          "type": "NUMERIC(4, 3)"
+        },
+        "created_at": {
+          "nullable": false,
+          "type": "TIMESTAMP"
+        },
+        "evidence_id": {
+          "nullable": false,
+          "type": "VARCHAR(64)"
+        },
+        "id": {
+          "nullable": false,
+          "type": "VARCHAR(64)"
+        },
+        "match_reason": {
+          "nullable": false,
+          "type": "VARCHAR(500)"
+        },
+        "match_type": {
+          "nullable": false,
+          "type": "VARCHAR(32)"
+        },
+        "transaction_id": {
+          "nullable": false,
+          "type": "VARCHAR(64)"
+        }
+      },
+      "foreign_keys": [
+        "['evidence_id']->mail_evidence.['id']",
+        "['transaction_id']->normalized_transactions.['id']"
+      ],
+      "indexes": {
+        "ix_transaction_evidence_links_evidence": {
+          "columns": [
+            "evidence_id"
+          ],
+          "unique": false
+        },
+        "ix_transaction_evidence_links_transaction": {
+          "columns": [
+            "transaction_id"
+          ],
+          "unique": false
+        },
+        "uq_transaction_evidence_link": {
+          "columns": [
+            "transaction_id",
+            "evidence_id",
+            "match_type"
           ],
           "unique": true
         }

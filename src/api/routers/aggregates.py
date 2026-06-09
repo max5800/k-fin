@@ -19,6 +19,7 @@ from sqlalchemy.orm import Session
 
 from src.api.deps import CurrentUser, get_db, require_token
 from src.api.schemas import (
+    AnalysisContextOut,
     BudgetSpendingItem,
     BudgetSpendingOut,
     CashflowOverTimeOut,
@@ -29,7 +30,8 @@ from src.api.schemas import (
     RefundAuditOut,
     RefundAutoApplyResult,
 )
-from src.core.db.models import Budget, Category, NormalizedTransaction
+from src.core.db.models import NormalizedTransaction
+from src.services import financial_aggregates
 from src.services.refund_audit import (
     apply_refund_heuristic,
     list_audit_candidates,
@@ -69,62 +71,14 @@ def monthly_summary(
     exclude_internal: bool = Query(True),
 ):
     """Return income, expenses, net, savings rate, and per-category breakdown for a month."""
-    totals_stmt = select(
-        func.coalesce(func.sum(_INCOME_CASE), 0).label("income"),
-        func.coalesce(func.sum(_EXPENSE_CASE), 0).label("expenses"),
-        func.count().label("transaction_count"),
-    ).where(
-        extract("year", NormalizedTransaction.booking_date) == year,
-        extract("month", NormalizedTransaction.booking_date) == month,
+    data = financial_aggregates.monthly_summary(
+        db, year=year, month=month, exclude_internal=exclude_internal
     )
-    if exclude_internal:
-        totals_stmt = totals_stmt.where(NormalizedTransaction.internal_transfer.is_(False))
-
-    row = db.execute(totals_stmt).one()
-    income = row.income
-    expenses = row.expenses
-    net = income + expenses
-    savings_rate = (net / income) if income else 0
-
-    # Per-category breakdown sums *all* amounts in the category (refund +
-    # original automatically net out, since both share the same category).
-    cat_stmt = (
-        select(
-            Category.id,
-            Category.name,
-            func.sum(NormalizedTransaction.amount).label("total"),
-            func.count().label("count"),
-        )
-        .join(Category, NormalizedTransaction.category_id == Category.id)
-        .where(
-            extract("year", NormalizedTransaction.booking_date) == year,
-            extract("month", NormalizedTransaction.booking_date) == month,
-        )
-        .group_by(Category.id, Category.name)
-        .order_by(func.sum(NormalizedTransaction.amount).asc())
-    )
-    if exclude_internal:
-        cat_stmt = cat_stmt.where(NormalizedTransaction.internal_transfer.is_(False))
-
-    categories = [
-        CategoryBreakdown(
-            category_id=r.id,
-            category_name=r.name,
-            total=r.total,
-            transaction_count=r.count,
-        )
-        for r in db.execute(cat_stmt).all()
-    ]
-
     return MonthlySummaryOut(
-        year=year,
-        month=month,
-        income=income,
-        expenses=expenses,
-        net=net,
-        savings_rate=round(savings_rate, 4),
-        transaction_count=row.transaction_count,
-        by_category=categories,
+        **{
+            **data,
+            "by_category": [CategoryBreakdown(**item) for item in data["by_category"]],
+        }
     )
 
 
@@ -207,72 +161,29 @@ def budget_spending(
 
     Internal transfers are always excluded — they never belong to a budget.
     """
-    # Refund sum is computed against `amount` (positive value); the "refund"
-    # bucket is conceptually a *reduction* of expenses, so we add it directly
-    # to spent_gross to derive spent_net.
-    refund_sum = func.coalesce(
-        func.sum(
-            case((NormalizedTransaction.is_refund.is_(True), NormalizedTransaction.amount))
-        ),
-        0,
-    )
-    expense_sum = func.coalesce(
-        func.sum(
-            case(
-                (
-                    and_(
-                        NormalizedTransaction.amount < 0,
-                        NormalizedTransaction.is_refund.is_(False),
-                    ),
-                    NormalizedTransaction.amount,
-                )
-            )
-        ),
-        0,
+    data = financial_aggregates.budget_spending(db, year=year, month=month)
+    return BudgetSpendingOut(
+        year=data["year"],
+        month=data["month"],
+        items=[BudgetSpendingItem(**item) for item in data["items"]],
     )
 
-    stmt = (
-        select(
-            Budget.category_id.label("category_id"),
-            Budget.monthly_limit.label("monthly_limit"),
-            Budget.currency.label("currency"),
-            Category.name.label("category_name"),
-            expense_sum.label("spent_gross"),
-            refund_sum.label("refunded"),
-            func.count(NormalizedTransaction.id).label("transaction_count"),
-        )
-        .join(Category, Category.id == Budget.category_id)
-        .outerjoin(
-            NormalizedTransaction,
-            and_(
-                NormalizedTransaction.category_id == Budget.category_id,
-                NormalizedTransaction.internal_transfer.is_(False),
-                extract("year", NormalizedTransaction.booking_date) == year,
-                extract("month", NormalizedTransaction.booking_date) == month,
-            ),
-        )
-        .group_by(Budget.category_id, Budget.monthly_limit, Budget.currency, Category.name)
-        .order_by(Category.name)
+
+@router.get("/analysis-context", response_model=AnalysisContextOut)
+def analysis_context(
+    db: Session = Depends(get_db),
+    year: int = Query(..., ge=2000, le=2100),
+    month: int = Query(..., ge=1, le=12),
+):
+    """Deterministic context bundle for finance agents.
+
+    This is the read-only bridge between accounting facts and LLM
+    interpretation: money math, budgets, category semantics, and sanitized
+    mail evidence are prepared here before agents see anything.
+    """
+    return AnalysisContextOut(
+        **financial_aggregates.analysis_context(db, year=year, month=month)
     )
-
-    items = []
-    for r in db.execute(stmt).all():
-        spent_net = r.spent_gross + r.refunded
-        items.append(
-            BudgetSpendingItem(
-                category_id=r.category_id,
-                category_name=r.category_name,
-                monthly_limit=r.monthly_limit,
-                currency=r.currency,
-                spent_gross=r.spent_gross,
-                refunded=r.refunded,
-                spent_net=spent_net,
-                remaining=r.monthly_limit + spent_net,
-                transaction_count=r.transaction_count,
-            )
-        )
-
-    return BudgetSpendingOut(year=year, month=month, items=items)
 
 
 # ---------------------------------------------------------------------------

@@ -21,6 +21,7 @@ from src.agents.types import (
     CategorizationResult,
     SynthesisResult,
 )
+from src.services.llm_context import sanitize_context
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +40,8 @@ synthesizer_agent = Agent(
 def run_synthesizer(
     engine: Engine,
     categorization: CategorizationResult | None = None,
+    category_audit: AnalysisResult | None = None,
+    budget_analysis: AnalysisResult | None = None,
     weekly: AnalysisResult | None = None,
     monthly: AnalysisResult | None = None,
     anomaly: AnomalyResult | None = None,
@@ -61,6 +64,10 @@ def run_synthesizer(
     inputs: dict = {"period": period}
     if categorization:
         inputs["categorization"] = categorization.model_dump()
+    if category_audit:
+        inputs["category_audit"] = category_audit.model_dump()
+    if budget_analysis:
+        inputs["budget_analysis"] = budget_analysis.model_dump()
     if weekly:
         inputs["weekly_analysis"] = weekly.model_dump()
     if monthly:
@@ -74,6 +81,8 @@ def run_synthesizer(
     if len(inputs) == 1:
         for key, report_type in (
             ("categorization", "categorization"),
+            ("category_audit", "category_audit"),
+            ("budget_analysis", "budget_analysis"),
             ("weekly_analysis", "weekly_analysis"),
             ("monthly_analysis", "monthly_analysis"),
             ("anomaly_detection", "anomaly"),
@@ -97,15 +106,17 @@ def run_synthesizer(
         )
 
     memory = get_recent_reports(engine, "synthesis", limit=2)
+    safe_inputs = sanitize_context(inputs)
+    safe_memory = sanitize_context({"previous_syntheses": memory}) if memory else None
 
     prompt_parts = [
         f"## Wochenbericht-Synthese {period}\n",
-        f"### Agent-Ergebnisse\n\n```json\n{json.dumps(inputs, ensure_ascii=False, indent=2)}\n```\n",
+        f"### Agent-Ergebnisse\n\n```json\n{json.dumps(safe_inputs, ensure_ascii=False, indent=2)}\n```\n",
     ]
-    if memory:
+    if safe_memory:
         prompt_parts.append(
             f"### Vorherige Synthesen (Kontext)\n\n"
-            f"```json\n{json.dumps(memory, ensure_ascii=False, indent=2)}\n```\n"
+            f"```json\n{json.dumps(safe_memory, ensure_ascii=False, indent=2)}\n```\n"
         )
     prompt_parts.append("Erstelle den Wochenbericht gemäß dem Schema.")
 

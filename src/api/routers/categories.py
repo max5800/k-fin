@@ -48,7 +48,18 @@ def create_category(body: CategoryCreate, db: Session = Depends(get_db)):
             detail=f"Category with {field} '{getattr(clash, field)}' already exists",
         )
 
-    category = Category(id=category_id, name=body.name, type=body.type)
+    category = Category(
+        id=category_id,
+        name=body.name,
+        type=body.type,
+        kind=body.kind,
+        budgetable=body.budgetable,
+        analysis_group=body.analysis_group,
+        description=body.description,
+        examples=body.examples,
+        anti_examples=body.anti_examples,
+        llm_hints=body.llm_hints,
+    )
     db.add(category)
     db.commit()
     db.refresh(category)
@@ -97,6 +108,11 @@ def list_budgets(db: Session = Depends(get_db)):
                 category_id=b.category_id,
                 monthly_limit=b.monthly_limit,
                 currency=b.currency,
+                is_active=b.is_active,
+                priority=b.priority,
+                warning_threshold=b.warning_threshold,
+                critical_threshold=b.critical_threshold,
+                context_note=b.context_note,
                 category=CategoryOut.model_validate(cat) if cat else None,
             )
         )
@@ -120,11 +136,21 @@ def upsert_budget(
     if budget:
         budget.monthly_limit = body.monthly_limit
         budget.currency = body.currency
+        budget.is_active = body.is_active
+        budget.priority = body.priority
+        budget.warning_threshold = body.warning_threshold
+        budget.critical_threshold = body.critical_threshold
+        budget.context_note = body.context_note
     else:
         budget = Budget(
             category_id=category_id,
             monthly_limit=body.monthly_limit,
             currency=body.currency,
+            is_active=body.is_active,
+            priority=body.priority,
+            warning_threshold=body.warning_threshold,
+            critical_threshold=body.critical_threshold,
+            context_note=body.context_note,
         )
         db.add(budget)
 
@@ -134,5 +160,10 @@ def upsert_budget(
         category_id=budget.category_id,
         monthly_limit=budget.monthly_limit,
         currency=budget.currency,
+        is_active=budget.is_active,
+        priority=budget.priority,
+        warning_threshold=budget.warning_threshold,
+        critical_threshold=budget.critical_threshold,
+        context_note=budget.context_note,
         category=CategoryOut.model_validate(cat),
     )

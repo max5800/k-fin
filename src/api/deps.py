@@ -27,6 +27,18 @@ def _get_engine():
 Db = Annotated[Session, Depends(get_db)]
 
 
+def _require_credentials(
+    credentials: HTTPAuthorizationCredentials | None = Depends(_bearer),
+) -> HTTPAuthorizationCredentials:
+    if not credentials:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or missing token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    return credentials
+
+
 # ---------------------------------------------------------------------------
 # Service principal — represents MCP / Scheduler using the static API_TOKEN
 # ---------------------------------------------------------------------------
@@ -46,8 +58,8 @@ class ServicePrincipal:
 
 def _get_current_principal(
     request: Request,
+    credentials: Annotated[HTTPAuthorizationCredentials, Depends(_require_credentials)],
     db: Annotated[Session, Depends(get_db)],
-    credentials: HTTPAuthorizationCredentials | None = Depends(_bearer),
 ) -> Union[User, ServicePrincipal]:
     """Return the authenticated principal or raise 401.
 
@@ -55,13 +67,6 @@ def _get_current_principal(
     1. Valid JWT → returns User (browser sessions)
     2. Static API_TOKEN match → returns ServicePrincipal (MCP, Scheduler)
     """
-    if not credentials:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Not authenticated",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-
     token = credentials.credentials
 
     # Try JWT first (browser sessions)
@@ -108,17 +113,10 @@ def _get_current_user(
 
 
 def require_token(
+    credentials: Annotated[HTTPAuthorizationCredentials, Depends(_require_credentials)],
     db: Annotated[Session, Depends(get_db)],
-    credentials: HTTPAuthorizationCredentials | None = Depends(_bearer),
 ) -> None:
     """Accept either a valid JWT (browser) or the static API_TOKEN (services)."""
-    if not credentials:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid or missing token",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-
     token = credentials.credentials
 
     if settings.jwt_secret:

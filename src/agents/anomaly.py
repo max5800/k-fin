@@ -13,6 +13,7 @@ from sqlalchemy import Engine
 from src.agents._anthropic import make_anthropic_model
 from src.agents._runner import run_in_fresh_loop
 from src.agents._usage import AgentUsage, extract_usage
+from src.agents.context import get_safe_analysis_context
 from src.agents.gather import (
     get_new_counterparties,
     get_outlier_transactions,
@@ -22,6 +23,7 @@ from src.agents.gather import (
 from src.agents.period import derive_period_label
 from src.agents.prompts.anomaly import ANOMALY_SYSTEM_PROMPT
 from src.agents.types import AnomalyResult
+from src.services.llm_context import sanitize_context
 
 logger = logging.getLogger(__name__)
 
@@ -78,6 +80,7 @@ def run_anomaly_detection(
         )
 
     memory = get_recent_reports(engine, "anomaly", limit=2)
+    analysis_context = get_safe_analysis_context(engine, year=ref.year, month=ref.month)
 
     data = {
         "period": period,
@@ -86,16 +89,19 @@ def run_anomaly_detection(
         "outlier_transactions": outliers,
         "new_counterparties": new_counterparties,
         "recent_transactions_sample": transactions[:30],
+        "analysis_context": analysis_context,
     }
+    safe_data = sanitize_context(data)
+    safe_memory = sanitize_context({"previous_reports": memory}) if memory else None
     prompt_parts = [
         f"## Anomalie-Erkennung {period}\n",
         f"Analysezeitraum: {lookback_days} Tage\n",
-        f"### Daten\n\n```json\n{json.dumps(data, ensure_ascii=False, indent=2)}\n```\n",
+        f"### Daten\n\n```json\n{json.dumps(safe_data, ensure_ascii=False, indent=2)}\n```\n",
     ]
-    if memory:
+    if safe_memory:
         prompt_parts.append(
             f"### Vorherige Anomalie-Reports (Kontext)\n\n"
-            f"```json\n{json.dumps(memory, ensure_ascii=False, indent=2)}\n```\n"
+            f"```json\n{json.dumps(safe_memory, ensure_ascii=False, indent=2)}\n```\n"
         )
     prompt_parts.append("Bewerte die Anomalien gemäß dem Schema.")
 

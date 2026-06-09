@@ -13,6 +13,7 @@ from sqlalchemy import Engine
 from src.agents._anthropic import make_anthropic_model
 from src.agents._runner import run_in_fresh_loop
 from src.agents._usage import AgentUsage, extract_usage
+from src.agents.context import get_safe_analysis_context
 from src.agents.gather import (
     get_category_breakdown,
     get_monthly_summary,
@@ -24,6 +25,7 @@ from src.agents.gather import (
 from src.agents.period import derive_period_label
 from src.agents.prompts.weekly_analysis import WEEKLY_ANALYSIS_SYSTEM_PROMPT
 from src.agents.types import AnalysisResult
+from src.services.llm_context import sanitize_context
 
 logger = logging.getLogger(__name__)
 
@@ -68,6 +70,7 @@ def run_weekly_analysis(
     recurring = get_recurring_patterns(engine)
     savings = get_savings_rate(engine, monday, sunday)
     memory = get_recent_reports(engine, "weekly_analysis", limit=2)
+    analysis_context = get_safe_analysis_context(engine, year=monday.year, month=monday.month)
 
     data = {
         "period": iso_week,
@@ -78,16 +81,19 @@ def run_weekly_analysis(
         "category_breakdown": categories,
         "recurring_patterns": recurring,
         "savings_rate": savings,
+        "analysis_context": analysis_context,
     }
+    safe_data = sanitize_context(data)
+    safe_memory = sanitize_context({"previous_reports": memory}) if memory else None
     prompt_parts = [
         f"## Wochenanalyse {iso_week}\n",
         f"Zeitraum: {data['date_range']}\n",
-        f"### Daten\n\n```json\n{json.dumps(data, ensure_ascii=False, indent=2)}\n```\n",
+        f"### Daten\n\n```json\n{json.dumps(safe_data, ensure_ascii=False, indent=2)}\n```\n",
     ]
-    if memory:
+    if safe_memory:
         prompt_parts.append(
             f"### Vorherige Analysen (Kontext)\n\n"
-            f"```json\n{json.dumps(memory, ensure_ascii=False, indent=2)}\n```\n"
+            f"```json\n{json.dumps(safe_memory, ensure_ascii=False, indent=2)}\n```\n"
         )
     prompt_parts.append("Erstelle die Wochenanalyse gemäß dem Schema.")
 

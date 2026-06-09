@@ -20,17 +20,21 @@ from sqlalchemy.orm import Session
 
 from src.agents import (
     anomaly as anomaly_module,
+    budget_analysis as budget_analysis_module,
     categorization as categorization_module,
+    category_audit as category_audit_module,
     monthly_analysis as monthly_module,
     synthesizer as synthesizer_module,
     weekly_analysis as weekly_module,
 )
 from src.agents._usage import AgentUsage
 from src.agents.anomaly import run_anomaly_detection
+from src.agents.budget_analysis import run_budget_analysis
 from src.agents.categorization import (
     DEFAULT_AUTO_APPLY_CONFIDENCE,
     run_categorization,
 )
+from src.agents.category_audit import run_category_audit
 from src.agents.monthly_analysis import run_monthly_analysis
 from src.agents.reaper import RunCancelled
 from src.agents.synthesizer import run_synthesizer
@@ -47,6 +51,8 @@ from src.core.db.models import (
 # Map agent_type → model identifier for usage_detail serialisation.
 AGENT_MODELS: dict[str, str] = {
     "categorization": categorization_module.MODEL,
+    "category_audit": category_audit_module.MODEL,
+    "budget_analysis": budget_analysis_module.MODEL,
     "weekly_analysis": weekly_module.MODEL,
     "monthly_analysis": monthly_module.MODEL,
     "anomaly": anomaly_module.MODEL,
@@ -170,6 +176,8 @@ def _parse_period(period: str | None, fallback: date) -> tuple[date, date]:
 VALID_AGENT_TYPES = frozenset(
     {
         "categorization",
+        "category_audit",
+        "budget_analysis",
         "weekly_analysis",
         "monthly_analysis",
         "anomaly",
@@ -286,6 +294,8 @@ class AgentOrchestrator:
 
     _PIPELINE_STEPS = [
         ("categorization", "Kategorisierung"),
+        ("category_audit", "Kategorie-Audit"),
+        ("budget_analysis", "Budget-Analyse"),
         ("weekly_analysis", "Wochenanalyse"),
         ("monthly_analysis", "Monatsanalyse"),
         ("anomaly", "Anomalie-Erkennung"),
@@ -334,6 +344,20 @@ class AgentOrchestrator:
                             on_batch_error=err_cb,
                             auto_apply_threshold=threshold,
                             usage=agent_usage,
+                        ),
+                    )
+                elif agent_type == "category_audit":
+                    result = self._run_with_heartbeat(
+                        run_id,
+                        lambda: run_category_audit(
+                            self.engine, period_days=period_days, usage=agent_usage
+                        ),
+                    )
+                elif agent_type == "budget_analysis":
+                    result = self._run_with_heartbeat(
+                        run_id,
+                        lambda: run_budget_analysis(
+                            self.engine, period_days=period_days, usage=agent_usage
                         ),
                     )
                 elif agent_type == "weekly_analysis":
@@ -389,6 +413,8 @@ class AgentOrchestrator:
                 lambda: run_synthesizer(
                     engine=self.engine,
                     categorization=results.get("categorization"),
+                    category_audit=results.get("category_audit"),
+                    budget_analysis=results.get("budget_analysis"),
                     weekly=results.get("weekly_analysis"),
                     monthly=results.get("monthly_analysis"),
                     anomaly=results.get("anomaly"),
@@ -467,6 +493,26 @@ class AgentOrchestrator:
                 self._run_with_heartbeat(
                     run_id,
                     lambda: run_weekly_analysis(
+                        self.engine, period_days=period_days, usage=usage
+                    ),
+                ),
+                usage,
+            )
+        elif agent_type == "category_audit":
+            return (
+                self._run_with_heartbeat(
+                    run_id,
+                    lambda: run_category_audit(
+                        self.engine, period_days=period_days, usage=usage
+                    ),
+                ),
+                usage,
+            )
+        elif agent_type == "budget_analysis":
+            return (
+                self._run_with_heartbeat(
+                    run_id,
+                    lambda: run_budget_analysis(
                         self.engine, period_days=period_days, usage=usage
                     ),
                 ),

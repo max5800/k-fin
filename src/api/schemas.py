@@ -12,12 +12,26 @@ class CategoryOut(BaseModel):
     id: str
     name: str
     type: str
+    kind: str = "expense"
+    budgetable: bool = True
+    analysis_group: str | None = None
+    description: str | None = None
+    examples: list[str] | None = None
+    anti_examples: list[str] | None = None
+    llm_hints: str | None = None
 
 
 class CategoryCreate(BaseModel):
     id: str | None = None
     name: str
     type: str
+    kind: str = "expense"
+    budgetable: bool = True
+    analysis_group: str | None = None
+    description: str | None = None
+    examples: list[str] | None = None
+    anti_examples: list[str] | None = None
+    llm_hints: str | None = None
 
 
 class BudgetOut(BaseModel):
@@ -26,12 +40,22 @@ class BudgetOut(BaseModel):
     category_id: str
     monthly_limit: Decimal
     currency: str
+    is_active: bool = True
+    priority: int = 0
+    warning_threshold: Decimal = Decimal("0.80")
+    critical_threshold: Decimal = Decimal("1.00")
+    context_note: str | None = None
     category: CategoryOut | None = None
 
 
 class BudgetUpdate(BaseModel):
     monthly_limit: Decimal
     currency: str = "EUR"
+    is_active: bool = True
+    priority: int = 0
+    warning_threshold: Decimal = Decimal("0.80")
+    critical_threshold: Decimal = Decimal("1.00")
+    context_note: str | None = None
 
 
 class TagOut(BaseModel):
@@ -91,6 +115,69 @@ class TransactionLinksOut(BaseModel):
     transaction_id: str
     children: list[TransactionLinkOut]
     parents: list[TransactionLinkOut]
+
+
+# ── Mail evidence layer ─────────────────────────────────────────
+
+
+class MailEvidenceLineItem(BaseModel):
+    label: str
+    amount: Decimal | None = None
+    category_hint: str | None = None
+
+
+class MailMessageImport(BaseModel):
+    """Raw-ish mail input accepted only at the API edge.
+
+    The service extracts structured evidence and discards the body; no raw mail
+    content is persisted.
+    """
+
+    source: str = "gmail"
+    source_message_id: str
+    received_at: date | None = None
+    sender: str | None = None
+    subject: str
+    body_text: str
+
+
+class MailEvidenceOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    source: str
+    evidence_type: str
+    merchant_name: str | None = None
+    merchant_key: str | None = None
+    document_date: date | None = None
+    total_amount: Decimal | None = None
+    currency: str = "EUR"
+    payment_method: str | None = None
+    payment_hint: str | None = None
+    order_ref_hash: str | None = None
+    subject_hint: str | None = None
+    redacted_snippet: str | None = None
+    line_items: list[dict] | None = None
+    confidence: Decimal
+    created_at: datetime
+    updated_at: datetime
+
+
+class EvidenceLinkOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    transaction_id: str
+    evidence_id: str
+    match_type: str
+    confidence: Decimal
+    match_reason: str
+    created_at: datetime
+
+
+class MailEvidenceImportOut(BaseModel):
+    evidence: MailEvidenceOut
+    links: list[EvidenceLinkOut] = []
 
 
 # ── Categorization rules ────────────────────────────────────────
@@ -271,12 +358,32 @@ class BudgetSpendingItem(BaseModel):
     spent_net: Decimal
     remaining: Decimal
     transaction_count: int
+    utilization: Decimal | None = None
+    status: str | None = None
+    priority: int | None = None
+    context_note: str | None = None
 
 
 class BudgetSpendingOut(BaseModel):
     year: int
     month: int
     items: list[BudgetSpendingItem]
+
+
+class AnalysisContextOut(BaseModel):
+    year: int
+    month: int
+    period_start: str
+    period_end: str
+    generated_at: str
+    monthly_summary: dict
+    budget_spending: dict
+    budget_risks: list[dict]
+    uncategorized_count: int
+    category_semantics: list[dict]
+    mail_evidence: list[dict]
+    top_transactions: list[dict]
+    assumptions: list[str]
 
 
 class RefundAuditCandidate(BaseModel):
