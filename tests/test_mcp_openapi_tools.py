@@ -8,6 +8,8 @@ from src.mcp_server.openapi_tools import (
 
 BUDGET_PATH = "/api/v1/categories/budgets/{category_id}"
 BUDGET_OP_ID = "upsert_budget_api_v1_categories_budgets__category_id__put"
+SAVINGS_PLAN_PATH = "/api/v1/portfolio/savings-plans/{isin}"
+TARGET_PATH = "/api/v1/portfolio/targets/{target_type}/{target_key}"
 
 
 def _budget_spec() -> dict:
@@ -190,8 +192,12 @@ def test_tool_description_prefers_description_over_summary():
 
 
 def test_budget_put_in_write_allowlist():
-    """The one allowed write is the budget upsert — guard against accidental drift."""
-    assert WRITE_ALLOWLIST == {("put", BUDGET_PATH)}
+    """Allowed writes are deliberately narrow — guard against accidental drift."""
+    assert WRITE_ALLOWLIST == {
+        ("put", BUDGET_PATH),
+        ("put", SAVINGS_PLAN_PATH),
+        ("put", TARGET_PATH),
+    }
 
 
 def test_non_allowlisted_writes_are_not_registered():

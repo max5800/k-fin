@@ -16,6 +16,8 @@ SKIP_PATH_PREFIXES = ("/internal/",)
 # accidental writes from sneaking in via OpenAPI changes.
 WRITE_ALLOWLIST: set[tuple[str, str]] = {
     ("put", "/api/v1/categories/budgets/{category_id}"),
+    ("put", "/api/v1/portfolio/savings-plans/{isin}"),
+    ("put", "/api/v1/portfolio/targets/{target_type}/{target_key}"),
 }
 
 

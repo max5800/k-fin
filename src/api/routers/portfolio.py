@@ -31,9 +31,16 @@ from src.api.schemas import (
     InstrumentPatch,
     InstrumentPricePointOut,
     PerformancePointOut,
+    PortfolioPlanPositionOut,
+    PortfolioPlanReportOut,
+    PortfolioPlanSuggestionOut,
     PortfolioSummaryOut,
+    PortfolioTargetOut,
+    PortfolioTargetUpdate,
     PriceBackfillRequest,
     PriceBackfillResult,
+    SavingsPlanOut,
+    SavingsPlanUpdate,
 )
 from src.core.config import settings
 from src.core.db.models import (
@@ -42,8 +49,12 @@ from src.core.db.models import (
     DepotTransactionType,
     Instrument,
     InstrumentPriceHistory,
+    PortfolioTarget,
+    PortfolioTargetType,
     PortfolioSnapshot,
     Position,
+    SavingsPlan,
+    SavingsPlanInterval,
 )
 from src.core.logging import get_logger
 
@@ -225,6 +236,283 @@ def portfolio_performance(
         )
         for row in rows
     ]
+
+
+# ---------------------------------------------------------------------------
+# Portfolio planning (savings plans + target allocations)
+# ---------------------------------------------------------------------------
+
+
+def _monthly_amount(plan: SavingsPlan) -> Decimal:
+    if not plan.active:
+        return ZERO
+    if plan.interval == SavingsPlanInterval.MONTHLY:
+        return plan.amount
+    if plan.interval == SavingsPlanInterval.QUARTERLY:
+        return plan.amount / Decimal("3")
+    if plan.interval == SavingsPlanInterval.YEARLY:
+        return plan.amount / Decimal("12")
+    return ZERO
+
+
+def _savings_plan_out(plan: SavingsPlan, instrument: Instrument | None) -> SavingsPlanOut:
+    return SavingsPlanOut(
+        id=plan.id,
+        isin=plan.isin,
+        amount=plan.amount,
+        currency=plan.currency,
+        interval=plan.interval.value if hasattr(plan.interval, "value") else str(plan.interval),
+        start_date=plan.start_date,
+        active=plan.active,
+        note=plan.note,
+        instrument=InstrumentOut.model_validate(instrument) if instrument else None,
+    )
+
+
+def _target_out(target: PortfolioTarget) -> PortfolioTargetOut:
+    return PortfolioTargetOut(
+        id=target.id,
+        target_type=target.target_type.value
+        if hasattr(target.target_type, "value")
+        else str(target.target_type),
+        target_key=target.target_key,
+        target_weight_pct=target.target_weight_pct,
+        max_weight_pct=target.max_weight_pct,
+        active=target.active,
+        note=target.note,
+    )
+
+
+def _looks_like_etf(instrument: Instrument) -> bool:
+    name = instrument.name.lower()
+    kind = (instrument.instrument_type or "").upper()
+    return kind in {"ETF", "FUND"} or "etf" in name or "u.etf" in name
+
+
+@router.get("/savings-plans", response_model=list[SavingsPlanOut])
+def list_savings_plans(db: Session = Depends(get_db)):
+    rows = (
+        db.execute(
+            select(SavingsPlan, Instrument)
+            .join(Instrument, SavingsPlan.isin == Instrument.isin)
+            .order_by(Instrument.name)
+        )
+        .all()
+    )
+    return [_savings_plan_out(plan, instrument) for plan, instrument in rows]
+
+
+@router.put("/savings-plans/{isin}", response_model=SavingsPlanOut)
+def upsert_savings_plan(
+    isin: str,
+    body: SavingsPlanUpdate,
+    db: Session = Depends(get_db),
+):
+    instrument = db.get(Instrument, isin)
+    if instrument is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Instrument '{isin}' not found",
+        )
+
+    try:
+        interval = SavingsPlanInterval(body.interval)
+    except ValueError as exc:
+        valid = [i.value for i in SavingsPlanInterval]
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid interval '{body.interval}'. Valid: {valid}",
+        ) from exc
+
+    plan = db.execute(select(SavingsPlan).where(SavingsPlan.isin == isin)).scalar_one_or_none()
+    if plan is None:
+        plan = SavingsPlan(
+            isin=isin,
+            amount=body.amount,
+            currency=body.currency,
+            interval=interval,
+            start_date=body.start_date,
+            active=body.active,
+            note=body.note,
+        )
+        db.add(plan)
+    else:
+        plan.amount = body.amount
+        plan.currency = body.currency
+        plan.interval = interval
+        plan.start_date = body.start_date
+        plan.active = body.active
+        plan.note = body.note
+
+    db.commit()
+    db.refresh(plan)
+    return _savings_plan_out(plan, instrument)
+
+
+@router.get("/targets", response_model=list[PortfolioTargetOut])
+def list_portfolio_targets(db: Session = Depends(get_db)):
+    rows = (
+        db.execute(
+            select(PortfolioTarget).order_by(
+                PortfolioTarget.target_type,
+                PortfolioTarget.target_key,
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return [_target_out(row) for row in rows]
+
+
+@router.put("/targets/{target_type}/{target_key}", response_model=PortfolioTargetOut)
+def upsert_portfolio_target(
+    target_type: str,
+    target_key: str,
+    body: PortfolioTargetUpdate,
+    db: Session = Depends(get_db),
+):
+    try:
+        parsed_type = PortfolioTargetType(target_type)
+    except ValueError as exc:
+        valid = [t.value for t in PortfolioTargetType]
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid target_type '{target_type}'. Valid: {valid}",
+        ) from exc
+
+    if parsed_type == PortfolioTargetType.ISIN and db.get(Instrument, target_key) is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Instrument '{target_key}' not found",
+        )
+
+    target = db.execute(
+        select(PortfolioTarget).where(
+            PortfolioTarget.target_type == parsed_type,
+            PortfolioTarget.target_key == target_key,
+        )
+    ).scalar_one_or_none()
+    if target is None:
+        target = PortfolioTarget(
+            target_type=parsed_type,
+            target_key=target_key,
+            target_weight_pct=body.target_weight_pct,
+            max_weight_pct=body.max_weight_pct,
+            active=body.active,
+            note=body.note,
+        )
+        db.add(target)
+    else:
+        target.target_weight_pct = body.target_weight_pct
+        target.max_weight_pct = body.max_weight_pct
+        target.active = body.active
+        target.note = body.note
+
+    db.commit()
+    db.refresh(target)
+    return _target_out(target)
+
+
+@router.get("/plan-report", response_model=PortfolioPlanReportOut)
+def portfolio_plan_report(
+    db: Session = Depends(get_db),
+    single_position_cap_pct: Decimal = Query(Decimal("5"), ge=0, le=100),
+):
+    positions = (
+        db.execute(
+            select(Position, Instrument)
+            .join(Instrument, Position.isin == Instrument.isin)
+            .order_by(Position.current_value.desc())
+        )
+        .all()
+    )
+    plans = {
+        p.isin: p
+        for p in db.execute(select(SavingsPlan)).scalars().all()
+    }
+    targets = db.execute(select(PortfolioTarget)).scalars().all()
+    active_targets = [target for target in targets if target.active]
+    isin_targets = {
+        t.target_key: t
+        for t in active_targets
+        if t.target_type == PortfolioTargetType.ISIN
+    }
+    bucket_targets = {
+        t.target_key: t
+        for t in active_targets
+        if t.target_type == PortfolioTargetType.BUCKET
+    }
+
+    total_value = sum((position.current_value or ZERO for position, _ in positions), ZERO)
+    active_monthly = sum((_monthly_amount(plan) for plan in plans.values()), ZERO)
+    suggestions: list[PortfolioPlanSuggestionOut] = []
+    out_positions: list[PortfolioPlanPositionOut] = []
+
+    for position, instrument in positions:
+        value = position.current_value or ZERO
+        current_weight = (value / total_value * 100) if total_value else ZERO
+        bucket = _bucket_for(instrument.instrument_type)
+        target = isin_targets.get(position.isin) or bucket_targets.get(bucket)
+        target_weight = target.target_weight_pct if target else None
+        target_gap = target_weight - current_weight if target_weight is not None else None
+        max_weight = target.max_weight_pct if target and target.max_weight_pct is not None else None
+        looks_like_etf = _looks_like_etf(instrument)
+        over_cap = (
+            not looks_like_etf
+            and current_weight > single_position_cap_pct
+            and (max_weight is None or current_weight > max_weight)
+        )
+        plan = plans.get(position.isin)
+        monthly = _monthly_amount(plan) if plan else None
+
+        if over_cap and plan and plan.active:
+            suggestions.append(
+                PortfolioPlanSuggestionOut(
+                    severity="warning",
+                    action="pause_savings_plan",
+                    isin=position.isin,
+                    label=instrument.name,
+                    detail=(
+                        f"Single position is {current_weight:.2f}% of the portfolio; "
+                        f"cap is {single_position_cap_pct:.2f}%."
+                    ),
+                )
+            )
+        if target_gap is not None and target_gap > Decimal("0.50"):
+            suggestions.append(
+                PortfolioPlanSuggestionOut(
+                    severity="info",
+                    action="prioritize_underweight",
+                    isin=position.isin,
+                    label=instrument.name,
+                    detail=(
+                        f"Position is {target_gap:.2f} percentage points below target."
+                    ),
+                )
+            )
+
+        out_positions.append(
+            PortfolioPlanPositionOut(
+                isin=position.isin,
+                name=instrument.name,
+                current_value=value,
+                current_weight_pct=current_weight,
+                target_weight_pct=target_weight,
+                target_gap_pct=target_gap,
+                active_savings_amount=monthly,
+                max_weight_pct=max_weight,
+                over_single_position_cap=over_cap,
+                looks_like_etf=looks_like_etf,
+            )
+        )
+
+    return PortfolioPlanReportOut(
+        total_value=total_value,
+        active_monthly_savings_amount=active_monthly,
+        positions=out_positions,
+        targets=[_target_out(target) for target in targets],
+        suggestions=suggestions,
+    )
 
 
 def _dividend_yield_pct(db: Session, total_value: Decimal) -> Decimal:

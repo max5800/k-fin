@@ -732,6 +732,93 @@ class PortfolioSnapshot(Base):
     )
 
 
+class SavingsPlanInterval(str, enum.Enum):
+    MONTHLY = "monthly"
+    QUARTERLY = "quarterly"
+    YEARLY = "yearly"
+
+
+class SavingsPlan(Base):
+    """User-entered broker savings plan for a portfolio instrument.
+
+    Broker execution stays outside k-fin. This table captures intent so the
+    portfolio view can compare current holdings against planned monthly flow.
+    """
+
+    __tablename__ = "savings_plans"
+    __table_args__ = (
+        UniqueConstraint("isin", name="uq_savings_plans_isin"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    isin: Mapped[str] = mapped_column(
+        ForeignKey("instruments.isin", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    amount: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False)
+    currency: Mapped[str] = mapped_column(String(3), nullable=False, default="EUR")
+    interval: Mapped[SavingsPlanInterval] = mapped_column(
+        SQLEnum(
+            SavingsPlanInterval,
+            name="savings_plan_interval",
+            values_callable=lambda e: [m.value for m in e],
+        ),
+        nullable=False,
+        default=SavingsPlanInterval.MONTHLY,
+    )
+    start_date: Mapped[date] = mapped_column(Date, nullable=False)
+    active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    note: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+
+class PortfolioTargetType(str, enum.Enum):
+    ISIN = "isin"
+    BUCKET = "bucket"
+
+
+class PortfolioTarget(Base):
+    """Target allocation for an instrument or allocation bucket."""
+
+    __tablename__ = "portfolio_targets"
+    __table_args__ = (
+        UniqueConstraint("target_type", "target_key", name="uq_portfolio_targets_key"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    target_type: Mapped[PortfolioTargetType] = mapped_column(
+        SQLEnum(
+            PortfolioTargetType,
+            name="portfolio_target_type",
+            values_callable=lambda e: [m.value for m in e],
+        ),
+        nullable=False,
+    )
+    target_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    target_weight_pct: Mapped[Decimal] = mapped_column(Numeric(6, 2), nullable=False)
+    max_weight_pct: Mapped[Optional[Decimal]] = mapped_column(Numeric(6, 2), nullable=True)
+    active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    note: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+
 class User(Base):
     """Single-user auth table (M10a).
 

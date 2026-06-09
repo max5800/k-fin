@@ -492,6 +492,77 @@ class PerformancePointOut(BaseModel):
     total_purchase_value: Decimal
 
 
+class SavingsPlanUpdate(BaseModel):
+    amount: Decimal
+    currency: str = "EUR"
+    interval: str = "monthly"
+    start_date: date
+    active: bool = True
+    note: str | None = None
+
+
+class SavingsPlanOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    isin: str
+    amount: Decimal
+    currency: str
+    interval: str
+    start_date: date
+    active: bool
+    note: str | None = None
+    instrument: InstrumentOut | None = None
+
+
+class PortfolioTargetUpdate(BaseModel):
+    target_weight_pct: Decimal
+    max_weight_pct: Decimal | None = None
+    active: bool = True
+    note: str | None = None
+
+
+class PortfolioTargetOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    target_type: str
+    target_key: str
+    target_weight_pct: Decimal
+    max_weight_pct: Decimal | None = None
+    active: bool
+    note: str | None = None
+
+
+class PortfolioPlanPositionOut(BaseModel):
+    isin: str
+    name: str
+    current_value: Decimal
+    current_weight_pct: Decimal
+    target_weight_pct: Decimal | None = None
+    target_gap_pct: Decimal | None = None
+    active_savings_amount: Decimal | None = None
+    max_weight_pct: Decimal | None = None
+    over_single_position_cap: bool
+    looks_like_etf: bool
+
+
+class PortfolioPlanSuggestionOut(BaseModel):
+    severity: str
+    action: str
+    isin: str | None = None
+    label: str
+    detail: str
+
+
+class PortfolioPlanReportOut(BaseModel):
+    total_value: Decimal
+    active_monthly_savings_amount: Decimal
+    positions: list[PortfolioPlanPositionOut]
+    targets: list[PortfolioTargetOut]
+    suggestions: list[PortfolioPlanSuggestionOut]
+
+
 class SyncRunOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
