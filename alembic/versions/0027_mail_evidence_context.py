@@ -1,6 +1,6 @@
 """mail evidence and analysis context semantics
 
-Revision ID: 0027_mail_evidence_analysis_context
+Revision ID: 0027_mail_evidence_context
 Revises: 0026_transaction_links, 0026_portfolio_plan
 Create Date: 2026-06-09
 
@@ -14,7 +14,7 @@ import sqlalchemy as sa
 from alembic import op
 
 
-revision: str = "0027_mail_evidence_analysis_context"
+revision: str = "0027_mail_evidence_context"
 down_revision: str | Sequence[str] | None = (
     "0026_transaction_links",
     "0026_portfolio_plan",
