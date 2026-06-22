@@ -11,6 +11,10 @@
       "paypal",
       "santander_cc"
     ],
+    "portfolio_target_type": [
+      "isin",
+      "bucket"
+    ],
     "report_status_enum": [
       "pending",
       "ready",
@@ -27,6 +31,11 @@
       "manual",
       "scheduled",
       "webhook"
+    ],
+    "savings_plan_interval": [
+      "monthly",
+      "quarterly",
+      "yearly"
     ],
     "sync_stage_enum": [
       "raw_import",
@@ -861,6 +870,59 @@
         "id"
       ]
     },
+    "portfolio_targets": {
+      "columns": {
+        "active": {
+          "nullable": false,
+          "type": "BOOLEAN"
+        },
+        "created_at": {
+          "nullable": false,
+          "type": "TIMESTAMP"
+        },
+        "id": {
+          "nullable": false,
+          "type": "INTEGER"
+        },
+        "max_weight_pct": {
+          "nullable": true,
+          "type": "NUMERIC(6, 2)"
+        },
+        "note": {
+          "nullable": true,
+          "type": "VARCHAR(500)"
+        },
+        "target_key": {
+          "nullable": false,
+          "type": "VARCHAR(64)"
+        },
+        "target_type": {
+          "nullable": false,
+          "type": "VARCHAR(6)"
+        },
+        "target_weight_pct": {
+          "nullable": false,
+          "type": "NUMERIC(6, 2)"
+        },
+        "updated_at": {
+          "nullable": false,
+          "type": "TIMESTAMP"
+        }
+      },
+      "foreign_keys": [],
+      "indexes": {
+        "uq_portfolio_targets_key": {
+          "columns": [
+            "target_type",
+            "target_key"
+          ],
+          "unique": true
+        }
+      },
+      "primary_key": [
+        "id"
+      ]
+    },
     "positions": {
       "columns": {
         "as_of": {
@@ -1156,6 +1218,70 @@
         "['target_category_id']->categories.['id']"
       ],
       "indexes": {},
+      "primary_key": [
+        "id"
+      ]
+    },
+    "savings_plans": {
+      "columns": {
+        "active": {
+          "nullable": false,
+          "type": "BOOLEAN"
+        },
+        "amount": {
+          "nullable": false,
+          "type": "NUMERIC(14, 2)"
+        },
+        "created_at": {
+          "nullable": false,
+          "type": "TIMESTAMP"
+        },
+        "currency": {
+          "nullable": false,
+          "type": "VARCHAR(3)"
+        },
+        "id": {
+          "nullable": false,
+          "type": "INTEGER"
+        },
+        "interval": {
+          "nullable": false,
+          "type": "VARCHAR(9)"
+        },
+        "isin": {
+          "nullable": false,
+          "type": "VARCHAR(12)"
+        },
+        "note": {
+          "nullable": true,
+          "type": "VARCHAR(500)"
+        },
+        "start_date": {
+          "nullable": false,
+          "type": "DATE"
+        },
+        "updated_at": {
+          "nullable": false,
+          "type": "TIMESTAMP"
+        }
+      },
+      "foreign_keys": [
+        "['isin']->instruments.['isin']"
+      ],
+      "indexes": {
+        "ix_savings_plans_isin": {
+          "columns": [
+            "isin"
+          ],
+          "unique": false
+        },
+        "uq_savings_plans_isin": {
+          "columns": [
+            "isin"
+          ],
+          "unique": true
+        }
+      },
       "primary_key": [
         "id"
       ]

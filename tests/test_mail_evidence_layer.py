@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-import os
 import base64
+import json
+import os
 from datetime import date
 from decimal import Decimal
 from unittest.mock import patch
@@ -331,6 +332,21 @@ def test_llm_context_sanitizer_redacts_and_pseudonymizes_sensitive_fields():
     assert "DE89370400440532013000" not in sanitized["description"]
     assert "ACME-123456789" not in sanitized["description"]
     assert sanitized["nested"]["evidence_id"] == "ev_001"
+
+
+def test_llm_context_sanitizer_normalizes_json_scalar_types():
+    sanitized = sanitize_context(
+        {
+            "amount": Decimal("42.99"),
+            "booking_date": date(2026, 6, 22),
+        }
+    )
+
+    assert sanitized == {
+        "amount": "42.99",
+        "booking_date": "2026-06-22",
+    }
+    json.dumps(sanitized)
 
 
 def test_search_query_sanitizer_removes_private_reference_noise():

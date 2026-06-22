@@ -100,7 +100,7 @@ def upgrade() -> None:
     op.create_table(
         "transaction_evidence_links",
         sa.Column("id", sa.String(length=64), nullable=False),
-        sa.Column("transaction_id", sa.String(), nullable=False),
+        sa.Column("transaction_id", sa.String(length=64), nullable=False),
         sa.Column("evidence_id", sa.String(length=64), nullable=False),
         sa.Column("match_type", sa.String(length=32), nullable=False),
         sa.Column("confidence", sa.Numeric(4, 3), nullable=False),

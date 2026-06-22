@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import Mapping, Sequence
+from datetime import date, datetime
+from decimal import Decimal
 from typing import Any
 
 _EMAIL_RE = re.compile(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", re.I)
@@ -56,6 +58,10 @@ class LLMContextSanitizer:
             return self._pseudonym(value, self._evidence_map, "ev")
         if isinstance(value, str):
             return sanitize_text(value)
+        if isinstance(value, Decimal):
+            return str(value)
+        if isinstance(value, datetime | date):
+            return value.isoformat()
         if isinstance(value, Mapping):
             return {
                 item_key: sanitized
