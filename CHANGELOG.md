@@ -1,3 +1,10 @@
+# [1.42.0](https://github.com/max5800/k-fin/compare/v1.41.0...v1.42.0) (2026-06-22)
+
+
+### Features
+
+* **mail-evidence:** import read-only Gmail evidence ([771d571](https://github.com/max5800/k-fin/commit/771d57180c16f05b1d996b832ed83135b78deca9))
+
 # [1.41.0](https://github.com/max5800/k-fin/compare/v1.40.0...v1.41.0) (2026-06-09)
 
 
