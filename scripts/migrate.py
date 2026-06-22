@@ -26,7 +26,7 @@ def main(argv: list[str]) -> int:
     target = argv[1] if len(argv) > 1 else "upgrade"
     cfg = _config()
     if target == "upgrade":
-        command.upgrade(cfg, "head")
+        command.upgrade(cfg, "heads")
     elif target == "downgrade":
         command.downgrade(cfg, "base")
     elif target == "current":
