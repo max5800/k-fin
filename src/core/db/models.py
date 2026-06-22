@@ -145,6 +145,19 @@ class Category(Base):
         SQLEnum(TypeEnum, values_callable=lambda e: [m.value for m in e]),
         nullable=False,
     )
+    # Semantic hints for analysis agents. ``type`` stays as the legacy UI
+    # grouping; these fields describe accounting intent and prompt context.
+    kind: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="expense", server_default="expense"
+    )
+    budgetable: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default="true"
+    )
+    analysis_group: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    description: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    examples: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
+    anti_examples: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
+    llm_hints: Mapped[Optional[str]] = mapped_column(String(1000), nullable=True)
 
 
 class Budget(Base):
@@ -155,6 +168,17 @@ class Budget(Base):
     )
     monthly_limit: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False)
     currency: Mapped[str] = mapped_column(String(3), nullable=False, default="EUR")
+    is_active: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default="true"
+    )
+    priority: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    warning_threshold: Mapped[Decimal] = mapped_column(
+        Numeric(4, 2), nullable=False, default=Decimal("0.80"), server_default="0.80"
+    )
+    critical_threshold: Mapped[Decimal] = mapped_column(
+        Numeric(4, 2), nullable=False, default=Decimal("1.00"), server_default="1.00"
+    )
+    context_note: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
@@ -342,6 +366,84 @@ class TransactionLink(Base):
         ForeignKey("normalized_transactions.id", ondelete="CASCADE"), nullable=False
     )
     link_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class MailEvidence(Base):
+    """Redacted evidence extracted from email receipts, invoices, and orders.
+
+    Raw email bodies are intentionally not stored here. The row is the
+    sanitized, structured fact layer used to explain/match transactions.
+    """
+
+    __tablename__ = "mail_evidence"
+    __table_args__ = (
+        UniqueConstraint(
+            "source",
+            "order_ref_hash",
+            "evidence_type",
+            name="uq_mail_evidence_source_order_type",
+        ),
+        Index("ix_mail_evidence_merchant_key", "merchant_key"),
+        Index("ix_mail_evidence_document_date", "document_date"),
+        Index("ix_mail_evidence_order_ref_hash", "order_ref_hash"),
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    source: Mapped[str] = mapped_column(String(32), nullable=False, default="gmail")
+    evidence_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    merchant_name: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+    merchant_key: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+    document_date: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
+    total_amount: Mapped[Optional[Decimal]] = mapped_column(Numeric(14, 2), nullable=True)
+    currency: Mapped[str] = mapped_column(String(3), nullable=False, default="EUR")
+    payment_method: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    payment_hint: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+    order_ref_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    subject_hint: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+    redacted_snippet: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    line_items: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
+    confidence: Mapped[Decimal] = mapped_column(
+        Numeric(4, 3), nullable=False, default=Decimal("0.000"), server_default="0.000"
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+
+class TransactionEvidenceLink(Base):
+    """Confidence-scored link between a transaction and sanitized evidence."""
+
+    __tablename__ = "transaction_evidence_links"
+    __table_args__ = (
+        UniqueConstraint(
+            "transaction_id",
+            "evidence_id",
+            "match_type",
+            name="uq_transaction_evidence_link",
+        ),
+        Index("ix_transaction_evidence_links_transaction", "transaction_id"),
+        Index("ix_transaction_evidence_links_evidence", "evidence_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    transaction_id: Mapped[str] = mapped_column(
+        ForeignKey("normalized_transactions.id", ondelete="CASCADE"), nullable=False
+    )
+    evidence_id: Mapped[str] = mapped_column(
+        ForeignKey("mail_evidence.id", ondelete="CASCADE"), nullable=False
+    )
+    match_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    confidence: Mapped[Decimal] = mapped_column(Numeric(4, 3), nullable=False)
+    match_reason: Mapped[str] = mapped_column(String(500), nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

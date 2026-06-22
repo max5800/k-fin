@@ -41,6 +41,7 @@ from src.agents.prompts.categorization import CATEGORIZATION_SYSTEM_PROMPT
 from src.agents.types import CategorizationResult, CategorySuggestion
 from src.core.config import settings
 from src.core.db.models import NormalizedTransaction
+from src.services.llm_context import sanitize_search_query
 
 logger = logging.getLogger(__name__)
 
@@ -119,11 +120,14 @@ async def search_web(query: str) -> list[dict]:
     base = settings.searxng_url
     if not base:
         return [{"error": "search_disabled"}]
+    safe_query = sanitize_search_query(query)
+    if not safe_query:
+        return [{"error": "search_query_empty_after_sanitizing"}]
     try:
         async with httpx.AsyncClient(timeout=_SEARXNG_TIMEOUT_S) as client:
             resp = await client.get(
                 f"{base.rstrip('/')}/search",
-                params={"q": query, "format": "json", "language": "de"},
+                params={"q": safe_query, "format": "json", "language": "de"},
             )
             resp.raise_for_status()
             data = resp.json()

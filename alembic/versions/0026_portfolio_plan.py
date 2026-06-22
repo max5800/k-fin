@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import sqlalchemy as sa
 from alembic import op
+from sqlalchemy.dialects import postgresql
 
 revision = "0026_portfolio_plan"
 down_revision = "0025_app_settings_own_ibans"
@@ -16,16 +17,18 @@ branch_labels = None
 depends_on = None
 
 
-savings_plan_interval = sa.Enum(
+savings_plan_interval = postgresql.ENUM(
     "monthly",
     "quarterly",
     "yearly",
     name="savings_plan_interval",
+    create_type=False,
 )
-portfolio_target_type = sa.Enum(
+portfolio_target_type = postgresql.ENUM(
     "isin",
     "bucket",
     name="portfolio_target_type",
+    create_type=False,
 )
 
 

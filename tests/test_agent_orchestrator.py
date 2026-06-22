@@ -685,6 +685,44 @@ class TestSearchWebTool:
             "snippet": "Fleischerei in Bamberg seit 1898",
         }
 
+    def test_sanitizes_query_before_external_search(self):
+        """SearXNG gets merchant-ish text only, never private references."""
+        import asyncio
+
+        from src.agents.categorization import search_web
+        from src.core.config import settings
+
+        captured_queries: list[str] = []
+
+        class _FakeResp:
+            def raise_for_status(self):
+                return None
+
+            def json(self):
+                return {"results": []}
+
+        class _FakeClient:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *args):
+                return None
+
+            async def get(self, _url, **kwargs):
+                captured_queries.append(kwargs["params"]["q"])
+                return _FakeResp()
+
+        with patch.object(settings, "searxng_url", "https://search.example.com"):
+            with patch("src.agents.categorization.httpx.AsyncClient", _FakeClient):
+                asyncio.run(search_web("ACME order ACME-123456789 max@example.invalid"))
+
+        assert captured_queries == ["ACME order"]
+        assert "ACME-123456789" not in captured_queries[0]
+        assert "max@example.invalid" not in captured_queries[0]
+
     def test_unreachable_searxng_returns_error_dict(self):
         """Connection error ⇒ structured error, not raised exception."""
         import asyncio
@@ -769,7 +807,9 @@ class TestOrchestrator:
         from pydantic_ai.models.test import TestModel
 
         from src.agents.anomaly import anomaly_agent
+        from src.agents.budget_analysis import budget_analysis_agent
         from src.agents.categorization import categorization_agent
+        from src.agents.category_audit import category_audit_agent
         from src.agents.monthly_analysis import monthly_analysis_agent
         from src.agents.orchestrator import AgentOrchestrator
         from src.agents.synthesizer import synthesizer_agent
@@ -781,6 +821,8 @@ class TestOrchestrator:
 
         with (
             categorization_agent.override(model=TestModel()),
+            category_audit_agent.override(model=TestModel()),
+            budget_analysis_agent.override(model=TestModel()),
             weekly_analysis_agent.override(model=TestModel()),
             monthly_analysis_agent.override(model=TestModel()),
             anomaly_agent.override(model=TestModel()),
@@ -794,12 +836,14 @@ class TestOrchestrator:
             assert run.agent_name == "full"
             assert run.status == RunStatus.SUCCEEDED
 
-            # 5 new reports + 1 seed report
+            # 7 new reports + 1 seed report
             new_reports = s.query(Report).filter(Report.id != "prev-report-001").all()
             report_types = {r.report_type for r in new_reports}
             assert "categorization" in report_types
+            assert "category_audit" in report_types
+            assert "budget_analysis" in report_types
             assert "synthesis" in report_types
-            assert len(new_reports) == 5
+            assert len(new_reports) == 7
 
     def test_run_single_for_reuses_existing_run(self, db_engine, agent_seed):
         """run_single_for picks up an existing PENDING run."""

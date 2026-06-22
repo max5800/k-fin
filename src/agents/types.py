@@ -73,6 +73,11 @@ class Observation(AgentOutputModel):
     severity: str = Field(description="info, warning, or alert")
     transaction_ids: list[str] = Field(default_factory=list)
     metrics: list[ObservationMetric] = Field(default_factory=list)
+    source_agent: str | None = None
+    confidence: float | None = Field(default=None, ge=0.0, le=1.0)
+    observation_type: str | None = None
+    evidence_level: str | None = Field(default=None, description="fact, inference, or review_needed")
+    related_category_ids: list[str] = Field(default_factory=list)
 
     @field_validator("metrics", mode="before")
     @classmethod
