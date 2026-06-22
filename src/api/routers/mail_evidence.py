@@ -1,7 +1,7 @@
 """Mail evidence endpoints.
 
-These routes accept mock/structured mail input for now. A real Gmail connector
-should feed the same service layer later; raw mail content is never persisted.
+These routes accept mail-like input at the API edge. Gmail import tooling feeds
+the same service layer; raw mail content is never persisted.
 """
 
 from __future__ import annotations
@@ -41,6 +41,21 @@ def list_mail_evidence(
 def import_mock_mail_evidence(
     body: MailMessageImport,
     db: Session = Depends(get_db),
+) -> MailEvidenceImportOut:
+    return _import_mail_evidence(body, db)
+
+
+@router.post("/import", response_model=MailEvidenceImportOut)
+def import_mail_evidence(
+    body: MailMessageImport,
+    db: Session = Depends(get_db),
+) -> MailEvidenceImportOut:
+    return _import_mail_evidence(body, db)
+
+
+def _import_mail_evidence(
+    body: MailMessageImport,
+    db: Session,
 ) -> MailEvidenceImportOut:
     evidence, links = import_mail_message(db, body.model_dump())
     return MailEvidenceImportOut(

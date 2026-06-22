@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import base64
 from datetime import date
 from decimal import Decimal
 from unittest.mock import patch
@@ -23,6 +24,7 @@ from src.core.db.models import (
 from src.services import financial_aggregates
 from src.services.llm_context import assert_context_safe, sanitize_context, sanitize_search_query
 from src.services.mail_evidence import extract_evidence_from_message, import_mail_message
+from src.external.gmail_import import gmail_message_to_mail_import
 
 AUTH = {"Authorization": "Bearer test-secret"}
 
@@ -136,6 +138,36 @@ def _mock_mail_payload(message_id: str = "gmail-msg-demo-001") -> dict:
     }
 
 
+def _gmail_body(value: str) -> str:
+    return base64.urlsafe_b64encode(value.encode("utf-8")).decode("ascii").rstrip("=")
+
+
+def _gmail_payload(
+    *,
+    message_id: str = "gmail-realish-001",
+    mime_type: str = "text/plain",
+    body: str = "Merchant: ACME Shop\nDate: 2026-06-07\nTotal: 42,99 EUR",
+) -> dict:
+    return {
+        "id": message_id,
+        "internalDate": "1780819200000",
+        "payload": {
+            "mimeType": "multipart/alternative",
+            "headers": [
+                {"name": "From", "value": "ACME Receipts <receipts@acme.example>"},
+                {"name": "Subject", "value": "Invoice for order ACME-123456789"},
+                {"name": "Date", "value": "Sun, 07 Jun 2026 12:00:00 +0200"},
+            ],
+            "parts": [
+                {
+                    "mimeType": mime_type,
+                    "body": {"data": _gmail_body(body)},
+                }
+            ],
+        },
+    }
+
+
 def test_mock_mail_evidence_is_redacted_and_matched(sqlite_engine):
     with Session(sqlite_engine) as session:
         _seed_purchase(session)
@@ -227,6 +259,51 @@ def test_mail_evidence_api_import_lists_and_feeds_analysis_context(
     assert context["top_transactions"][0]["evidence"]["id"] == imported["evidence"]["id"]
 
 
+def test_gmail_message_converter_builds_provider_neutral_import():
+    converted = gmail_message_to_mail_import(_gmail_payload())
+
+    assert converted == {
+        "source": "gmail",
+        "source_message_id": "gmail-realish-001",
+        "received_at": date(2026, 6, 7),
+        "sender": "ACME Receipts <receipts@acme.example>",
+        "subject": "Invoice for order ACME-123456789",
+        "body_text": "Merchant: ACME Shop\nDate: 2026-06-07\nTotal: 42,99 EUR",
+    }
+
+
+def test_gmail_message_converter_uses_html_fallback():
+    converted = gmail_message_to_mail_import(
+        _gmail_payload(
+            mime_type="text/html",
+            body="<html><body><strong>Merchant:</strong> ACME &amp; Co<br>Total: 12,34 EUR</body></html>",
+        )
+    )
+
+    assert converted["body_text"] == "Merchant: ACME & Co Total: 12,34 EUR"
+
+
+def test_mail_evidence_api_accepts_real_import_endpoint(
+    sqlite_engine,
+    sqlite_api_client,
+):
+    with Session(sqlite_engine) as session:
+        _seed_purchase(session)
+
+    converted = gmail_message_to_mail_import(_gmail_payload())
+    import_resp = sqlite_api_client.post(
+        "/api/v1/mail-evidence/import",
+        headers=AUTH,
+        json={**converted, "received_at": str(converted["received_at"])},
+    )
+
+    assert import_resp.status_code == 200
+    imported = import_resp.json()
+    assert imported["evidence"]["merchant_key"] == "acme shop"
+    assert imported["evidence"]["total_amount"] == "42.99"
+    assert imported["links"][0]["transaction_id"] == "txn-mail-match-001"
+
+
 def test_llm_context_sanitizer_redacts_and_pseudonymizes_sensitive_fields():
     sanitized = sanitize_context(
         {
@@ -295,3 +372,60 @@ def test_mail_evidence_type_detection_covers_planned_mail_objects(
     )
 
     assert draft["evidence_type"] == expected_type
+
+
+def test_mail_evidence_extraction_handles_unstructured_non_financial_mail():
+    draft = extract_evidence_from_message(
+        {
+            "source_message_id": "newsletter-noise",
+            "sender": "newsletter@example.invalid",
+            "subject": "Some update without finance markers",
+            "body_text": "Just a regular update with no total and no currency.",
+        }
+    )
+
+    assert draft["currency"] == "EUR"
+    assert draft["total_amount"] is None
+
+
+def test_mail_evidence_extraction_handles_german_invoice_amounts():
+    draft = extract_evidence_from_message(
+        {
+            "source_message_id": "unzer-decathlon-demo",
+            "sender": "decathlon.de Unzer Rechnung <noreply@example.invalid>",
+            "subject": "Zahlungsinformationen zum Kauf auf Rechnung bei decathlon.de",
+            "received_at": date(2026, 6, 20),
+            "body_text": (
+                "Vielen Dank für Deine Bestellung bei decathlon.de "
+                "(Bestellnummer ABCD-123456789). Bitte überweise den Betrag von "
+                "74,98 EUR bis spätestens zum 11.07.2026. "
+                "Zahlungsinformationen Empfänger: Unzer E-Com GmbH "
+                "Offener Betrag: 74,98 EUR IBAN: DE89370400440532013000"
+            ),
+        }
+    )
+
+    assert draft["evidence_type"] == "invoice"
+    assert draft["total_amount"] == Decimal("74.98")
+    assert draft["payment_method"] == "invoice"
+    assert draft["document_date"] == date(2026, 6, 20)
+    assert draft["order_ref_hash"] is not None
+    assert "ABCD-123456789" not in (draft["redacted_snippet"] or "")
+
+
+def test_mail_evidence_type_ignores_shop_return_boilerplate():
+    draft = extract_evidence_from_message(
+        {
+            "source_message_id": "decathlon-order-demo",
+            "sender": "Decathlon Service <noreply@example.invalid>",
+            "subject": "Vielen Dank für deinen Einkauf!",
+            "received_at": date(2026, 6, 20),
+            "body_text": (
+                "Bestellnummer ABCD-123456789 Zahlungsart: invoice "
+                "Gesamtbetrag inkl. MwSt.: 74,98 € "
+                "Lieferung Retouren und Rückerstattungen 30-Tage Rückgaberecht"
+            ),
+        }
+    )
+
+    assert draft["evidence_type"] == "invoice"

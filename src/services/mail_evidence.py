@@ -99,7 +99,14 @@ def _parse_date(value: str | None) -> date | None:
 
 def _detect_evidence_type(text: str) -> str:
     lowered = text.lower()
-    if any(term in lowered for term in ("refund", "rückerstattung", "erstattung", "retoure")):
+    refund_patterns = (
+        r"\brefund(?:ed)?\b",
+        r"\brückerstattung\b",
+        r"\berstattung\b",
+        r"\berstattet\b",
+        r"\bgutschrift\b",
+    )
+    if any(re.search(pattern, lowered) for pattern in refund_patterns):
         return "refund"
     if any(term in lowered for term in ("subscription", "abo", "verlängerung")):
         return "subscription"
@@ -118,6 +125,8 @@ def _detect_payment_method(text: str) -> str | None:
         return "credit_card"
     if any(term in lowered for term in ("sepa", "lastschrift", "direct debit")):
         return "direct_debit"
+    if any(term in lowered for term in ("kauf auf rechnung", "zahlungsart: invoice", "payment method: invoice")):
+        return "invoice"
     return None
 
 
@@ -168,19 +177,20 @@ def extract_evidence_from_message(message: dict[str, Any]) -> dict[str, Any]:
         (
             r"^\s*(?:total|betrag|summe|amount)\s*:\s*(?:EUR|€)?\s*(-?\d+[\d.,]*)",
             r"^\s*(?:total|betrag|summe|amount)\s*:\s*(-?\d+[\d.,]*)\s*(?:EUR|€)",
+            r"^\s*(?:gesamtbetrag|rechnungsbetrag|offener betrag)(?:\s+inkl\.\s+mwst\.)?\s*:\s*(-?\d+[\d.,]*)\s*(?:EUR|€)",
+            r"\b(?:betrag|summe|gesamtbetrag|rechnungsbetrag)\s+von\s*(-?\d+[\d.,]*)\s*(?:EUR|€)",
+            r"\b(?:offener betrag|gesamtbetrag|rechnungsbetrag)(?:\s+inkl\.\s+mwst\.)?\s*:\s*(-?\d+[\d.,]*)\s*(?:EUR|€)",
         ),
         text,
     )
-    currency = (
-        _first_match((r"\b(EUR|USD|GBP|CHF)\b", text), text) or "EUR"
-    ).upper()
+    currency = (_first_match((r"\b(EUR|USD|GBP|CHF)\b",), text) or "EUR").upper()
     document_date = _parse_date(
         _first_match((r"^\s*(?:date|datum|order date|bestelldatum)\s*:\s*([0-9./-]+)",), text)
     )
     order_ref = _first_match(
         (
             r"^\s*(?:order|bestellnummer|bestellung|invoice|rechnung)\s*:\s*(.+)$",
-            r"\b(?:order|bestellung|invoice|rechnung)[\s:#-]+([A-Z0-9._/-]{4,})\b",
+            r"\b(?:order|bestellnummer|bestellung|invoice|rechnung)[\s:#-]+([A-Z0-9._/-]{4,})\b",
         ),
         text,
     )
