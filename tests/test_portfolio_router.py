@@ -125,6 +125,8 @@ def seeded(db_engine):
 
 def test_auth_required(api_client):
     assert api_client.get("/api/v1/portfolio/summary").status_code == 401
+    assert api_client.get("/api/v1/portfolio/home").status_code == 401
+    assert api_client.get("/api/v1/portfolio/activities").status_code == 401
     assert api_client.get("/api/v1/depots").status_code == 401
 
 
@@ -188,6 +190,57 @@ def test_portfolio_performance_returns_series(api_client, seeded):
     series = r.json()
     assert len(series) == 2
     assert Decimal(series[-1]["total_value"]) == Decimal("2000")
+
+
+def test_portfolio_activities_returns_depot_feed(api_client, seeded):
+    r = api_client.get("/api/v1/portfolio/activities?limit=5", headers=AUTH)
+    assert r.status_code == 200
+    body = r.json()
+
+    assert body["total"] == 1
+    assert body["limit"] == 5
+    assert body["offset"] == 0
+    assert len(body["items"]) == 1
+
+    activity = body["items"][0]
+    assert activity["transaction_id"] == "TX_DIV_1"
+    assert activity["instrument_name"] == "Doe AG"
+    assert activity["transaction_type"] == "DIVIDEND"
+    assert Decimal(activity["amount"]) == Decimal("40")
+
+
+def test_portfolio_activities_filters_by_isin(api_client, seeded):
+    r = api_client.get(
+        "/api/v1/portfolio/activities?isin=DE0000000001",
+        headers=AUTH,
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["total"] == 0
+    assert body["items"] == []
+
+
+def test_portfolio_home_bundles_parqet_home_data(api_client, seeded):
+    r = api_client.get("/api/v1/portfolio/home?range=1M&activity_limit=3", headers=AUTH)
+    assert r.status_code == 200
+    body = r.json()
+
+    assert Decimal(body["summary"]["total_value"]) == Decimal("2000")
+    assert {row["bucket"] for row in body["allocation"]} == {"Aktien", "ETFs"}
+    assert len(body["performance"]) == 2
+
+    assert len(body["activities"]) == 1
+    activity = body["activities"][0]
+    assert activity["transaction_id"] == "TX_DIV_1"
+    assert activity["instrument_name"] == "Doe AG"
+    assert activity["transaction_type"] == "DIVIDEND"
+    assert Decimal(activity["amount"]) == Decimal("40")
+
+
+def test_portfolio_home_allows_empty_activity_slice(api_client, seeded):
+    r = api_client.get("/api/v1/portfolio/home?activity_limit=0", headers=AUTH)
+    assert r.status_code == 200
+    assert r.json()["activities"] == []
 
 
 def test_empty_db_returns_zero_summary(api_client):
