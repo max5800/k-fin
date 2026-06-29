@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import re
 from collections.abc import Mapping, Sequence
 from datetime import date, datetime
@@ -16,7 +15,7 @@ _LONG_DIGITS_RE = re.compile(r"\b\d{9,}\b")
 _BEARER_RE = re.compile(r"(?i)\bBearer\s+[A-Za-z0-9\-_\.~+/=]{8,}")
 _REFERENCE_RE = re.compile(
     r"(?i)\b(mandat|mandate|reference|referenz|endtoend|order|invoice)"
-    r"[\s:#-]*[A-Z0-9][A-Z0-9._/-]{3,}\b"
+    r"[\s:#-]*[A-Z0-9][A-Z0-9._/-]*\d[A-Z0-9._/-]*\b"
 )
 _BANNED_KEY_RE = re.compile(
     r"(iban|raw|source_payload|account_id|depot_id|external_id|mandate|"
@@ -95,7 +94,6 @@ def sanitize_search_query(query: str) -> str:
 
 
 def assert_context_safe(context: Any) -> None:
-    serialized = json.dumps(context, ensure_ascii=False, default=str)
     forbidden = [
         ("email", _EMAIL_RE),
         ("de_iban", _DE_IBAN_RE),
@@ -105,5 +103,17 @@ def assert_context_safe(context: Any) -> None:
         ("reference", _REFERENCE_RE),
     ]
     for label, pattern in forbidden:
-        if pattern.search(serialized):
-            raise ValueError(f"LLM context contains forbidden pattern: {label}")
+        for text in _iter_string_values(context):
+            if pattern.search(text):
+                raise ValueError(f"LLM context contains forbidden pattern: {label}")
+
+
+def _iter_string_values(value: Any):
+    if isinstance(value, str):
+        yield value
+    elif isinstance(value, Mapping):
+        for item_value in value.values():
+            yield from _iter_string_values(item_value)
+    elif isinstance(value, Sequence) and not isinstance(value, bytes | bytearray):
+        for item in value:
+            yield from _iter_string_values(item)

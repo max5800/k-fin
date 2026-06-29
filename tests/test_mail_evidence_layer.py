@@ -364,6 +364,15 @@ def test_context_safety_rejects_unsanitized_reference_patterns():
         assert_context_safe({"description": "Order ACME-123456789"})
 
 
+def test_context_safety_allows_harmless_reference_language():
+    assert_context_safe(
+        {
+            "summary": "Use the previous report as reference point.",
+            "details": ["Reference period comparison stays allowed."],
+        }
+    )
+
+
 @pytest.mark.parametrize(
     ("subject", "expected_type"),
     [
