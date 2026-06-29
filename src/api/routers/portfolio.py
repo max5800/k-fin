@@ -31,6 +31,9 @@ from src.api.schemas import (
     InstrumentPatch,
     InstrumentPricePointOut,
     PerformancePointOut,
+    PortfolioActivityListOut,
+    PortfolioActivityOut,
+    PortfolioHomeOut,
     PortfolioPlanPositionOut,
     PortfolioPlanReportOut,
     PortfolioPlanSuggestionOut,
@@ -132,8 +135,7 @@ def _dispatch_backfill_to_worker(payload: dict) -> dict:
     return resp.json()
 
 
-@router.get("/summary", response_model=PortfolioSummaryOut)
-def portfolio_summary(db: Session = Depends(get_db)):
+def _summary(db: Session) -> PortfolioSummaryOut:
     positions = db.execute(select(Position)).scalars().all()
 
     total_value = sum((p.current_value or ZERO for p in positions), ZERO)
@@ -173,8 +175,7 @@ def portfolio_summary(db: Session = Depends(get_db)):
     )
 
 
-@router.get("/allocation", response_model=list[AllocationBucketOut])
-def portfolio_allocation(db: Session = Depends(get_db)):
+def _allocation(db: Session) -> list[AllocationBucketOut]:
     rows = (
         db.execute(
             select(Instrument.instrument_type, func.sum(Position.current_value))
@@ -204,11 +205,7 @@ def portfolio_allocation(db: Session = Depends(get_db)):
     return out
 
 
-@router.get("/performance", response_model=list[PerformancePointOut])
-def portfolio_performance(
-    db: Session = Depends(get_db),
-    range: Range = Query("1Y"),
-):
+def _performance(db: Session, range: Range) -> list[PerformancePointOut]:
     today = date.today()
     since: date | None
     if range == "1D":
@@ -236,6 +233,119 @@ def portfolio_performance(
         )
         for row in rows
     ]
+
+
+def _activity_filters(
+    *,
+    depot_id: str | None = None,
+    isin: str | None = None,
+):
+    filters = []
+    if depot_id:
+        filters.append(DepotTransaction.depot_id == depot_id)
+    if isin:
+        filters.append(DepotTransaction.isin == isin)
+    return filters
+
+
+def _activities(
+    db: Session,
+    *,
+    depot_id: str | None = None,
+    isin: str | None = None,
+    limit: int,
+    offset: int = 0,
+) -> PortfolioActivityListOut:
+    filters = _activity_filters(depot_id=depot_id, isin=isin)
+    total_stmt = select(func.count()).select_from(DepotTransaction)
+    for condition in filters:
+        total_stmt = total_stmt.where(condition)
+    total = db.execute(total_stmt).scalar_one()
+
+    stmt = (
+        select(DepotTransaction, Instrument)
+        .outerjoin(Instrument, DepotTransaction.isin == Instrument.isin)
+        .order_by(DepotTransaction.booking_date.desc(), DepotTransaction.transaction_id.desc())
+        .limit(limit)
+        .offset(offset)
+    )
+    for condition in filters:
+        stmt = stmt.where(condition)
+    rows = (
+        db.execute(stmt)
+        .all()
+    )
+
+    return PortfolioActivityListOut(
+        items=[
+            PortfolioActivityOut(
+                transaction_id=tx.transaction_id,
+                depot_id=tx.depot_id,
+                isin=tx.isin,
+                instrument_name=instrument.name if instrument else None,
+                instrument_type=instrument.instrument_type if instrument else None,
+                booking_date=tx.booking_date,
+                transaction_type=tx.transaction_type,
+                quantity=tx.quantity,
+                price=tx.price,
+                amount=tx.amount,
+                currency=tx.currency,
+            )
+            for tx, instrument in rows
+        ],
+        total=total,
+        limit=limit,
+        offset=offset,
+    )
+
+
+@router.get("/activities", response_model=PortfolioActivityListOut)
+def portfolio_activities(
+    db: Session = Depends(get_db),
+    depot_id: str | None = None,
+    isin: str | None = None,
+    limit: int = Query(20, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+):
+    return _activities(
+        db,
+        depot_id=depot_id,
+        isin=isin,
+        limit=limit,
+        offset=offset,
+    )
+
+
+@router.get("/summary", response_model=PortfolioSummaryOut)
+def portfolio_summary(db: Session = Depends(get_db)):
+    return _summary(db)
+
+
+@router.get("/allocation", response_model=list[AllocationBucketOut])
+def portfolio_allocation(db: Session = Depends(get_db)):
+    return _allocation(db)
+
+
+@router.get("/performance", response_model=list[PerformancePointOut])
+def portfolio_performance(
+    db: Session = Depends(get_db),
+    range: Range = Query("1Y"),
+):
+    return _performance(db, range)
+
+
+@router.get("/home", response_model=PortfolioHomeOut)
+def portfolio_home(
+    db: Session = Depends(get_db),
+    range: Range = Query("1Y"),
+    activity_limit: int = Query(5, ge=0, le=20),
+):
+    return PortfolioHomeOut(
+        summary=_summary(db),
+        allocation=_allocation(db),
+        performance=_performance(db, range),
+        activities=_activities(db, limit=activity_limit).items,
+    )
 
 
 # ---------------------------------------------------------------------------

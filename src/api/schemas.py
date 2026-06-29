@@ -599,6 +599,34 @@ class PerformancePointOut(BaseModel):
     total_purchase_value: Decimal
 
 
+class PortfolioActivityOut(BaseModel):
+    transaction_id: str
+    depot_id: str
+    isin: str | None = None
+    instrument_name: str | None = None
+    instrument_type: str | None = None
+    booking_date: date
+    transaction_type: str
+    quantity: Decimal
+    price: Decimal
+    amount: Decimal
+    currency: str
+
+
+class PortfolioActivityListOut(BaseModel):
+    items: list[PortfolioActivityOut]
+    total: int
+    limit: int
+    offset: int
+
+
+class PortfolioHomeOut(BaseModel):
+    summary: PortfolioSummaryOut
+    allocation: list[AllocationBucketOut]
+    performance: list[PerformancePointOut]
+    activities: list[PortfolioActivityOut]
+
+
 class SavingsPlanUpdate(BaseModel):
     amount: Decimal
     currency: str = "EUR"
