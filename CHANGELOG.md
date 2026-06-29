@@ -1,3 +1,10 @@
+## [1.43.1](https://github.com/max5800/k-fin/compare/v1.43.0...v1.43.1) (2026-06-29)
+
+
+### Bug Fixes
+
+* **agents:** avoid false positive reference guard ([4ebb6f3](https://github.com/max5800/k-fin/commit/4ebb6f3ccb2c0c4fc0098ef2f8cace2ef35d407b))
+
 # [1.43.0](https://github.com/max5800/k-fin/compare/v1.42.0...v1.43.0) (2026-06-29)
 
 
