@@ -1,3 +1,10 @@
+# [1.43.0](https://github.com/max5800/k-fin/compare/v1.42.0...v1.43.0) (2026-06-29)
+
+
+### Features
+
+* **portfolio:** add Parqet-style home API ([82d56bd](https://github.com/max5800/k-fin/commit/82d56bd8627652d47c0282591a921feae15fe9b3))
+
 # [1.42.0](https://github.com/max5800/k-fin/compare/v1.41.0...v1.42.0) (2026-06-22)
 
 
