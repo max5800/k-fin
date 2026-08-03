@@ -30,7 +30,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
           persist-credentials: false
@@ -62,7 +62,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Log in to GHCR
         uses: docker/login-action@v3
@@ -124,7 +124,7 @@ jobs:
 
     steps:
       - name: Checkout home-lab
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           repository: max5800/home-lab
           token: ${{ secrets.HOME_LAB_PAT }}
