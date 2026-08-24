@@ -191,7 +191,7 @@ def test_correction_reactivates_and_refreshes_in_one_apply(analytics_engine):
         current = db.get(NormalizedTransaction, "current")
         assert applied["result_counts"]["total_changes"] == 2
         assert current.is_active is True
-        assert current.accounting_class == "reconciled_consumption"
+        assert current.accounting_class == "variable_discretionary_consumption"
         assert current.accounting_version == 2
 
         second = run_correction(db, apply=True)
@@ -316,7 +316,7 @@ def test_bank_card_paypal_chain_report_arithmetic_counts_merchant_once(
             "merchant",
             "c",
             "-40.00",
-            accounting_class="reconciled_consumption",
+            accounting_class="variable_discretionary_consumption",
             confidence="0.800",
         )
         bank.internal_transfer = card.internal_transfer = True
@@ -326,7 +326,10 @@ def test_bank_card_paypal_chain_report_arithmetic_counts_merchant_once(
         report = accounting_report(db, start=date(2026, 1, 1), end=date(2026, 1, 31))
         assert report["report_version"] == 2
         assert report["gross_cash_outflow"] == Decimal("40.00")
-        assert report["reconciled_consumption_gross"] == Decimal("40.00")
+        assert report["variable_discretionary_consumption_outflow"] == Decimal(
+            "40.00"
+        )
+        assert report["economic_consumption_gross"] == Decimal("40.00")
         assert report["internal_transfer_and_settlement_parent_outflow"] == Decimal(
             "80.00"
         )
@@ -515,7 +518,13 @@ def test_report_separates_refunds_assets_debt_and_legacy_residual(analytics_engi
         db.add_all([_raw(char) for char in "abcde"])
         db.add_all(
             [
-                _tx("consume", "a", "-50.00", accounting_class="reconciled_consumption", confidence="0.800"),
+                _tx(
+                    "consume",
+                    "a",
+                    "-50.00",
+                    accounting_class="variable_discretionary_consumption",
+                    confidence="0.800",
+                ),
                 _tx("asset", "b", "-25.00", accounting_class="financial_asset_building", confidence="0.950"),
                 _tx("debt", "c", "-15.00", accounting_class="debt_principal_financing", confidence="0.850"),
                 _tx("refund", "d", "10.00", accounting_class="verified_refund_reimbursement", confidence="1.000", refund=True, refund_decided=True),
@@ -528,8 +537,104 @@ def test_report_separates_refunds_assets_debt_and_legacy_residual(analytics_engi
         assert report["financial_asset_building_outflow"] == Decimal("25.00")
         assert report["distinguishable_debt_principal_financing_outflow"] == Decimal("15.00")
         assert report["verified_refunds_reimbursements"] == Decimal("10.00")
-        assert report["reconciled_consumption_net"] == Decimal("40.00")
+        assert report["economic_consumption_net"] == Decimal("40.00")
         assert report["unresolved_ambiguous_outflow_residual"] == Decimal("5.00")
+
+
+def test_accounting_precedence_is_disjoint_exhaustive_and_reconciles(analytics_engine):
+    """Every debit lands in exactly one explicit partition; evidence cannot overlap it."""
+    with Session(analytics_engine) as db:
+        db.add_all([_raw(char) for char in "abcdefghijklm"])
+        db.add(Category(id="custom-fixed", name="Custom Fixed", type=TypeEnum.FIX))
+        rows = {
+            "transfer": _tx("transfer", "a", "-50.00", category_id="umbuchung"),
+            "fee": _tx("fee", "b", "-4.00", category_id="miete"),
+            "fee_category": _tx(
+                "fee-category", "l", "-2.00", category_id="gebuehren-zinsen"
+            ),
+            "asset": _tx("asset", "c", "-20.00", category_id="etf-sparplan"),
+            "debt": _tx("debt", "d", "-10.00", category_id="kredit-tilgung"),
+            "subscription": _tx(
+                "subscription", "e", "-7.00", category_id="abos-streaming"
+            ),
+            "fixed": _tx("fixed", "f", "-30.00", category_id="miete"),
+            "fixed_custom": _tx(
+                "fixed-custom", "m", "-8.00", category_id="custom-fixed"
+            ),
+            "variable": _tx("variable", "g", "-12.00", category_id="lebensmittel"),
+            "refund": _tx(
+                "refund",
+                "h",
+                "5.00",
+                refund=True,
+                refund_decided=True,
+            ),
+            "residual": _tx("residual", "i", "-3.00"),
+            "income": _tx("income", "j", "100.00"),
+            "evidence_only": _tx(
+                "evidence-only", "k", "-1.00", category_id="lebensmittel"
+            ),
+        }
+        rows["fee"].source = DataSource.SANTANDER_CC
+        rows["fee"].description = "Finanzierungsgebühr"
+        rows["income"].refund_verification_status = "income_verified"
+        db.add_all(rows.values())
+        db.add(
+            SubscriptionRecord(
+                id="evidence-does-not-reclassify",
+                label="Example Service",
+                status="active_contract",
+                confidence=Decimal("1.000"),
+                evidence_source="manual",
+                transaction_id="evidence-only",
+            )
+        )
+        db.commit()
+
+        run_correction(db, apply=True)
+
+        expected_classes = {
+            "transfer": "internal_transfer_settlement_parent",
+            "fee": "fee_interest_charge",
+            "fee_category": "fee_interest_charge",
+            "asset": "financial_asset_building",
+            "debt": "debt_principal_financing",
+            "subscription": "subscription_consumption",
+            "fixed": "fixed_cost_consumption",
+            "fixed_custom": "fixed_cost_consumption",
+            "variable": "variable_discretionary_consumption",
+            "refund": "verified_refund_reimbursement",
+            "residual": "unresolved_ambiguous",
+            "income": "non_outflow_income",
+            # SubscriptionRecord evidence is itemized separately and is not a
+            # second accounting-class signal.
+            "evidence_only": "variable_discretionary_consumption",
+        }
+        assert {
+            name: row.accounting_class for name, row in rows.items()
+        } == expected_classes
+
+        report = accounting_report(db, start=date(2026, 1, 1), end=date(2026, 1, 31))
+        assert report["gross_cash_outflow"] == Decimal("97.00")
+        assert report["internal_transfer_and_settlement_parent_outflow"] == Decimal(
+            "50.00"
+        )
+        assert report["financial_asset_building_outflow"] == Decimal("20.00")
+        assert report["distinguishable_debt_principal_financing_outflow"] == Decimal(
+            "10.00"
+        )
+        assert report["fixed_cost_outflow"] == Decimal("38.00")
+        assert report["fee_interest_outflow"] == Decimal("6.00")
+        assert report["subscription_outflow"] == Decimal("7.00")
+        assert report["variable_discretionary_consumption_outflow"] == Decimal(
+            "13.00"
+        )
+        assert report["unresolved_ambiguous_outflow_residual"] == Decimal("3.00")
+        assert report["economic_consumption_gross"] == Decimal("64.00")
+        assert report["verified_refunds_reimbursements"] == Decimal("5.00")
+        assert report["economic_consumption_net"] == Decimal("59.00")
+        assert report["outflow_partition_total"] == report["gross_cash_outflow"]
+        assert report["outflow_partition_difference"] == Decimal("0.00")
 
 
 def test_ambiguous_positive_and_negative_refund_fail_closed(analytics_engine):

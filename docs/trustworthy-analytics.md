@@ -12,19 +12,37 @@ row has exactly one `accounting_class`:
 - `internal_transfer_settlement_parent`
 - `financial_asset_building`
 - `debt_principal_financing`
+- `fixed_cost_consumption`
+- `fee_interest_charge`
+- `subscription_consumption`
+- `variable_discretionary_consumption`
 - `verified_refund_reimbursement`
-- `reconciled_consumption`
 - `unresolved_ambiguous`
 - `non_outflow_income`
+
+Classification precedence is deterministic: transfer/settlement evidence,
+refund/sign validation, and unresolved aggregate parents are evaluated first;
+exact source-intrinsic fee/interest labels then precede investment, debt,
+explicit subscription categories, explicit fixed-cost categories, and remaining
+categorized variable/discretionary consumption. Recurrence and subscription
+evidence records are itemized separately and never add a second accounting
+class to a transaction.
+
+The migration adds the explicit `gebuehren-zinsen` category for bank/card fees
+and interest. Santander statement labels emitted by the strict parser also map
+to the same fee/interest partition even before a user category is applied.
 
 The report uses these formulas:
 
 ```text
 gross cash outflow = abs(sum(active negative rows except
                              internal_transfer_settlement_parent))
-reconciled consumption net = reconciled consumption gross - verified refunds
+economic consumption gross = fixed costs + fees/interest + subscriptions
+                           + variable/discretionary consumption
+economic consumption net = economic consumption gross - verified refunds
 gross cash outflow = financial assets + distinguishable debt
-                   + reconciled consumption gross
+                   + fixed costs + fees/interest + subscriptions
+                   + variable/discretionary consumption
                    + unresolved outflow residual
 ```
 
@@ -37,7 +55,7 @@ Unmatched or non-unique PayPal/Santander candidates stay in the unresolved
 residual. Positive legacy rows remain unresolved until explicitly verified as
 income or as a refund, and a negative row can never be verified as a refund.
 A positive row reduces consumption only when the refund decision has been
-explicitly audited. `gross_cash_outflow` and `reconciled_consumption_net`
+explicitly audited. `gross_cash_outflow` and `economic_consumption_net`
 are intentionally different facts; neither is exposed as a bare “total spend.”
 
 ## Authoritative normalization
@@ -95,12 +113,19 @@ sequences from the PostgreSQL catalogs; it does not rely on a selected-table
 list.
 
 The downgrade first takes `ACCESS EXCLUSIVE` locks on every public application
-table so the predicate and reverse migration observe one stable state. If any
-row, customized bootstrap value, or consumed sequence is present, PostgreSQL
-raises an exception before the preservation schema is created or any public
-row, schema object, or Alembic version is changed. The transaction releases the
-locks and leaves the database at `0028_trustworthy_analytics` exactly as it was.
-The same fail-closed guard is emitted in offline Alembic downgrade SQL.
+table, then uses a fresh statement snapshot to take transaction-duration locks
+on every owned sequence, including one moved outside `public`. A following fresh
+snapshot checks sequence schema, type, start, increment, minimum, maximum,
+cache, cycle, persistence, database owner, column ownership,
+default/identity relationship, ACL, options, comments, and security labels, as
+well as `last_value`/`is_called`. This closes sequence-only `nextval`, `setval`,
+and `ALTER SEQUENCE` races without requiring superuser-only system-catalog locks.
+If any row, customized bootstrap value, customized
+sequence definition, or consumed sequence is present, PostgreSQL raises an
+exception before the preservation schema is created or any public row, schema
+object, or Alembic version is changed. The transaction releases the locks and
+leaves the database at `0028_trustworthy_analytics` exactly as it was. The same
+fail-closed guard is emitted in offline Alembic downgrade SQL.
 
 For an eligible empty smoke cycle, the migration stores only the bootstrap rows
 in `k_fin_0028_preservation` as JSONB while traversing to `base`; empty tables

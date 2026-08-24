@@ -38,7 +38,7 @@ def _seed_consumption(session: Session) -> None:
             valuation_date=date(2026, 1, 1),
             amount=Decimal("-10.00"),
             currency="EUR",
-            accounting_class="reconciled_consumption",
+            accounting_class="variable_discretionary_consumption",
             accounting_confidence=Decimal("0.800"),
         )
     )
@@ -70,8 +70,8 @@ def test_report_session_holds_one_repeatable_read_snapshot(db_engine, monkeypatc
         second = accounting_report(
             report_db, start=date(2026, 1, 1), end=date(2026, 1, 31)
         )
-        assert first["reconciled_consumption_gross"] == Decimal("10.00")
-        assert second["reconciled_consumption_gross"] == Decimal("10.00")
+        assert first["variable_discretionary_consumption_outflow"] == Decimal("10.00")
+        assert second["variable_discretionary_consumption_outflow"] == Decimal("10.00")
     finally:
         with pytest.raises(StopIteration):
             next(dependency)

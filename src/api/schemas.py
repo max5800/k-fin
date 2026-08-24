@@ -422,12 +422,18 @@ class TrustworthyAccountingReportOut(BaseModel):
     internal_transfer_and_settlement_parent_outflow: Decimal
     financial_asset_building_outflow: Decimal
     distinguishable_debt_principal_financing_outflow: Decimal
+    fixed_cost_outflow: Decimal
+    fee_interest_outflow: Decimal
+    subscription_outflow: Decimal
+    variable_discretionary_consumption_outflow: Decimal
     verified_refunds_reimbursements: Decimal
-    reconciled_consumption_gross: Decimal
-    reconciled_consumption_net: Decimal
+    economic_consumption_gross: Decimal
+    economic_consumption_net: Decimal
     unresolved_ambiguous_outflow_residual: Decimal
     unresolved_ambiguous_inflow_residual: Decimal
     non_outflow_income: Decimal
+    outflow_partition_total: Decimal
+    outflow_partition_difference: Decimal
     confidence: str
     minimum_classification_confidence: Decimal
     formulas: dict[str, str]

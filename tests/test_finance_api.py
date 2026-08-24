@@ -390,7 +390,7 @@ class TestCategoryEndpoints:
                         is_recurring=False,
                         is_outlier=False,
                         internal_transfer=False,
-                        accounting_class="reconciled_consumption",
+                        accounting_class="variable_discretionary_consumption",
                         accounting_confidence=Decimal("0.950"),
                         accounting_version=2,
                     )
@@ -405,7 +405,7 @@ class TestCategoryEndpoints:
             for tx_id in ("audit-active", "audit-inactive"):
                 tx = s.get(NormalizedTransaction, tx_id)
                 assert tx.category_id == "audit-protected"
-                assert tx.accounting_class == "reconciled_consumption"
+                assert tx.accounting_class == "variable_discretionary_consumption"
                 assert tx.accounting_confidence == Decimal("0.950")
                 assert tx.accounting_version == 2
 

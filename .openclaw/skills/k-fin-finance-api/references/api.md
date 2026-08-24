@@ -19,9 +19,16 @@ accounting partition and formulas. Always preserve these response labels:
 - `gross_cash_outflow`
 - `financial_asset_building_outflow`
 - `distinguishable_debt_principal_financing_outflow`
-- `reconciled_consumption_net`
+- `fixed_cost_outflow`
+- `fee_interest_outflow`
+- `subscription_outflow`
+- `variable_discretionary_consumption_outflow`
+- `economic_consumption_gross`
+- `economic_consumption_net`
 - `unresolved_ambiguous_outflow_residual`
 - `verified_refunds_reimbursements`
+- `outflow_partition_total`
+- `outflow_partition_difference`
 
 The API intentionally has no field called `total_spending`.
 

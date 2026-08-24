@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 
 from src.core.db.models import (
     AnalyticsCorrectionRun,
+    Category,
     DataSource,
     NormalizedTransaction,
     RawTransaction,
@@ -131,12 +132,15 @@ def _defects(db: Session) -> dict[str, Any]:
         for definition in expected_links.values()
     }
     accounting = []
+    category_types = dict(db.execute(select(Category.id, Category.type)).all())
     for tx in expected_active:
         original_flag = tx.internal_transfer
         tx.internal_transfer = expected_flags.get(tx.id, original_flag)
         try:
             expected_class, expected_confidence = _accounting_class_for(
-                tx, tx.id in active_parents
+                tx,
+                tx.id in active_parents,
+                category_types.get(tx.category_id),
             )
         finally:
             tx.internal_transfer = original_flag

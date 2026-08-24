@@ -26,6 +26,7 @@ from sqlalchemy.orm import Session
 
 from src.core.db.models import (
     AppSettings,
+    Category,
     DataSource,
     NormalizedTransaction,
     RawTransaction,
@@ -36,6 +37,7 @@ from src.core.db.models import (
     SyncStage,
     SyncStatus,
     TransactionLink,
+    TypeEnum,
 )
 from src.normalization.canonicalize import canonicalize
 from src.normalization.paypal_csv import BANK_DEPOSIT_LABEL, paypal_csv_canonicalize
@@ -68,6 +70,27 @@ AUTO_TRANSACTION_LINK_TYPES = (
 ACCOUNTING_VERSION = 2
 ASSET_CATEGORY_IDS = {"etf-sparplan", "wertpapierkauf"}
 DEBT_CATEGORY_IDS = {"kredit-tilgung"}
+FEE_INTEREST_CATEGORY_IDS = {"gebuehren-zinsen"}
+TRANSFER_CATEGORY_IDS = {"umbuchung"}
+SUBSCRIPTION_CATEGORY_IDS = {"abos-streaming", "mitgliedschaften", "oepnv-abo"}
+FIXED_COST_CATEGORY_IDS = {
+    "auto-fix",
+    "gez",
+    "internet-telefon",
+    "miete",
+    "strom-gas",
+    "versicherungen",
+}
+# These are the exact labels emitted by the fail-closed Santander statement
+# parser for rows that have no purchase date.  Exact matching prevents a
+# merchant whose name merely contains e.g. "Zins" from being guessed into a
+# financial charge partition.
+FEE_INTEREST_LABELS = {
+    "finanzierungsgebühr",
+    "mahngebühr",
+    "sollzinsen",
+    "verzugszinsen",
+}
 
 # Source-aware canonicalisation. `_build_dataframe` re-projects every active
 # raw payload onto the canonical shape; a PayPal or Santander payload is
@@ -869,9 +892,12 @@ class NormalizationPipeline:
         rows = session.execute(
             select(NormalizedTransaction).where(NormalizedTransaction.is_active.is_(True))
         ).scalars()
+        category_types = dict(session.execute(select(Category.id, Category.type)).all())
         for tx in rows:
             tx.accounting_class, tx.accounting_confidence = _accounting_class_for(
-                tx, tx.id in active_link_parents
+                tx,
+                tx.id in active_link_parents,
+                category_types.get(tx.category_id),
             )
             tx.accounting_version = ACCOUNTING_VERSION
         if commit:
@@ -1368,10 +1394,20 @@ def _build_transaction_link(
 
 
 def _accounting_class_for(
-    tx: NormalizedTransaction, has_active_child_links: bool
+    tx: NormalizedTransaction,
+    has_active_child_links: bool,
+    category_type: TypeEnum | str | None = None,
 ) -> tuple[str, Decimal]:
-    """Conservative mutually-exclusive interpretation for report v2."""
-    if tx.internal_transfer:
+    """Return one deterministic, mutually-exclusive report-v2 partition.
+
+    Precedence is intentional: transfers/refunds/sign and unresolved aggregate
+    parents protect the consolidated boundary first; source-intrinsic financial
+    charges then override a possibly stale category; explicit category families
+    finally split investments, debt, subscriptions, fixed costs, and remaining
+    variable/discretionary consumption.  Recurrence and subscription evidence
+    records are deliberately not classification inputs.
+    """
+    if tx.internal_transfer or tx.category_id in TRANSFER_CATEGORY_IDS:
         confidence = Decimal("1.000") if has_active_child_links else Decimal("0.900")
         return "internal_transfer_settlement_parent", confidence
     if tx.is_refund:
@@ -1393,12 +1429,28 @@ def _accounting_class_for(
         or _is_comdirect_santander_posting(candidate)
     ) and not has_active_child_links:
         return "unresolved_ambiguous", Decimal("0.000")
+    if tx.category_id in FEE_INTEREST_CATEGORY_IDS:
+        return "fee_interest_charge", Decimal("0.950")
+    labels = {
+        str(value).strip().casefold()
+        for value in (tx.description, tx.recipient)
+        if value
+    }
+    if tx.source == DataSource.SANTANDER_CC and labels & FEE_INTEREST_LABELS:
+        return "fee_interest_charge", Decimal("1.000")
     if tx.category_id in ASSET_CATEGORY_IDS:
         return "financial_asset_building", Decimal("0.950")
     if tx.category_id in DEBT_CATEGORY_IDS:
         return "debt_principal_financing", Decimal("0.850")
+    if tx.category_id in SUBSCRIPTION_CATEGORY_IDS:
+        return "subscription_consumption", Decimal("0.900")
+    if tx.category_id in FIXED_COST_CATEGORY_IDS or category_type in {
+        TypeEnum.FIX,
+        TypeEnum.FIX.value,
+    }:
+        return "fixed_cost_consumption", Decimal("0.900")
     if tx.category_id:
-        return "reconciled_consumption", Decimal("0.800")
+        return "variable_discretionary_consumption", Decimal("0.800")
     return "unresolved_ambiguous", Decimal("0.000")
 
 
@@ -1419,8 +1471,11 @@ def refresh_transaction_accounting(
         ).scalar_one()
         > 0
     )
+    category = session.get(Category, tx.category_id) if tx.category_id else None
     tx.accounting_class, tx.accounting_confidence = _accounting_class_for(
-        tx, has_active_children
+        tx,
+        has_active_children,
+        category.type if category else None,
     )
     tx.accounting_version = ACCOUNTING_VERSION
 

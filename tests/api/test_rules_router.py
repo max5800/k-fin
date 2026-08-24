@@ -309,7 +309,7 @@ class TestRulesApplyAll:
             tx_d = s.get(NormalizedTransaction, "d".ljust(64, "0"))
             tx_e = s.get(NormalizedTransaction, "e".ljust(64, "0"))
             assert tx_a.category_id == "groceries"
-            assert tx_a.accounting_class == "reconciled_consumption"
+            assert tx_a.accounting_class == "variable_discretionary_consumption"
             assert tx_a.accounting_version == 2
             assert tx_c.category_id == "rent"  # untouched
             assert tx_d.category_id is None

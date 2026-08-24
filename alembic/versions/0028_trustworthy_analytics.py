@@ -55,6 +55,7 @@ _EMPTY_CATEGORY_ROWS = (
     ("etf-sparplan", "ETF-Sparplan", "fix"),
     ("wertpapierkauf", "Wertpapierkauf", "diskretionaer"),
     ("umbuchung", "Umbuchung", "fix"),
+    ("gebuehren-zinsen", "Gebühren & Zinsen", "fix"),
 )
 
 
@@ -65,6 +66,172 @@ def _sql_literal(value: str) -> str:
 _EMPTY_CATEGORY_VALUES_SQL = ",\n            ".join(
     "(" + ", ".join(_sql_literal(value) for value in row) + ")"
     for row in _EMPTY_CATEGORY_ROWS
+)
+
+
+def _snapshot_guard_sql(only_with_snapshot: bool) -> str:
+    return (
+        f"IF to_regclass('{_PRESERVATION_SCHEMA}.snapshot_state') IS NULL THEN "
+        "RETURN; END IF;"
+        if only_with_snapshot
+        else ""
+    )
+
+
+def _lock_application_tables_sql(*, only_with_snapshot: bool) -> str:
+    return f"""
+DO $k_fin$
+DECLARE
+    target record;
+BEGIN
+    {_snapshot_guard_sql(only_with_snapshot)}
+
+    FOR target IN
+        SELECT tablename
+        FROM pg_tables
+        WHERE schemaname = 'public'
+          AND tablename <> 'alembic_version'
+        ORDER BY tablename
+    LOOP
+        EXECUTE format('LOCK TABLE public.%I IN ACCESS EXCLUSIVE MODE', target.tablename);
+    END LOOP;
+END
+$k_fin$;
+"""
+
+
+def _lock_application_sequences_sql(*, only_with_snapshot: bool) -> str:
+    return f"""
+DO $k_fin$
+DECLARE
+    dependency_type text;
+    identity_mode text;
+    owner_column_name text;
+    owner_dependency_count integer;
+    owner_schema_name text;
+    owner_table_name text;
+    sequence_target record;
+BEGIN
+    {_snapshot_guard_sql(only_with_snapshot)}
+
+    -- The preceding Alembic statement already holds every owner table.  This
+    -- statement therefore discovers stable ownership in a fresh snapshot.
+    -- Reasserting the existing serial ownership (or identity generation mode)
+    -- is a semantic no-op that takes the sequence's ShareRowExclusiveLock,
+    -- blocking nextval/setval and sequence DDL until the transaction ends.
+    FOR sequence_target IN
+        SELECT sequence_relation.oid AS sequence_oid,
+               sequence_namespace.nspname AS schema_name,
+               sequence_relation.relname AS sequence_name
+        FROM pg_class AS sequence_relation
+        JOIN pg_namespace AS sequence_namespace
+          ON sequence_namespace.oid = sequence_relation.relnamespace
+        WHERE sequence_relation.relkind = 'S'
+          AND (
+              sequence_namespace.nspname = 'public'
+              OR EXISTS (
+                  SELECT 1
+                  FROM pg_depend AS owned_dependency
+                  JOIN pg_class AS owned_relation
+                    ON owned_relation.oid = owned_dependency.refobjid
+                  JOIN pg_namespace AS owned_namespace
+                    ON owned_namespace.oid = owned_relation.relnamespace
+                  WHERE owned_dependency.classid = 'pg_class'::regclass
+                    AND owned_dependency.objid = sequence_relation.oid
+                    AND owned_dependency.deptype IN ('a', 'i')
+                    AND owned_namespace.nspname = 'public'
+                    AND owned_relation.relname <> 'alembic_version'
+              )
+              OR EXISTS (
+                  SELECT 1
+                  FROM pg_depend AS default_dependency
+                  JOIN pg_attrdef AS referenced_default
+                    ON default_dependency.classid = 'pg_attrdef'::regclass
+                   AND referenced_default.oid = default_dependency.objid
+                  JOIN pg_class AS default_relation
+                    ON default_relation.oid = referenced_default.adrelid
+                  JOIN pg_namespace AS default_namespace
+                    ON default_namespace.oid = default_relation.relnamespace
+                  WHERE default_dependency.refclassid = 'pg_class'::regclass
+                    AND default_dependency.refobjid = sequence_relation.oid
+                    AND default_namespace.nspname = 'public'
+                    AND default_relation.relname <> 'alembic_version'
+              )
+          )
+        ORDER BY sequence_relation.relname
+    LOOP
+        SELECT count(*),
+               min(owner_namespace.nspname),
+               min(owner_relation.relname),
+               min(owner_attribute.attname),
+               min(dependency.deptype::text),
+               min(owner_attribute.attidentity::text)
+        INTO owner_dependency_count,
+             owner_schema_name,
+             owner_table_name,
+             owner_column_name,
+             dependency_type,
+             identity_mode
+        FROM pg_depend AS dependency
+        JOIN pg_class AS owner_relation
+          ON owner_relation.oid = dependency.refobjid
+        JOIN pg_namespace AS owner_namespace
+          ON owner_namespace.oid = owner_relation.relnamespace
+        JOIN pg_attribute AS owner_attribute
+          ON owner_attribute.attrelid = owner_relation.oid
+         AND owner_attribute.attnum = dependency.refobjsubid
+         AND NOT owner_attribute.attisdropped
+        WHERE dependency.classid = 'pg_class'::regclass
+          AND dependency.objid = sequence_target.sequence_oid
+          AND dependency.deptype IN ('a', 'i')
+          AND owner_namespace.nspname = 'public'
+          AND owner_relation.relname <> 'alembic_version';
+
+        IF owner_dependency_count <> 1 THEN
+            RAISE EXCEPTION USING MESSAGE = format(
+                'k-fin 0028 sequence lock blocked: sequence %I has %s owned columns',
+                sequence_target.sequence_name,
+                owner_dependency_count
+            );
+        END IF;
+
+        IF dependency_type = 'i' AND identity_mode IN ('a', 'd') THEN
+            EXECUTE format(
+                'ALTER TABLE %I.%I ALTER COLUMN %I SET GENERATED %s',
+                owner_schema_name,
+                owner_table_name,
+                owner_column_name,
+                CASE identity_mode WHEN 'a' THEN 'ALWAYS' ELSE 'BY DEFAULT' END
+            );
+        ELSIF dependency_type = 'a' THEN
+            EXECUTE format(
+                'ALTER SEQUENCE %I.%I OWNED BY %I.%I.%I',
+                sequence_target.schema_name,
+                sequence_target.sequence_name,
+                owner_schema_name,
+                owner_table_name,
+                owner_column_name
+            );
+        ELSE
+            RAISE EXCEPTION USING MESSAGE = format(
+                'k-fin 0028 sequence lock blocked: sequence %I has invalid ownership',
+                sequence_target.sequence_name
+            );
+        END IF;
+    END LOOP;
+
+END
+$k_fin$;
+"""
+
+
+_LOCK_DOWNGRADE_TABLES_SQL = _lock_application_tables_sql(only_with_snapshot=False)
+_LOCK_DOWNGRADE_SEQUENCES_SQL = _lock_application_sequences_sql(
+    only_with_snapshot=False
+)
+_LOCK_RESTORE_TABLES_SQL = _lock_application_tables_sql(only_with_snapshot=True)
+_LOCK_RESTORE_SEQUENCES_SQL = _lock_application_sequences_sql(
+    only_with_snapshot=True
 )
 
 
@@ -186,13 +353,48 @@ BEGIN
         END IF;
     END LOOP;
 
-    -- Empty tables can still carry state in an advanced SERIAL/IDENTITY
-    -- sequence after rows were deleted.  Discover every sequence owned by a
-    -- public application-table column and require its original start state.
+    -- Empty tables can still carry state or a customized definition in their
+    -- SERIAL/IDENTITY sequence after rows were deleted.  The preceding lock
+    -- statement stabilized every public sequence and the defining catalogs.
+    -- Require the complete PostgreSQL CREATE SEQUENCE definition and its
+    -- ownership/default relationship to be the canonical migration-created
+    -- form, not merely an unconsumed last_value.
     FOR sequence_target IN
         SELECT sequence_namespace.nspname AS schema_name,
                sequence_relation.relname AS sequence_name,
-               sequence_metadata.seqstart AS start_value
+               sequence_relation.relname = left(
+                   owner_relation.relname || '_' || owner_attribute.attname || '_seq',
+                   63
+               ) AS has_canonical_name,
+               sequence_namespace.nspname = owner_namespace.nspname
+                   AS has_canonical_schema,
+               sequence_relation.relowner = owner_relation.relowner AS has_canonical_owner,
+               sequence_relation.relpersistence = owner_relation.relpersistence
+                   AS has_canonical_persistence,
+               sequence_relation.relacl IS NULL AS has_canonical_acl,
+               sequence_relation.reloptions IS NULL AS has_canonical_reloptions,
+               obj_description(sequence_relation.oid, 'pg_class') IS NULL
+                   AS has_no_comment,
+               NOT EXISTS (
+                   SELECT 1 FROM pg_seclabel
+                   WHERE pg_seclabel.classoid = 'pg_class'::regclass
+                     AND pg_seclabel.objoid = sequence_relation.oid
+               ) AS has_no_security_label,
+               sequence_metadata.seqtypid = owner_attribute.atttypid
+                   AS has_canonical_type,
+               sequence_metadata.seqtypid AS sequence_type_oid,
+               sequence_metadata.seqstart AS start_value,
+               sequence_metadata.seqincrement AS increment_value,
+               sequence_metadata.seqmin AS minimum_value,
+               sequence_metadata.seqmax AS maximum_value,
+               sequence_metadata.seqcache AS cache_value,
+               sequence_metadata.seqcycle AS cycles,
+               dependency.deptype,
+               owner_attribute.attidentity,
+               pg_get_expr(owner_default.adbin, owner_default.adrelid)
+                   AS owner_default_expression,
+               format('%I.%I', sequence_namespace.nspname, sequence_relation.relname)::regclass::text
+                   AS sequence_regclass_text
         FROM pg_class AS sequence_relation
         JOIN pg_namespace AS sequence_namespace
           ON sequence_namespace.oid = sequence_relation.relnamespace
@@ -206,12 +408,58 @@ BEGIN
           ON owner_relation.oid = dependency.refobjid
         JOIN pg_namespace AS owner_namespace
           ON owner_namespace.oid = owner_relation.relnamespace
+        JOIN pg_attribute AS owner_attribute
+          ON owner_attribute.attrelid = owner_relation.oid
+         AND owner_attribute.attnum = dependency.refobjsubid
+         AND NOT owner_attribute.attisdropped
+        LEFT JOIN pg_attrdef AS owner_default
+          ON owner_default.adrelid = owner_relation.oid
+         AND owner_default.adnum = owner_attribute.attnum
         WHERE sequence_relation.relkind = 'S'
-          AND sequence_namespace.nspname = 'public'
           AND owner_namespace.nspname = 'public'
           AND owner_relation.relname <> 'alembic_version'
         ORDER BY sequence_relation.relname
     LOOP
+        IF NOT sequence_target.has_canonical_name
+           OR NOT sequence_target.has_canonical_schema
+           OR NOT sequence_target.has_canonical_owner
+           OR NOT sequence_target.has_canonical_persistence
+           OR NOT sequence_target.has_canonical_acl
+           OR NOT sequence_target.has_canonical_reloptions
+           OR NOT sequence_target.has_no_comment
+           OR NOT sequence_target.has_no_security_label
+           OR NOT sequence_target.has_canonical_type
+           OR sequence_target.start_value <> 1
+           OR sequence_target.increment_value <> 1
+           OR sequence_target.minimum_value <> 1
+           OR sequence_target.maximum_value <> (CASE sequence_target.sequence_type_oid
+               WHEN 'smallint'::regtype THEN 32767
+               WHEN 'integer'::regtype THEN 2147483647
+               WHEN 'bigint'::regtype THEN 9223372036854775807
+               ELSE -1
+           END)
+           OR sequence_target.cache_value <> 1
+           OR sequence_target.cycles
+           OR (
+               sequence_target.deptype = 'i'
+               AND sequence_target.attidentity NOT IN ('a', 'd')
+           )
+           OR (
+               sequence_target.deptype = 'a'
+               AND (
+                   sequence_target.attidentity <> ''
+                   OR sequence_target.owner_default_expression IS DISTINCT FROM
+                      format('nextval(%L::regclass)', sequence_target.sequence_regclass_text)
+               )
+           )
+        THEN
+            RAISE EXCEPTION USING MESSAGE = format(
+                'k-fin 0028 downgrade blocked before schema change: '
+                'sequence %I has a customized persistent definition',
+                sequence_target.sequence_name
+            );
+        END IF;
+
         EXECUTE format(
             'SELECT last_value, is_called FROM %I.%I',
             sequence_target.schema_name,
@@ -405,7 +653,41 @@ BEGIN
         FOR sequence_target IN
             SELECT sequence_namespace.nspname AS schema_name,
                    sequence_relation.relname AS sequence_name,
-                   sequence_metadata.seqstart AS start_value
+                   sequence_relation.relname = left(
+                       owner_relation.relname || '_' || owner_attribute.attname || '_seq',
+                       63
+                   ) AS has_canonical_name,
+                   sequence_namespace.nspname = owner_namespace.nspname
+                       AS has_canonical_schema,
+                   sequence_relation.relowner = owner_relation.relowner
+                       AS has_canonical_owner,
+                   sequence_relation.relpersistence = owner_relation.relpersistence
+                       AS has_canonical_persistence,
+                   sequence_relation.relacl IS NULL AS has_canonical_acl,
+                   sequence_relation.reloptions IS NULL AS has_canonical_reloptions,
+                   obj_description(sequence_relation.oid, 'pg_class') IS NULL
+                       AS has_no_comment,
+                   NOT EXISTS (
+                       SELECT 1 FROM pg_seclabel
+                       WHERE pg_seclabel.classoid = 'pg_class'::regclass
+                         AND pg_seclabel.objoid = sequence_relation.oid
+                   ) AS has_no_security_label,
+                   sequence_metadata.seqtypid = owner_attribute.atttypid
+                       AS has_canonical_type,
+                   sequence_metadata.seqtypid AS sequence_type_oid,
+                   sequence_metadata.seqstart AS start_value,
+                   sequence_metadata.seqincrement AS increment_value,
+                   sequence_metadata.seqmin AS minimum_value,
+                   sequence_metadata.seqmax AS maximum_value,
+                   sequence_metadata.seqcache AS cache_value,
+                   sequence_metadata.seqcycle AS cycles,
+                   dependency.deptype,
+                   owner_attribute.attidentity,
+                   pg_get_expr(owner_default.adbin, owner_default.adrelid)
+                       AS owner_default_expression,
+                   format(
+                       '%I.%I', sequence_namespace.nspname, sequence_relation.relname
+                   )::regclass::text AS sequence_regclass_text
             FROM pg_class AS sequence_relation
             JOIN pg_namespace AS sequence_namespace
               ON sequence_namespace.oid = sequence_relation.relnamespace
@@ -419,12 +701,61 @@ BEGIN
               ON owner_relation.oid = dependency.refobjid
             JOIN pg_namespace AS owner_namespace
               ON owner_namespace.oid = owner_relation.relnamespace
+            JOIN pg_attribute AS owner_attribute
+              ON owner_attribute.attrelid = owner_relation.oid
+             AND owner_attribute.attnum = dependency.refobjsubid
+             AND NOT owner_attribute.attisdropped
+            LEFT JOIN pg_attrdef AS owner_default
+              ON owner_default.adrelid = owner_relation.oid
+             AND owner_default.adnum = owner_attribute.attnum
             WHERE sequence_relation.relkind = 'S'
-              AND sequence_namespace.nspname = 'public'
               AND owner_namespace.nspname = 'public'
               AND owner_relation.relname <> 'alembic_version'
             ORDER BY sequence_relation.relname
         LOOP
+            IF NOT sequence_target.has_canonical_name
+               OR NOT sequence_target.has_canonical_schema
+               OR NOT sequence_target.has_canonical_owner
+               OR NOT sequence_target.has_canonical_persistence
+               OR NOT sequence_target.has_canonical_acl
+               OR NOT sequence_target.has_canonical_reloptions
+               OR NOT sequence_target.has_no_comment
+               OR NOT sequence_target.has_no_security_label
+               OR NOT sequence_target.has_canonical_type
+               OR sequence_target.start_value <> 1
+               OR sequence_target.increment_value <> 1
+               OR sequence_target.minimum_value <> 1
+               OR sequence_target.maximum_value <> (CASE sequence_target.sequence_type_oid
+                   WHEN 'smallint'::regtype THEN 32767
+                   WHEN 'integer'::regtype THEN 2147483647
+                   WHEN 'bigint'::regtype THEN 9223372036854775807
+                   ELSE -1
+               END)
+               OR sequence_target.cache_value <> 1
+               OR sequence_target.cycles
+               OR (
+                   sequence_target.deptype = 'i'
+                   AND sequence_target.attidentity NOT IN ('a', 'd')
+               )
+               OR (
+                   sequence_target.deptype = 'a'
+                   AND (
+                       sequence_target.attidentity <> ''
+                       OR sequence_target.owner_default_expression IS DISTINCT FROM
+                          format(
+                              'nextval(%L::regclass)',
+                              sequence_target.sequence_regclass_text
+                          )
+                   )
+               )
+            THEN
+                RAISE EXCEPTION USING MESSAGE = format(
+                    'k-fin 0028 restore blocked: sequence %I has a customized '
+                    'persistent definition while the preservation snapshot was active',
+                    sequence_target.sequence_name
+                );
+            END IF;
+
             EXECUTE format(
                 'SELECT last_value, is_called FROM %I.%I',
                 sequence_target.schema_name,
@@ -564,6 +895,17 @@ COMMENT ON COLUMN public.raw_transactions.content_hash IS
 
 
 def upgrade() -> None:
+    # An explicit category makes ordinary bank/card fees classifiable without
+    # guessing from free text.  Preserve an operator-defined conflicting row;
+    # the downgrade guard will correctly treat it as application state.
+    op.execute(
+        sa.text(
+            "INSERT INTO categories (id, name, type, kind, budgetable) "
+            "VALUES ('gebuehren-zinsen', 'Gebühren & Zinsen', "
+            "'fix'::type_enum, 'expense', true) "
+            "ON CONFLICT DO NOTHING"
+        )
+    )
     op.add_column(
         "normalized_transactions",
         sa.Column("normalization_version", sa.Integer(), server_default="1", nullable=False),
@@ -709,6 +1051,8 @@ def upgrade() -> None:
     # A prior downgrade keeps a lossless JSONB snapshot outside the public
     # migration graph.  Restore only after the complete 0028 schema exists;
     # any mismatch aborts transactionally and leaves the snapshot available.
+    op.execute(sa.text(_LOCK_RESTORE_TABLES_SQL))
+    op.execute(sa.text(_LOCK_RESTORE_SEQUENCES_SQL))
     op.execute(sa.text(_RESTORE_SQL))
 
 
@@ -718,12 +1062,24 @@ def downgrade() -> None:
     # populated downgrade before creating the preservation schema or removing
     # any public object.  The exact migration-owned bootstrap state remains
     # eligible for the repository's empty HEAD -> base -> HEAD smoke cycle.
+    op.execute(sa.text(_LOCK_DOWNGRADE_TABLES_SQL))
+    op.execute(sa.text(_LOCK_DOWNGRADE_SEQUENCES_SQL))
     op.execute(sa.text(_FAIL_CLOSED_SQL))
 
     # Preserve the eligible bootstrap rows so their generated values also
     # round-trip exactly.  The fail-closed predicate guarantees this snapshot
     # never becomes an implicit backup mechanism for application data.
     op.execute(sa.text(_PRESERVE_SQL))
+
+    op.execute(
+        sa.text(
+            "DELETE FROM categories WHERE id = 'gebuehren-zinsen' "
+            "AND name = 'Gebühren & Zinsen' AND type = 'fix'::type_enum "
+            "AND kind = 'expense' AND budgetable = true "
+            "AND analysis_group IS NULL AND description IS NULL "
+            "AND examples IS NULL AND anti_examples IS NULL AND llm_hints IS NULL"
+        )
+    )
 
     op.drop_table("analytics_correction_runs")
 

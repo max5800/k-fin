@@ -39,9 +39,12 @@ Read-only access to normalized financial data (bank, payment, card, and depot).
 - Never display raw IBANs, full account numbers, or credentials — mask sensitive fields
 - Never call observed rows a complete statement. Monthly analysis is valid only
   when `source_completeness.complete` is true.
-- Never collapse `gross_cash_outflow` or `reconciled_consumption_net` into a bare
+- Never collapse `gross_cash_outflow` or `economic_consumption_net` into a bare
   “total spending” label. Report the named metric, formula version, confidence,
   and unresolved residuals.
+- Keep fixed costs, fees/interest, booked subscriptions, variable/discretionary
+  consumption, investments, transfers/settlements, refunds, and uncertainty as
+  the separate v2 fields returned by the API.
 - Recurring amounts are discrete scenarios. A booked recurrence does not prove
   an active contract or projected renewal.
 - See `references/api.md` for the trustworthy analytics response contract.

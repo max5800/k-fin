@@ -31,8 +31,11 @@ ACCOUNTING_CLASSES = (
     "internal_transfer_settlement_parent",
     "financial_asset_building",
     "debt_principal_financing",
+    "fixed_cost_consumption",
+    "fee_interest_charge",
+    "subscription_consumption",
+    "variable_discretionary_consumption",
     "verified_refund_reimbursement",
-    "reconciled_consumption",
     "unresolved_ambiguous",
     "non_outflow_income",
 )
@@ -169,9 +172,20 @@ def accounting_report(db: Session, *, start: date, end: date) -> dict[str, Any]:
                 unresolved_inflow += amount
         minimum_confidence = min(minimum_confidence, Decimal(tx.accounting_confidence))
 
-    reconciled_net = (
-        totals["reconciled_consumption"]
-        - totals["verified_refund_reimbursement"]
+    economic_consumption_gross = (
+        totals["fixed_cost_consumption"]
+        + totals["fee_interest_charge"]
+        + totals["subscription_consumption"]
+        + totals["variable_discretionary_consumption"]
+    )
+    economic_consumption_net = (
+        economic_consumption_gross - totals["verified_refund_reimbursement"]
+    )
+    outflow_partition_total = (
+        totals["financial_asset_building"]
+        + totals["debt_principal_financing"]
+        + economic_consumption_gross
+        + unresolved_outflow
     )
     confidence = "high"
     if unresolved_outflow or unresolved_inflow:
@@ -191,12 +205,20 @@ def accounting_report(db: Session, *, start: date, end: date) -> dict[str, Any]:
         "distinguishable_debt_principal_financing_outflow": totals[
             "debt_principal_financing"
         ],
+        "fixed_cost_outflow": totals["fixed_cost_consumption"],
+        "fee_interest_outflow": totals["fee_interest_charge"],
+        "subscription_outflow": totals["subscription_consumption"],
+        "variable_discretionary_consumption_outflow": totals[
+            "variable_discretionary_consumption"
+        ],
         "verified_refunds_reimbursements": totals["verified_refund_reimbursement"],
-        "reconciled_consumption_gross": totals["reconciled_consumption"],
-        "reconciled_consumption_net": reconciled_net,
+        "economic_consumption_gross": economic_consumption_gross,
+        "economic_consumption_net": economic_consumption_net,
         "unresolved_ambiguous_outflow_residual": unresolved_outflow,
         "unresolved_ambiguous_inflow_residual": unresolved_inflow,
         "non_outflow_income": totals["non_outflow_income"],
+        "outflow_partition_total": outflow_partition_total,
+        "outflow_partition_difference": gross_cash_outflow - outflow_partition_total,
         "confidence": confidence,
         "minimum_classification_confidence": minimum_confidence,
         "formulas": {
@@ -205,13 +227,18 @@ def accounting_report(db: Session, *, start: date, end: date) -> dict[str, Any]:
                 "internal_transfer_settlement_parent)); linked settlement parents "
                 "are excluded at the consolidated external-counterparty boundary"
             ),
-            "reconciled_consumption_net": (
-                "reconciled_consumption_gross - verified_refunds_reimbursements"
+            "economic_consumption_gross": (
+                "fixed costs + fees/interest + subscriptions + "
+                "variable/discretionary consumption"
+            ),
+            "economic_consumption_net": (
+                "economic_consumption_gross - verified_refunds_reimbursements"
             ),
             "outflow_partition": (
                 "gross_cash_outflow = financial asset + distinguishable debt + "
-                "reconciled consumption gross + unresolved outflow; internal/settlement "
-                "parent outflow is reported separately and is not an additive term"
+                "fixed costs + fees/interest + subscriptions + variable/discretionary "
+                "consumption + unresolved outflow; internal/settlement parent outflow "
+                "is reported separately and is not an additive term"
             ),
         },
     }

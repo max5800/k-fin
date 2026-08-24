@@ -275,7 +275,7 @@ class NormalizedTransaction(Base):
     refund_verification_status: Mapped[str] = mapped_column(
         String(32), nullable=False, default="unverified", server_default="unverified"
     )
-    # Versioned, mutually-exclusive accounting interpretation.  Values are
+    # Versioned, mutually-exclusive accounting partition.  Values are
     # strings deliberately: adding a classification must not require an unsafe
     # PostgreSQL enum rewrite.  ``unresolved_ambiguous`` is the fail-closed
     # default for legacy and insufficiently evidenced rows.

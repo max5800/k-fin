@@ -11,6 +11,7 @@ either from an explicit test-only admin URL or from testcontainers.
 from __future__ import annotations
 
 import contextlib
+import concurrent.futures
 import io
 import os
 import sys
@@ -116,7 +117,7 @@ def _alembic_config():
 
 
 def _database_state(engine) -> dict[str, dict[str, object]]:
-    """Snapshot every public table and owned sequence, including Alembic."""
+    """Snapshot every public table and complete sequence definition/state."""
     tables: dict[str, object] = {}
     sequences: dict[str, object] = {}
     with engine.connect() as conn:
@@ -146,11 +147,48 @@ def _database_state(engine) -> dict[str, dict[str, object]]:
         ).scalars()
         for sequence_name in sequence_names:
             quoted_sequence = conn.dialect.identifier_preparer.quote(sequence_name)
-            sequences[sequence_name] = tuple(
+            state = tuple(
+                conn.execute(text(f"SELECT last_value, is_called FROM {quoted_sequence}")).one()
+            )
+            definition = tuple(
                 conn.execute(
-                    text(f"SELECT last_value, is_called FROM {quoted_sequence}")
+                    text(
+                        "SELECT sequence_metadata.seqtypid::regtype::text, "
+                        "sequence_metadata.seqstart, sequence_metadata.seqincrement, "
+                        "sequence_metadata.seqmin, sequence_metadata.seqmax, "
+                        "sequence_metadata.seqcache, sequence_metadata.seqcycle, "
+                        "sequence_relation.relpersistence, "
+                        "sequence_relation.relowner::regrole::text, "
+                        "sequence_relation.relacl::text, sequence_relation.reloptions::text, "
+                        "obj_description(sequence_relation.oid, 'pg_class'), "
+                        "owner_namespace.nspname, owner_relation.relname, "
+                        "owner_attribute.attname, dependency.deptype, "
+                        "owner_attribute.attidentity, "
+                        "pg_get_expr(owner_default.adbin, owner_default.adrelid) "
+                        "FROM pg_class AS sequence_relation "
+                        "JOIN pg_sequence AS sequence_metadata "
+                        "  ON sequence_metadata.seqrelid = sequence_relation.oid "
+                        "LEFT JOIN pg_depend AS dependency "
+                        "  ON dependency.classid = 'pg_class'::regclass "
+                        " AND dependency.objid = sequence_relation.oid "
+                        " AND dependency.deptype IN ('a', 'i') "
+                        "LEFT JOIN pg_class AS owner_relation "
+                        "  ON owner_relation.oid = dependency.refobjid "
+                        "LEFT JOIN pg_namespace AS owner_namespace "
+                        "  ON owner_namespace.oid = owner_relation.relnamespace "
+                        "LEFT JOIN pg_attribute AS owner_attribute "
+                        "  ON owner_attribute.attrelid = owner_relation.oid "
+                        " AND owner_attribute.attnum = dependency.refobjsubid "
+                        "LEFT JOIN pg_attrdef AS owner_default "
+                        "  ON owner_default.adrelid = owner_relation.oid "
+                        " AND owner_default.adnum = owner_attribute.attnum "
+                        "WHERE sequence_relation.oid = "
+                        "to_regclass(:qualified_name)"
+                    ),
+                    {"qualified_name": f"public.{sequence_name}"},
                 ).one()
             )
+            sequences[sequence_name] = {"state": state, "definition": definition}
     return {"tables": tables, "sequences": sequences}
 
 
@@ -386,6 +424,196 @@ def test_0028_consumed_serial_with_empty_tables_fails_closed(fresh_db_url):
         engine.dispose()
 
 
+def test_0028_every_persistent_sequence_customization_fails_closed(fresh_db_url):
+    """Definition, ownership, metadata, and ACL changes are all application state."""
+    from alembic import command
+
+    cfg = _alembic_config()
+    with _force_db_url(fresh_db_url):
+        command.upgrade(cfg, "head")
+
+    engine = create_engine(fresh_db_url)
+    customizations = (
+        ("ALTER SEQUENCE rules_id_seq INCREMENT BY 2", "ALTER SEQUENCE rules_id_seq INCREMENT BY 1"),
+        ("ALTER SEQUENCE rules_id_seq MINVALUE 0", "ALTER SEQUENCE rules_id_seq NO MINVALUE"),
+        ("ALTER SEQUENCE rules_id_seq MAXVALUE 100000", "ALTER SEQUENCE rules_id_seq NO MAXVALUE"),
+        ("ALTER SEQUENCE rules_id_seq START WITH 2", "ALTER SEQUENCE rules_id_seq START WITH 1"),
+        ("ALTER SEQUENCE rules_id_seq CACHE 8", "ALTER SEQUENCE rules_id_seq CACHE 1"),
+        ("ALTER SEQUENCE rules_id_seq CYCLE", "ALTER SEQUENCE rules_id_seq NO CYCLE"),
+        ("ALTER SEQUENCE rules_id_seq AS bigint", "ALTER SEQUENCE rules_id_seq AS integer"),
+        ("ALTER SEQUENCE rules_id_seq SET UNLOGGED", "ALTER SEQUENCE rules_id_seq SET LOGGED"),
+        ("ALTER SEQUENCE rules_id_seq OWNED BY NONE", "ALTER SEQUENCE rules_id_seq OWNED BY rules.id"),
+        ("COMMENT ON SEQUENCE rules_id_seq IS 'Synthetic sequence note'", "COMMENT ON SEQUENCE rules_id_seq IS NULL"),
+        ("GRANT SELECT ON SEQUENCE rules_id_seq TO PUBLIC", None),
+    )
+    try:
+        canonical = _database_state(engine)["sequences"]["rules_id_seq"]
+        for customize_sql, restore_sql in customizations:
+            with engine.begin() as conn:
+                conn.execute(text(customize_sql))
+            expected = _database_state(engine)
+
+            with _force_db_url(fresh_db_url), pytest.raises(
+                DBAPIError, match="sequence .* (customized persistent definition|owned columns)"
+            ):
+                command.downgrade(cfg, "base")
+
+            assert _database_state(engine) == expected
+            if restore_sql is not None:
+                with engine.begin() as conn:
+                    conn.execute(text(restore_sql))
+                assert (
+                    _database_state(engine)["sequences"]["rules_id_seq"] == canonical
+                ), customize_sql
+    finally:
+        engine.dispose()
+
+
+def test_0028_concurrent_sequence_definition_and_state_changes_fail_closed(
+    fresh_db_url,
+):
+    """A downgrade waits for sequence-only writers, then sees and preserves them."""
+    from alembic import command
+
+    cfg = _alembic_config()
+    with _force_db_url(fresh_db_url):
+        command.upgrade(cfg, "head")
+
+    engine = create_engine(fresh_db_url)
+
+    def attempt_downgrade() -> None:
+        command.downgrade(cfg, "base")
+
+    try:
+        for mutation_sql, failure in (
+            (
+                "ALTER SEQUENCE rules_id_seq CACHE 7",
+                "customized persistent definition",
+            ),
+            ("SELECT nextval('rules_id_seq')", "contains application state"),
+        ):
+            writer = engine.connect()
+            transaction = writer.begin()
+            writer.execute(text(mutation_sql))
+            writer_pid = writer.execute(text("SELECT pg_backend_pid()")).scalar_one()
+            try:
+                with _force_db_url(fresh_db_url), concurrent.futures.ThreadPoolExecutor(
+                    max_workers=1
+                ) as executor:
+                    future = executor.submit(attempt_downgrade)
+                    saw_lock_wait = False
+                    try:
+                        for _ in range(50):
+                            with engine.connect() as observer:
+                                saw_lock_wait = bool(
+                                    observer.execute(
+                                        text(
+                                            "SELECT count(*) FROM pg_stat_activity "
+                                            "WHERE datname = current_database() "
+                                            "AND pid NOT IN (pg_backend_pid(), :writer_pid) "
+                                            "AND wait_event_type = 'Lock'"
+                                        ),
+                                        {"writer_pid": writer_pid},
+                                    ).scalar_one()
+                                )
+                            if saw_lock_wait:
+                                break
+                            time.sleep(0.1)
+                    finally:
+                        # Always release the writer before the executor waits
+                        # for its worker, including an assertion/error path.
+                        transaction.commit()
+                    assert saw_lock_wait, (
+                        "downgrade never waited on the sequence-only writer"
+                    )
+                    with pytest.raises(DBAPIError, match=failure):
+                        future.result(timeout=15)
+            finally:
+                if transaction.is_active:
+                    transaction.rollback()
+                writer.close()
+
+            expected = _database_state(engine)
+            assert expected["tables"]["alembic_version"]
+            sequence = expected["sequences"]["rules_id_seq"]
+            if "CACHE" in mutation_sql:
+                assert sequence["definition"][5] == 7
+                assert sequence["state"] == (1, False)
+            else:
+                assert sequence["state"] == (1, True)
+            with engine.connect() as conn:
+                assert conn.execute(
+                    text("SELECT version_num FROM alembic_version")
+                ).scalar_one() == "0028_trustworthy_analytics"
+                assert conn.execute(
+                    text("SELECT to_regnamespace('k_fin_0028_preservation')")
+                ).scalar_one() is None
+
+            with engine.begin() as conn:
+                conn.execute(text("ALTER SEQUENCE rules_id_seq CACHE 1 RESTART WITH 1"))
+    finally:
+        engine.dispose()
+
+
+def test_0028_sequence_schema_move_fails_closed_and_is_preserved(fresh_db_url):
+    """An owned application sequence cannot evade discovery outside public."""
+    from alembic import command
+
+    cfg = _alembic_config()
+    with _force_db_url(fresh_db_url):
+        command.upgrade(cfg, "head")
+
+    engine = create_engine(fresh_db_url)
+    try:
+        with engine.begin() as conn:
+            conn.execute(text("CREATE SCHEMA sequence_customization"))
+            conn.execute(text("ALTER SEQUENCE rules_id_seq OWNED BY NONE"))
+            conn.execute(
+                text(
+                    "ALTER SEQUENCE rules_id_seq "
+                    "SET SCHEMA sequence_customization"
+                )
+            )
+        with engine.connect() as conn:
+            expected_state = tuple(
+                conn.execute(
+                    text(
+                        "SELECT last_value, is_called "
+                        "FROM sequence_customization.rules_id_seq"
+                    )
+                ).one()
+            )
+
+        with _force_db_url(fresh_db_url), pytest.raises(
+            DBAPIError, match="sequence lock blocked: sequence rules_id_seq has 0 owned columns"
+        ):
+            command.downgrade(cfg, "base")
+
+        with engine.connect() as conn:
+            assert conn.execute(
+                text("SELECT version_num FROM alembic_version")
+            ).scalar_one() == "0028_trustworthy_analytics"
+            assert conn.execute(
+                text("SELECT to_regclass('public.rules_id_seq')")
+            ).scalar_one() is None
+            assert conn.execute(
+                text("SELECT to_regclass('sequence_customization.rules_id_seq')")
+            ).scalar_one() == "sequence_customization.rules_id_seq"
+            assert tuple(
+                conn.execute(
+                    text(
+                        "SELECT last_value, is_called "
+                        "FROM sequence_customization.rules_id_seq"
+                    )
+                ).one()
+            ) == expected_state
+            assert conn.execute(
+                text("SELECT to_regnamespace('k_fin_0028_preservation')")
+            ).scalar_one() is None
+    finally:
+        engine.dispose()
+
+
 def test_0028_empty_head_base_head_smoke_is_exact(fresh_db_url):
     """Migration-owned bootstrap rows and pristine sequences may round-trip."""
     from alembic import command
@@ -461,6 +689,40 @@ def test_0028_restore_rejects_intervening_older_schema_write(fresh_db_url):
         engine.dispose()
 
 
+def test_0028_restore_rejects_and_preserves_intervening_sequence_definition(
+    fresh_db_url,
+):
+    """An older-revision sequence-only change cannot be overwritten on restore."""
+    from alembic import command
+
+    cfg = _alembic_config()
+    with _force_db_url(fresh_db_url):
+        command.upgrade(cfg, "head")
+        command.downgrade(cfg, "0027_mail_evidence_context")
+
+    engine = create_engine(fresh_db_url)
+    try:
+        with engine.begin() as conn:
+            conn.execute(text("ALTER SEQUENCE rules_id_seq CACHE 9"))
+        expected = _database_state(engine)
+
+        with _force_db_url(fresh_db_url), pytest.raises(
+            DBAPIError, match="restore blocked: sequence rules_id_seq has a customized"
+        ):
+            command.upgrade(cfg, "head")
+
+        assert _database_state(engine) == expected
+        with engine.connect() as conn:
+            assert conn.execute(
+                text("SELECT version_num FROM alembic_version")
+            ).scalar_one() == "0027_mail_evidence_context"
+            assert conn.execute(
+                text("SELECT to_regclass('k_fin_0028_preservation.snapshot_rows')")
+            ).scalar_one() == "k_fin_0028_preservation.snapshot_rows"
+    finally:
+        engine.dispose()
+
+
 def test_0028_offline_sql_preserves_before_reverse_and_restores_exactly():
     """Offline artifacts guard first, then preserve eligible bootstrap state."""
     from alembic import command
@@ -482,6 +744,12 @@ def test_0028_offline_sql_preserves_before_reverse_and_restores_exactly():
     assert "LOCK TABLE public.%I IN ACCESS EXCLUSIVE MODE" in downgrade_sql
     assert "FROM pg_tables" in downgrade_sql
     assert "JOIN pg_sequence AS sequence_metadata" in downgrade_sql
+    assert "sequence_metadata.seqincrement" in downgrade_sql
+    assert "sequence_metadata.seqmin" in downgrade_sql
+    assert "sequence_metadata.seqmax" in downgrade_sql
+    assert "sequence_metadata.seqcache" in downgrade_sql
+    assert "sequence_metadata.seqcycle" in downgrade_sql
+    assert "ALTER SEQUENCE %I.%I OWNED BY" in downgrade_sql
     assert "serial sequence %I contains application state" in downgrade_sql
     assert "to_jsonb(source_row)" in downgrade_sql
     assert "preserved %s of %s rows" in downgrade_sql
