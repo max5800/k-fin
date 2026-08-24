@@ -65,6 +65,7 @@ def _seed_tx(
     recipient: str | None = None,
     sender: str | None = None,
     category_id: str | None = None,
+    active: bool = True,
 ) -> None:
     s.add(
         RawTransaction(
@@ -86,6 +87,7 @@ def _seed_tx(
             recipient=recipient,
             description=description,
             category_id=category_id,
+            is_active=active,
             is_recurring=False,
             is_outlier=False,
             internal_transfer=False,
@@ -280,6 +282,14 @@ class TestRulesApplyAll:
             )
             # No match
             _seed_tx(s, tx_id="d", description="Aldi", recipient="ALDI")
+            # Superseded audit row — must not be scanned or changed.
+            _seed_tx(
+                s,
+                tx_id="e",
+                description="REWE stale",
+                recipient="REWE",
+                active=False,
+            )
             s.commit()
 
         resp = api_client.post(
@@ -297,9 +307,13 @@ class TestRulesApplyAll:
             tx_a = s.get(NormalizedTransaction, "a".ljust(64, "0"))
             tx_c = s.get(NormalizedTransaction, "c".ljust(64, "0"))
             tx_d = s.get(NormalizedTransaction, "d".ljust(64, "0"))
+            tx_e = s.get(NormalizedTransaction, "e".ljust(64, "0"))
             assert tx_a.category_id == "groceries"
+            assert tx_a.accounting_class == "reconciled_consumption"
+            assert tx_a.accounting_version == 2
             assert tx_c.category_id == "rent"  # untouched
             assert tx_d.category_id is None
+            assert tx_e.category_id is None
 
     def test_apply_all_priority_wins(self, api_client, categories_seed, db_engine):
         with Session(db_engine) as s:

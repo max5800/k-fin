@@ -1,43 +1,33 @@
 # API Response Examples
 
-## GET /exports/latest
+## Finance API authentication
 
-```json
-{
-  "latest": {
-    "umsaetze": {
-      "label": "Konto-Umsaetze",
-      "filename": "umsaetze_2026-03-16.csv",
-      "size_bytes": 12400,
-      "modified": 1773600000.0
-    },
-    "depot_positionen": {
-      "label": "Depot-Positionen",
-      "filename": "depot_positionen_2026-03-16.csv",
-      "size_bytes": 3200,
-      "modified": 1773600000.0
-    },
-    "finanzuebersicht": {
-      "label": "Finanzuebersicht",
-      "filename": "finanzuebersicht_2026-03-16.csv",
-      "size_bytes": 800,
-      "modified": 1773600000.0
-    }
-  }
-}
+```http
+GET /api/v1/analytics/v2/monthly-review?year=2026&month=1 HTTP/1.1
+Host: localhost:8000
+Authorization: Bearer <FINANCE_API_TOKEN>
 ```
 
-## CSV Format
+## Trustworthy analytics v2
 
-Semicolon-delimited, UTF-8-sig encoding, German locale:
+`GET /api/v1/analytics/v2/monthly-review?year=2026&month=1` returns
+`state=missing_source_periods` until the exact source period has explicit
+statement verification. Required sources are declared by server configuration;
+callers cannot omit one. When `state=analysis_ready`, `facts` contains the v2
+accounting partition and formulas. Always preserve these response labels:
 
-```
-Buchungstag;Valutadatum;Vorgang;Buchungstext;Umsatz in EUR
-16.03.2026;16.03.2026;Lastschrift;REWE Stegaurach;-45,30
-15.03.2026;15.03.2026;Gutschrift;Arbeitgeber GmbH;3.200,00
-```
+- `gross_cash_outflow`
+- `financial_asset_building_outflow`
+- `distinguishable_debt_principal_financing_outflow`
+- `reconciled_consumption_net`
+- `unresolved_ambiguous_outflow_residual`
+- `verified_refunds_reimbursements`
 
-**Parsing numbers:** Remove `.` thousand separator, replace `,` decimal with `.`
-Example: `3.200,00` -> `3200.00`
+The API intentionally has no field called `total_spending`.
 
-**Parsing dates:** Format `DD.MM.YYYY`
+## Category deletion
+
+`DELETE /api/v1/categories/{category_id}` returns `204` only for an unreferenced
+category. It returns `409` when any active or inactive normalized transaction,
+or a categorization rule, references the category. Reassign active transactions
+and rules explicitly; inactive normalization audit history is never rewritten.

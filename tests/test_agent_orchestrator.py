@@ -71,22 +71,21 @@ def agent_seed(db_engine):
                 internal_transfer=False,
             )
         )
-        s.add(
-            NormalizedTransaction(
-                id="txn-cat-2",
-                raw_content_hash="b" * 64,
-                booking_date=date(2026, 4, 1),
-                valuation_date=date(2026, 4, 1),
-                amount=Decimal("-850.00"),
-                sender="John Doe",
-                recipient="Vermieter GmbH",
-                description="Miete April",
-                category_id="rent",
-                is_recurring=True,
-                is_outlier=False,
-                internal_transfer=False,
-            )
+        rent_tx = NormalizedTransaction(
+            id="txn-cat-2",
+            raw_content_hash="b" * 64,
+            booking_date=date(2026, 4, 1),
+            valuation_date=date(2026, 4, 1),
+            amount=Decimal("-850.00"),
+            sender="John Doe",
+            recipient="Vermieter GmbH",
+            description="Miete April",
+            category_id="rent",
+            is_recurring=True,
+            is_outlier=False,
+            internal_transfer=False,
         )
+        s.add(rent_tx)
 
         # Uncategorized transaction (target for categorization agent)
         s.add(
@@ -143,16 +142,17 @@ def agent_seed(db_engine):
         )
 
         # Recurring pattern
-        s.add(
-            RecurringPattern(
-                recipient="Vermieter GmbH",
-                avg_amount=Decimal("-850.00"),
-                amount_stddev=Decimal("0.00"),
-                first_seen_month=date(2025, 1, 1),
-                last_seen_month=date(2026, 4, 1),
-                occurrence_count=16,
-            )
+        recurring_pattern = RecurringPattern(
+            recipient="Vermieter GmbH",
+            avg_amount=Decimal("-850.00"),
+            amount_stddev=Decimal("0.00"),
+            first_seen_month=date(2025, 1, 1),
+            last_seen_month=date(2026, 4, 1),
+            occurrence_count=16,
         )
+        s.add(recurring_pattern)
+        s.flush()
+        rent_tx.recurring_pattern_id = recurring_pattern.id
 
         # A previous report (for memory testing)
         s.add(

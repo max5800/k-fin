@@ -12,6 +12,7 @@ the German `Beschreibung` label the parser really emits.
 
 from __future__ import annotations
 
+import itertools
 import pandas as pd
 from datetime import date
 from decimal import Decimal
@@ -139,7 +140,7 @@ def test_unrelated_comdirect_debit_is_untouched():
 
 
 def test_each_side_consumed_once():
-    """Two equal deposits + one matching posting → only one pair flagged."""
+    """Two equal deposits + one matching posting remain ambiguous."""
     df = _frame(
         [
             _row(
@@ -167,9 +168,7 @@ def test_each_side_consumed_once():
     )
     out = _flag(df)
     flags = dict(zip(out["id"], out["internal_transfer"]))
-    # The single Comdirect posting pairs with exactly one PayPal deposit.
-    assert flags["cd-1"] is True or flags["cd-1"]
-    assert sum(bool(v) for v in flags.values()) == 2
+    assert not any(bool(value) for value in flags.values())
 
 
 def test_empty_frame_is_noop():
@@ -234,6 +233,48 @@ def test_santander_sum_includes_refunds():
     out, links = _reconcile(df)
     assert dict(zip(out["id"], out["internal_transfer"]))["cd-1"]
     assert {link["child_transaction_id"] for link in links} == {"s-1", "s-2", "s-3"}
+
+
+def test_santander_global_matching_is_permutation_invariant():
+    rows = [
+        _santander("jan-cycle", -50.00, "2026-01-10"),
+        _santander("feb-cycle", -50.00, "2026-02-10"),
+        _row(id="jan-posting", source=DataSource.COMDIRECT, amount=-50.00,
+             booking_date="2026-01-15", recipient="Santander Kartenabrechnung"),
+        _row(id="feb-posting", source=DataSource.COMDIRECT, amount=-50.00,
+             booking_date="2026-03-01", recipient="Santander Kartenabrechnung"),
+    ]
+    expected = {("jan-posting", "jan-cycle"), ("feb-posting", "feb-cycle")}
+    for permutation in itertools.permutations(rows):
+        _out, links = _reconcile_rows(list(permutation))
+        assert {
+            (link["parent_transaction_id"], link["child_transaction_id"])
+            for link in links
+        } == expected
+
+
+def test_santander_competing_parents_and_distant_posting_remain_unlinked():
+    ambiguous_rows = [
+        _santander("cycle", -50.00, "2026-01-10"),
+        _row(id="posting-a", source=DataSource.COMDIRECT, amount=-50.00,
+             booking_date="2026-01-20", recipient="Santander Kartenabrechnung"),
+        _row(id="posting-b", source=DataSource.COMDIRECT, amount=-50.00,
+             booking_date="2026-01-20", recipient="Santander Kartenabrechnung"),
+    ]
+    for permutation in itertools.permutations(ambiguous_rows):
+        out, links = _reconcile_rows(list(permutation))
+        assert not out["internal_transfer"].any()
+        assert links == []
+
+    out, links = _reconcile_rows(
+        [
+            _santander("old-cycle", -50.00, "2026-01-10"),
+            _row(id="distant-posting", source=DataSource.COMDIRECT, amount=-50.00,
+                 booking_date="2026-04-01", recipient="Santander Kartenabrechnung"),
+        ]
+    )
+    assert not out["internal_transfer"].any()
+    assert links == []
 
 
 def test_teilzahlung_does_not_match():
@@ -334,6 +375,41 @@ def test_paypal_aggregate_exact_net_set_links_multiple_children():
     assert {link["child_transaction_id"] for link in links} == {"pp-1", "pp-2", "pp-3"}
 
 
+def test_paypal_global_matching_is_permutation_invariant():
+    rows = [
+        _row(id="pp-a", source=DataSource.PAYPAL, amount=-10.00,
+             booking_date="2026-05-01", recipient="Merchant A"),
+        _row(id="pp-b", source=DataSource.PAYPAL, amount=-10.00,
+             booking_date="2026-05-04", recipient="Merchant B"),
+        _row(id="cd-a", source=DataSource.COMDIRECT, amount=-10.00,
+             booking_date="2026-05-01", recipient="PAYPAL EUROPE"),
+        _row(id="cd-b", source=DataSource.COMDIRECT, amount=-10.00,
+             booking_date="2026-05-03", recipient="PAYPAL EUROPE"),
+    ]
+    expected = {("cd-a", "pp-a"), ("cd-b", "pp-b")}
+    for permutation in itertools.permutations(rows):
+        _out, links = _reconcile_rows(list(permutation))
+        assert {
+            (link["parent_transaction_id"], link["child_transaction_id"])
+            for link in links
+        } == expected
+
+
+def test_paypal_indistinguishable_competing_parents_remain_unlinked():
+    rows = [
+        _row(id="pp-only", source=DataSource.PAYPAL, amount=-10.00,
+             booking_date="2026-05-01", recipient="Merchant"),
+        _row(id="cd-a", source=DataSource.COMDIRECT, amount=-10.00,
+             booking_date="2026-05-02", recipient="PAYPAL EUROPE"),
+        _row(id="cd-b", source=DataSource.COMDIRECT, amount=-10.00,
+             booking_date="2026-05-02", recipient="PAYPAL EUROPE"),
+    ]
+    for permutation in itertools.permutations(rows):
+        out, links = _reconcile_rows(list(permutation))
+        assert not out["internal_transfer"].any()
+        assert links == []
+
+
 def test_paypal_residual_amount_does_not_link():
     out, links = _reconcile_rows(
         [
@@ -407,8 +483,10 @@ def test_topup_and_purchase_do_not_interfere():
     assert by_id["pp-dep"]["internal_transfer"] and by_id["cd-dep"]["internal_transfer"]
     assert not by_id["pp-buy"]["internal_transfer"]
     assert by_id["cd-buy"]["internal_transfer"]
-    assert {link["parent_transaction_id"] for link in links} == {"cd-buy"}
-    assert {link["child_transaction_id"] for link in links} == {"pp-buy"}
+    # Both movements now have explicit audit links: the top-up is a transfer
+    # chain and the purchase aggregate is a settlement parent.
+    assert {link["parent_transaction_id"] for link in links} == {"cd-dep", "cd-buy"}
+    assert {link["child_transaction_id"] for link in links} == {"pp-dep", "pp-buy"}
 
 
 def _seed_normalized(session: Session, tx_id: str, amount: str = "-1.00") -> None:
@@ -434,7 +512,7 @@ def _seed_normalized(session: Session, tx_id: str, amount: str = "-1.00") -> Non
     )
 
 
-def test_replace_transaction_links_cleans_stale_auto_links(db_engine):
+def test_replace_transaction_links_retains_inactive_stale_auto_links(db_engine):
     with Session(db_engine) as session:
         for tx_id in ("parent", "old-child", "new-child"):
             _seed_normalized(session, tx_id)
@@ -471,12 +549,40 @@ def test_replace_transaction_links_cleans_stale_auto_links(db_engine):
 
     with Session(db_engine) as session:
         links = {
-            link.id: (link.parent_transaction_id, link.child_transaction_id, link.link_type)
+            link.id: (
+                link.parent_transaction_id,
+                link.child_transaction_id,
+                link.link_type,
+                link.is_active,
+                link.status,
+                link.version,
+            )
             for link in session.query(TransactionLink).all()
         }
-    assert "stale-auto" not in links
-    assert links["fresh-auto"] == ("parent", "new-child", "paypal_aggregate")
-    assert links["manual-link"] == ("parent", "old-child", "manual")
+    assert links["stale-auto"] == (
+        "parent",
+        "old-child",
+        "paypal_aggregate",
+        False,
+        "superseded",
+        2,
+    )
+    assert links["fresh-auto"] == (
+        "parent",
+        "new-child",
+        "paypal_aggregate",
+        True,
+        "active",
+        1,
+    )
+    assert links["manual-link"] == (
+        "parent",
+        "old-child",
+        "manual",
+        True,
+        "active",
+        1,
+    )
 
 
 # ── _flag_internal_transfers — IBAN-less rows are never own-account legs ─

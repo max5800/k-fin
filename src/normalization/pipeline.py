@@ -10,15 +10,16 @@ Only raw rows with `superseded_by IS NULL` flow into normalized_transactions.
 
 from __future__ import annotations
 
+import calendar
 import logging
 import re
 import uuid
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from decimal import Decimal
 from typing import Any, Iterable, Sequence
 
 import pandas as pd
-from sqlalchemy import create_engine, delete, func, select, update
+from sqlalchemy import case, create_engine, func, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
@@ -30,6 +31,7 @@ from src.core.db.models import (
     RawTransaction,
     RecurringPattern,
     Rule,
+    SourceStatementPeriod,
     SyncRun,
     SyncStage,
     SyncStatus,
@@ -45,11 +47,27 @@ INTERNAL_TRANSFER_DAY_WINDOW = 2
 # Tolerance on the Santander credit-card billing-period boundary when
 # matching the Comdirect settlement lump posting (M16-P2c).
 SANTANDER_SETTLEMENT_DAY_WINDOW = 3
+# A card settlement must arrive reasonably close to the final transaction in
+# its billing cycle.  Forty-five days covers a month-end statement followed by
+# a normal collection window while refusing equal-value postings from a much
+# later cycle.
+SANTANDER_SETTLEMENT_MAX_LAG_DAYS = 45
 MAX_PAYPAL_AGGREGATE_CANDIDATES = 18
+MAX_PAYPAL_EXACT_SUBSETS = 256
+MAX_GLOBAL_MATCHING_STATES = 100_000
 
 PAYPAL_AGGREGATE_LINK = "paypal_aggregate"
 SANTANDER_SETTLEMENT_LINK = "santander_settlement"
-AUTO_TRANSACTION_LINK_TYPES = (PAYPAL_AGGREGATE_LINK, SANTANDER_SETTLEMENT_LINK)
+PAYPAL_TOPUP_LINK = "paypal_topup"
+AUTO_TRANSACTION_LINK_TYPES = (
+    PAYPAL_TOPUP_LINK,
+    PAYPAL_AGGREGATE_LINK,
+    SANTANDER_SETTLEMENT_LINK,
+)
+
+ACCOUNTING_VERSION = 2
+ASSET_CATEGORY_IDS = {"etf-sparplan", "wertpapierkauf"}
+DEBT_CATEGORY_IDS = {"kredit-tilgung"}
 
 # Source-aware canonicalisation. `_build_dataframe` re-projects every active
 # raw payload onto the canonical shape; a PayPal or Santander payload is
@@ -181,7 +199,13 @@ class NormalizationPipeline:
     # Raw ingest with content-hash versioning
     # ------------------------------------------------------------------
 
-    def load_raw_transactions(self, rows: list[dict[str, Any]]) -> int:
+    def load_raw_transactions(
+        self,
+        rows: list[dict[str, Any]],
+        *,
+        session: Session | None = None,
+        commit: bool = True,
+    ) -> int:
         """Insert raw rows with versioning.
 
         Each row dict must provide: `content_hash`, `raw_data`, and
@@ -189,55 +213,62 @@ class NormalizationPipeline:
         number of newly-inserted rows. Rows without an explicit `source`
         default to `DataSource.COMDIRECT` for backward compatibility.
         """
-        inserted = 0
-        with Session(self.engine) as session:
-            for item in rows:
-                content_hash = item["content_hash"]
-                external_id = item.get("external_id")
-                source = item.get("source") or DataSource.COMDIRECT
-
-                existing = session.get(RawTransaction, content_hash)
-                if existing is not None:
-                    continue
-
-                version = 1
-                prev_hash: str | None = None
-                if external_id:
-                    active = (
-                        session.execute(
-                            select(RawTransaction)
-                            .where(RawTransaction.source == source)
-                            .where(RawTransaction.external_id == external_id)
-                            .where(RawTransaction.superseded_by.is_(None))
-                        )
-                        .scalars()
-                        .all()
-                    )
-                    if active:
-                        prev = max(active, key=lambda r: r.version)
-                        version = prev.version + 1
-                        prev_hash = prev.content_hash
-
-                session.add(
-                    RawTransaction(
-                        content_hash=content_hash,
-                        source=source,
-                        external_id=external_id,
-                        raw_data=item["raw_data"],
-                        version=version,
-                        batch_id=item.get("batch_id"),
-                    )
+        if session is None:
+            with Session(self.engine) as owned_session:
+                return self.load_raw_transactions(
+                    rows, session=owned_session, commit=True
                 )
-                if prev_hash is not None:
-                    # FK superseded_by → content_hash requires the new row to
-                    # exist before the old row points at it.
-                    session.flush()
+
+        inserted = 0
+        for item in rows:
+            content_hash = item["content_hash"]
+            external_id = item.get("external_id")
+            source = item.get("source") or DataSource.COMDIRECT
+
+            existing = session.get(RawTransaction, content_hash)
+            if existing is not None:
+                continue
+
+            version = 1
+            prev_hash: str | None = None
+            if external_id:
+                active = (
                     session.execute(
-                        update(RawTransaction)
-                        .where(RawTransaction.content_hash == prev_hash)
-                        .values(superseded_by=content_hash)
+                        select(RawTransaction)
+                        .where(RawTransaction.source == source)
+                        .where(RawTransaction.external_id == external_id)
+                        .where(RawTransaction.superseded_by.is_(None))
+                        .with_for_update()
                     )
-                inserted += 1
+                    .scalars()
+                    .all()
+                )
+                if active:
+                    prev = max(active, key=lambda r: r.version)
+                    version = prev.version + 1
+                    prev_hash = prev.content_hash
+
+            session.add(
+                RawTransaction(
+                    content_hash=content_hash,
+                    source=source,
+                    external_id=external_id,
+                    raw_data=item["raw_data"],
+                    version=version,
+                    batch_id=item.get("batch_id"),
+                )
+            )
+            if prev_hash is not None:
+                # FK superseded_by → content_hash requires the new row to
+                # exist before the old row points at it.
+                session.flush()
+                session.execute(
+                    update(RawTransaction)
+                    .where(RawTransaction.content_hash == prev_hash)
+                    .values(superseded_by=content_hash)
+                )
+            inserted += 1
+        if commit:
             session.commit()
         return inserted
 
@@ -245,37 +276,61 @@ class NormalizationPipeline:
     # Normalization
     # ------------------------------------------------------------------
 
-    def process_and_normalize(self) -> tuple[pd.DataFrame, str]:
-        run_id = str(uuid.uuid4())
-        with Session(self.engine) as session:
-            session.add(
-                SyncRun(
-                    id=run_id, source=SyncStage.NORMALIZE, status=SyncStatus.RUNNING
+    def process_and_normalize(
+        self,
+        *,
+        session: Session | None = None,
+        commit: bool = True,
+    ) -> tuple[pd.DataFrame, str]:
+        if session is None:
+            with Session(self.engine) as owned_session:
+                return self.process_and_normalize(
+                    session=owned_session, commit=True
                 )
+
+        run_id = str(uuid.uuid4())
+        session.add(
+            SyncRun(
+                id=run_id, source=SyncStage.NORMALIZE, status=SyncStatus.RUNNING
             )
+        )
+        if commit:
             session.commit()
+        else:
+            session.flush()
 
-            try:
-                df = self._build_dataframe(session)
-                if df.empty:
-                    self._replace_transaction_links(session, [])
-                    self._finish_run(session, run_id, rows=0)
-                    return df, run_id
-
-                df = self._apply_rules(df, session)
-                df = self._flag_internal_transfers(df, self.own_ibans)
-                df, transaction_links = self._reconcile_cross_source_transfers(df)
-                df, patterns = self._flag_recurring(df)
-                df = self._flag_outliers(df)
-
-                self._upsert_recurring_patterns(session, patterns, df)
-                self._upsert_normalized(session, df)
-                self._replace_transaction_links(session, transaction_links)
-                self._finish_run(session, run_id, rows=len(df))
+        try:
+            df = self._build_dataframe(session)
+            if df.empty:
+                # Empty canonical input is a successful zero-row pass, not a
+                # parse failure.  Housekeeping still runs so PostgreSQL and the
+                # public SyncRun contract both end at SUCCEEDED/0.
+                self._supersede_stale_normalized(session, commit=commit)
+                self._replace_transaction_links(session, [], commit=commit)
+                self._refresh_accounting_classification(session, commit=commit)
+                self._finish_run(session, run_id, rows=0, commit=commit)
                 return df, run_id
-            except Exception as exc:  # surface the failure in sync_runs
+
+            df = self._apply_rules(df, session)
+            df = self._flag_internal_transfers(df, self.own_ibans)
+            df, transaction_links = self._reconcile_cross_source_transfers(df)
+            df, patterns = self._flag_recurring(df)
+            df = self._flag_outliers(df)
+
+            self._upsert_recurring_patterns(session, patterns, df)
+            self._upsert_normalized(session, df, commit=commit)
+            self._supersede_stale_normalized(session, commit=commit)
+            self._replace_transaction_links(
+                session, transaction_links, commit=commit
+            )
+            self._refresh_accounting_classification(session, commit=commit)
+            self._record_source_periods(session, df, commit=commit)
+            self._finish_run(session, run_id, rows=len(df), commit=commit)
+            return df, run_id
+        except Exception as exc:  # surface ordinary pipeline failures in sync_runs
+            if commit:
                 self._finish_run(session, run_id, rows=0, error=str(exc))
-                raise
+            raise
 
     # ------------------------------------------------------------------
     # Helpers (pure where possible)
@@ -301,6 +356,7 @@ class NormalizationPipeline:
                     "raw_content_hash": raw.content_hash,
                     "source": raw.source,
                     "external_id": canonical["external_id"] or raw.external_id,
+                    "normalization_version": raw.version,
                     "booking_date": canonical["booking_date"],
                     "valuation_date": canonical["valuation_date"]
                     or canonical["booking_date"],
@@ -446,6 +502,13 @@ class NormalizationPipeline:
         for parent_id, child_id in topup_pairs:
             flagged.add(parent_id)
             flagged.add(child_id)
+            links.append(
+                _build_transaction_link(
+                    parent_id=parent_id,
+                    child_id=child_id,
+                    link_type=PAYPAL_TOPUP_LINK,
+                )
+            )
 
         for match in _match_paypal_aggregate_sets(
             records, excluded_parent_ids=paypal_topup_parents
@@ -612,13 +675,18 @@ class NormalizationPipeline:
                 df["id"].isin(pattern["transaction_ids"]), "recurring_pattern_id"
             ] = record.id
 
-    def _upsert_normalized(self, session: Session, df: pd.DataFrame) -> None:
+    def _upsert_normalized(
+        self, session: Session, df: pd.DataFrame, *, commit: bool = True
+    ) -> None:
         for _, row in df.iterrows():
             stmt = pg_insert(NormalizedTransaction).values(
                 id=row["id"],
                 raw_content_hash=row["raw_content_hash"],
                 source=row.get("source") or DataSource.COMDIRECT,
                 external_id=_nan_to_none(row.get("external_id")),
+                normalization_version=int(row["normalization_version"]),
+                normalization_status="active",
+                is_active=True,
                 booking_date=row["booking_date"],
                 valuation_date=row["valuation_date"],
                 amount=row["amount"],
@@ -649,6 +717,10 @@ class NormalizationPipeline:
                 index_elements=["id"],
                 set_={
                     "raw_content_hash": stmt.excluded.raw_content_hash,
+                    "normalization_status": "active",
+                    "normalization_version": stmt.excluded.normalization_version,
+                    "is_active": True,
+                    "superseded_by_id": None,
                     "amount": stmt.excluded.amount,
                     "sender": stmt.excluded.sender,
                     "recipient": stmt.excluded.recipient,
@@ -667,19 +739,70 @@ class NormalizationPipeline:
                 },
             )
             session.execute(stmt)
-        session.commit()
+        if commit:
+            session.commit()
+
+    @staticmethod
+    def _supersede_stale_normalized(
+        session: Session, *, commit: bool = True
+    ) -> None:
+        """Mirror immutable raw correction chains without deleting history."""
+        stale = session.execute(
+            select(NormalizedTransaction, RawTransaction.superseded_by)
+            .join(RawTransaction, RawTransaction.content_hash == NormalizedTransaction.raw_content_hash)
+            .where(RawTransaction.superseded_by.is_not(None))
+            .where(NormalizedTransaction.is_active.is_(True))
+        ).all()
+        for tx, successor_id in stale:
+            tx.is_active = False
+            tx.normalization_status = "superseded"
+            tx.superseded_by_id = successor_id
+
+        # Every link type participates in the same active/history contract.
+        # Retain links involving a superseded row, but never leave them active
+        # where API traversal could reach an inactive participant.
+        stale_ids = [tx.id for tx, _successor_id in stale]
+        if stale_ids:
+            session.execute(
+                update(TransactionLink)
+                .where(TransactionLink.is_active.is_(True))
+                .where(
+                    TransactionLink.parent_transaction_id.in_(stale_ids)
+                    | TransactionLink.child_transaction_id.in_(stale_ids)
+                )
+                .values(
+                    is_active=False,
+                    status="invalid_participant",
+                    version=TransactionLink.version + 1,
+                )
+            )
+
+        # A previously superseded row can be restored safely if an operator
+        # reverses the raw-chain pointer; rerunning normalization is enough.
+        session.execute(
+            update(NormalizedTransaction)
+            .where(
+                NormalizedTransaction.raw_content_hash.in_(
+                    select(RawTransaction.content_hash).where(
+                        RawTransaction.superseded_by.is_(None)
+                    )
+                )
+            )
+            .values(is_active=True, normalization_status="active", superseded_by_id=None)
+        )
+        if commit:
+            session.commit()
 
     @staticmethod
     def _replace_transaction_links(
-        session: Session, links: list[dict[str, Any]]
+        session: Session,
+        links: list[dict[str, Any]],
+        *,
+        commit: bool = True,
     ) -> None:
-        """Replace auto-derived cross-source links idempotently."""
-        session.execute(
-            delete(TransactionLink).where(
-                TransactionLink.link_type.in_(AUTO_TRANSACTION_LINK_TYPES)
-            )
-        )
+        """Version auto-derived links idempotently; never delete audit rows."""
         seen: set[tuple[str, str, str]] = set()
+        unique_links: list[dict[str, Any]] = []
         for link in links:
             key = (
                 str(link["parent_transaction_id"]),
@@ -689,11 +812,123 @@ class NormalizationPipeline:
             if key in seen:
                 continue
             seen.add(key)
-            session.add(TransactionLink(**link))
-        session.commit()
+            unique_links.append(link)
+
+        stale_stmt = (
+            update(TransactionLink)
+            .where(TransactionLink.link_type.in_(AUTO_TRANSACTION_LINK_TYPES))
+            .where(TransactionLink.is_active.is_(True))
+        )
+        derived_ids = [str(link["id"]) for link in unique_links]
+        if derived_ids:
+            stale_stmt = stale_stmt.where(TransactionLink.id.not_in(derived_ids))
+        session.execute(
+            stale_stmt.values(
+                is_active=False,
+                status="superseded",
+                version=TransactionLink.version + 1,
+            )
+        )
+
+        for link in unique_links:
+            stmt = pg_insert(TransactionLink).values(
+                **link,
+                status="active",
+                is_active=True,
+                version=1,
+                confidence=Decimal("1.000"),
+                match_reason="unique exact amount/date reconciliation",
+            )
+            stmt = stmt.on_conflict_do_update(
+                index_elements=["id"],
+                set_={
+                    "status": "active",
+                    "is_active": True,
+                    "version": TransactionLink.version
+                    + case((TransactionLink.is_active.is_(False), 1), else_=0),
+                    "confidence": stmt.excluded.confidence,
+                    "match_reason": stmt.excluded.match_reason,
+                },
+            )
+            session.execute(stmt)
+        if commit:
+            session.commit()
+
+    @staticmethod
+    def _refresh_accounting_classification(
+        session: Session, *, commit: bool = True
+    ) -> None:
+        active_link_parents = set(
+            session.execute(
+                select(TransactionLink.parent_transaction_id).where(
+                    TransactionLink.is_active.is_(True),
+                    TransactionLink.link_type.in_(AUTO_TRANSACTION_LINK_TYPES),
+                )
+            ).scalars()
+        )
+        rows = session.execute(
+            select(NormalizedTransaction).where(NormalizedTransaction.is_active.is_(True))
+        ).scalars()
+        for tx in rows:
+            tx.accounting_class, tx.accounting_confidence = _accounting_class_for(
+                tx, tx.id in active_link_parents
+            )
+            tx.accounting_version = ACCOUNTING_VERSION
+        if commit:
+            session.commit()
+
+    @staticmethod
+    def _record_source_periods(
+        session: Session, df: pd.DataFrame, *, commit: bool = True
+    ) -> None:
+        """Record observed rows without ever claiming statement completeness."""
+        if df.empty:
+            return
+        working = df.copy()
+        working["_month"] = pd.to_datetime(working["booking_date"]).dt.to_period("M")
+        for (source, month), group in working.groupby(["source", "_month"]):
+            source_value = source if isinstance(source, DataSource) else DataSource(str(source))
+            period_start = date(month.year, month.month, 1)
+            period_end = date(
+                month.year, month.month, calendar.monthrange(month.year, month.month)[1]
+            )
+            stable_id = str(
+                uuid.uuid5(
+                    uuid.NAMESPACE_URL,
+                    f"k-fin:source-period:{source_value.value}:{period_start}:{period_end}",
+                )
+            )
+            stmt = pg_insert(SourceStatementPeriod).values(
+                id=stable_id,
+                source=source_value,
+                period_start=period_start,
+                period_end=period_end,
+                rows_present=True,
+                observed_row_count=len(group),
+                verified_complete=False,
+            )
+            stmt = stmt.on_conflict_do_update(
+                index_elements=["id"],
+                set_={
+                    "rows_present": True,
+                    "observed_row_count": len(group),
+                    # Preserve explicit verification; normalization can only
+                    # prove row presence, never statement completeness.
+                    "updated_at": datetime.now(timezone.utc),
+                },
+            )
+            session.execute(stmt)
+        if commit:
+            session.commit()
 
     def _finish_run(
-        self, session: Session, run_id: str, *, rows: int, error: str | None = None
+        self,
+        session: Session,
+        run_id: str,
+        *,
+        rows: int,
+        error: str | None = None,
+        commit: bool = True,
     ) -> None:
         session.execute(
             update(SyncRun)
@@ -705,7 +940,8 @@ class NormalizationPipeline:
                 error=error,
             )
         )
-        session.commit()
+        if commit:
+            session.commit()
 
 
 def _both_ibans_in(a: dict[str, Any], b: dict[str, Any], own: set[str]) -> bool:
@@ -795,14 +1031,11 @@ def _match_paypal_topups(records: list[dict[str, Any]]) -> list[tuple[Any, Any]]
     if not pp_deposits or not cd_paypal:
         return []
 
-    pairs: list[tuple[Any, Any]] = []
-    used_comdirect: set[Any] = set()
+    candidates: list[tuple[Any, Any]] = []
     for deposit in pp_deposits:
         dep_cents = abs(_amount_cents(deposit["amount"]))
         dep_date = pd.to_datetime(deposit["booking_date"])
         for posting in cd_paypal:
-            if posting["id"] in used_comdirect:
-                continue
             post_cents = abs(_amount_cents(posting["amount"]))
             if post_cents != dep_cents:
                 continue
@@ -811,10 +1044,21 @@ def _match_paypal_topups(records: list[dict[str, Any]]) -> list[tuple[Any, Any]]
                 > INTERNAL_TRANSFER_DAY_WINDOW
             ):
                 continue
-            pairs.append((posting["id"], deposit["id"]))
-            used_comdirect.add(posting["id"])
-            break
-    return pairs
+            candidates.append((posting["id"], deposit["id"]))
+
+    # A date/amount match is evidence only when it identifies both sides
+    # uniquely. Greedily consuming the first equal candidate would make input
+    # ordering an accounting decision and hide the remaining ambiguity.
+    posting_counts: dict[Any, int] = {}
+    deposit_counts: dict[Any, int] = {}
+    for posting_id, deposit_id in candidates:
+        posting_counts[posting_id] = posting_counts.get(posting_id, 0) + 1
+        deposit_counts[deposit_id] = deposit_counts.get(deposit_id, 0) + 1
+    return [
+        (posting_id, deposit_id)
+        for posting_id, deposit_id in candidates
+        if posting_counts[posting_id] == 1 and deposit_counts[deposit_id] == 1
+    ]
 
 
 def _is_paypal_detail_transaction(rec: dict[str, Any]) -> bool:
@@ -865,28 +1109,35 @@ def _match_paypal_aggregate_sets(
     if not parents or not children:
         return []
 
-    matches: list[dict[str, Any]] = []
-    used_children: set[Any] = set()
+    options: dict[Any, list[frozenset[Any]]] = {}
     for parent in parents:
         parent_date = pd.to_datetime(parent["booking_date"])
         candidates = [
             child
             for child in children
-            if child["id"] not in used_children
-            and abs((parent_date - pd.to_datetime(child["booking_date"])).days)
+            if abs((parent_date - pd.to_datetime(child["booking_date"])).days)
             <= INTERNAL_TRANSFER_DAY_WINDOW
         ]
         if len(candidates) > MAX_PAYPAL_AGGREGATE_CANDIDATES:
             continue
-        subset = _find_unique_exact_subset(
-            candidates, target_cents=_amount_cents(parent["amount"])
+        subsets = _find_exact_subsets(
+            candidates,
+            target_cents=_amount_cents(parent["amount"]),
+            max_results=MAX_PAYPAL_EXACT_SUBSETS,
         )
-        if subset is None:
+        if not subsets:
             continue
-        child_ids = [child["id"] for child in subset]
-        used_children.update(child_ids)
-        matches.append({"parent_id": parent["id"], "child_ids": child_ids})
-    return matches
+        options[parent["id"]] = subsets
+
+    # Resolve all parents and detail sets together.  Only a parent→subset
+    # assignment present in every maximum-cardinality one-to-one solution is
+    # accepted; competing indistinguishable parents or detail sets therefore
+    # remain explicit residuals rather than being decided by iteration order.
+    stable = _stable_global_matches(options)
+    return [
+        {"parent_id": parent_id, "child_ids": sorted(child_ids, key=str)}
+        for parent_id, child_ids in sorted(stable.items(), key=lambda item: str(item[0]))
+    ]
 
 
 def _match_santander_cc_settlements(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -894,7 +1145,10 @@ def _match_santander_cc_settlements(records: list[dict[str, Any]]) -> list[dict[
 
     The billing cycle is the calendar month of the Santander credit-card
     transactions. Its expected settlement is the exact net sum of that month's
-    charges and refunds. Ambiguous equal-sum cycles are left unlinked.
+    charges and refunds.  The posting date must fall between three days before
+    the first cycle row and forty-five days after the last cycle row.  Matching
+    is global and one-to-one; ambiguous equal-sum cycles or competing postings
+    are left unlinked regardless of input order.
     """
     santander = [
         r
@@ -925,29 +1179,146 @@ def _match_santander_cc_settlements(records: list[dict[str, Any]]) -> list[dict[
         bucket["child_ids"].append(rec["id"])
 
     tolerance = pd.Timedelta(days=SANTANDER_SETTLEMENT_DAY_WINDOW)
-    matches: list[dict[str, Any]] = []
-    used_cycles: set[tuple[int, int]] = set()
-    for posting in sorted(cd_postings, key=lambda r: pd.to_datetime(r["booking_date"])):
+    max_lag = pd.Timedelta(days=SANTANDER_SETTLEMENT_MAX_LAG_DAYS)
+    options: dict[Any, list[frozenset[Any]]] = {}
+    for posting in cd_postings:
         post_cents = abs(_amount_cents(posting["amount"]))
         post_date = pd.to_datetime(posting["booking_date"])
         candidates = [
-            (key, bucket)
-            for key, bucket in sorted(buckets.items())
-            if key not in used_cycles
-            and abs(bucket["sum_cents"]) == post_cents
-            # The settlement debit posts no earlier than the billing cycle
-            # opened (minus the tolerance) — guards against pairing a debit
-            # with a far-off cycle that happens to net the same sum.
+            frozenset(bucket["child_ids"])
+            for _key, bucket in sorted(buckets.items())
+            if abs(bucket["sum_cents"]) == post_cents
             and post_date >= bucket["min_date"] - tolerance
+            and post_date <= bucket["max_date"] + max_lag
         ]
-        if len(candidates) != 1:
+        if candidates:
+            options[posting["id"]] = candidates
+
+    stable = _stable_global_matches(options)
+    return [
+        {"parent_id": parent_id, "child_ids": sorted(child_ids, key=str)}
+        for parent_id, child_ids in sorted(stable.items(), key=lambda item: str(item[0]))
+    ]
+
+
+def _find_exact_subsets(
+    candidates: list[dict[str, Any]], *, target_cents: int, max_results: int
+) -> list[frozenset[Any]]:
+    """Return exact non-empty subsets, or none when the safe cap is exceeded."""
+    if not candidates:
+        return []
+
+    sums: dict[int, list[tuple[int, ...]]] = {0: [()]}
+    overflowed: set[int] = set()
+    for idx, rec in enumerate(candidates):
+        cents = _amount_cents(rec["amount"])
+        if cents == 0:
             continue
-        key, bucket = candidates[0]
-        used_cycles.add(key)
-        matches.append(
-            {"parent_id": posting["id"], "child_ids": list(bucket["child_ids"])}
+        additions: dict[int, list[tuple[int, ...]]] = {}
+        for current_sum, combos in list(sums.items()):
+            next_sum = current_sum + cents
+            target = additions.setdefault(next_sum, [])
+            for combo in combos:
+                candidate_combo = (*combo, idx)
+                if candidate_combo not in target:
+                    target.append(candidate_combo)
+        for next_sum, combos in additions.items():
+            existing = sums.setdefault(next_sum, [])
+            for combo in combos:
+                if combo not in existing:
+                    existing.append(combo)
+                if len(existing) > max_results:
+                    overflowed.add(next_sum)
+                    del existing[max_results:]
+
+    if target_cents in overflowed:
+        return []
+    exact = [combo for combo in sums.get(target_cents, []) if combo]
+    return [frozenset(candidates[idx]["id"] for idx in combo) for combo in exact]
+
+
+def _stable_global_matches(
+    options: dict[Any, list[frozenset[Any]]],
+) -> dict[Any, frozenset[Any]]:
+    """Return assignments common to every maximum one-to-one matching.
+
+    Hyperedges are supported because one PayPal parent may consume several
+    detail rows.  Conflicting parent components are solved independently.  A
+    defensive state cap fails closed for a pathologically ambiguous component.
+    """
+    if not options:
+        return {}
+
+    remaining = set(options)
+    components: list[set[Any]] = []
+    while remaining:
+        component = {remaining.pop()}
+        resource_ids = set().union(
+            *(
+                child_ids
+                for parent in component
+                for child_ids in options[parent]
+            )
         )
-    return matches
+        changed = True
+        while changed:
+            changed = False
+            for parent in list(remaining):
+                parent_resources = set().union(*options[parent])
+                if resource_ids.intersection(parent_resources):
+                    remaining.remove(parent)
+                    component.add(parent)
+                    resource_ids.update(parent_resources)
+                    changed = True
+        components.append(component)
+
+    stable: dict[Any, frozenset[Any]] = {}
+    for component in components:
+        parents = sorted(component, key=str)
+        best_count = -1
+        consensus: dict[Any, frozenset[Any]] = {}
+        states = 0
+        overflow = False
+
+        def search(
+            index: int,
+            used: frozenset[Any],
+            assignment: dict[Any, frozenset[Any]],
+        ) -> None:
+            nonlocal best_count, consensus, states, overflow
+            states += 1
+            if states > MAX_GLOBAL_MATCHING_STATES:
+                overflow = True
+                return
+            if len(assignment) + len(parents) - index < best_count:
+                return
+            if index == len(parents):
+                count = len(assignment)
+                if count > best_count:
+                    best_count = count
+                    consensus = dict(assignment)
+                elif count == best_count:
+                    consensus = {
+                        parent: child_ids
+                        for parent, child_ids in consensus.items()
+                        if assignment.get(parent) == child_ids
+                    }
+                return
+
+            parent = parents[index]
+            search(index + 1, used, assignment)
+            for child_ids in sorted(
+                set(options[parent]), key=lambda ids: tuple(sorted(map(str, ids)))
+            ):
+                if used.isdisjoint(child_ids):
+                    assignment[parent] = child_ids
+                    search(index + 1, used.union(child_ids), assignment)
+                    assignment.pop(parent)
+
+        search(0, frozenset(), {})
+        if not overflow:
+            stable.update(consensus)
+    return stable
 
 
 def _find_unique_exact_subset(
@@ -994,6 +1365,64 @@ def _build_transaction_link(
         "child_transaction_id": str(child_id),
         "link_type": link_type,
     }
+
+
+def _accounting_class_for(
+    tx: NormalizedTransaction, has_active_child_links: bool
+) -> tuple[str, Decimal]:
+    """Conservative mutually-exclusive interpretation for report v2."""
+    if tx.internal_transfer:
+        confidence = Decimal("1.000") if has_active_child_links else Decimal("0.900")
+        return "internal_transfer_settlement_parent", confidence
+    if tx.is_refund:
+        if tx.amount > 0 and tx.refund_verification_status == "user_verified":
+            return "verified_refund_reimbursement", Decimal("1.000")
+        return "unresolved_ambiguous", Decimal("0.250")
+    if tx.amount >= 0:
+        if tx.refund_verification_status == "income_verified":
+            return "non_outflow_income", Decimal("1.000")
+        return "unresolved_ambiguous", Decimal("0.000")
+    candidate = {
+        "source": tx.source,
+        "amount": tx.amount,
+        "description": tx.description,
+        "recipient": tx.recipient,
+    }
+    if (
+        _is_paypal_aggregate_posting(candidate)
+        or _is_comdirect_santander_posting(candidate)
+    ) and not has_active_child_links:
+        return "unresolved_ambiguous", Decimal("0.000")
+    if tx.category_id in ASSET_CATEGORY_IDS:
+        return "financial_asset_building", Decimal("0.950")
+    if tx.category_id in DEBT_CATEGORY_IDS:
+        return "debt_principal_financing", Decimal("0.850")
+    if tx.category_id:
+        return "reconciled_consumption", Decimal("0.800")
+    return "unresolved_ambiguous", Decimal("0.000")
+
+
+def refresh_transaction_accounting(
+    session: Session, tx: NormalizedTransaction
+) -> None:
+    """Refresh one active row inside the caller's transaction."""
+    if not tx.is_active:
+        return
+    session.flush()
+    has_active_children = (
+        session.execute(
+            select(func.count())
+            .select_from(TransactionLink)
+            .where(TransactionLink.parent_transaction_id == tx.id)
+            .where(TransactionLink.is_active.is_(True))
+            .where(TransactionLink.link_type.in_(AUTO_TRANSACTION_LINK_TYPES))
+        ).scalar_one()
+        > 0
+    )
+    tx.accounting_class, tx.accounting_confidence = _accounting_class_for(
+        tx, has_active_children
+    )
+    tx.accounting_version = ACCOUNTING_VERSION
 
 
 def _consecutive_runs(months: list[pd.Period]) -> list[list[pd.Period]]:

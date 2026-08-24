@@ -10,11 +10,20 @@ from __future__ import annotations
 
 import json
 import uuid
+from datetime import date
+from decimal import Decimal
 from pathlib import Path
 
 from sqlalchemy.orm import Session
 
-from src.core.db.models import Category, NormalizedTransaction, Rule, TypeEnum
+from src.core.db.models import (
+    Category,
+    NormalizedTransaction,
+    RawTransaction,
+    Rule,
+    TransactionLink,
+    TypeEnum,
+)
 from src.normalization.ingest import ingest_transactions
 from src.normalization.pipeline import NormalizationPipeline
 
@@ -87,6 +96,84 @@ def test_reingest_is_idempotent(postgres_url, db_engine):
     ingest_transactions(pipeline, transactions, batch_id="first")
     reingest = ingest_transactions(pipeline, transactions, batch_id="second")
     assert reingest == 0, "identical payloads must not create duplicate raw rows"
+
+
+def test_empty_frame_still_supersedes_history_links_and_accounting(
+    postgres_url, db_engine
+):
+    old_hash = "1" * 64
+    successor_hash = "2" * 64
+    child_hash = "3" * 64
+    with Session(db_engine) as session:
+        session.add_all(
+            [
+                RawTransaction(content_hash=successor_hash, raw_data={}),
+                RawTransaction(content_hash=child_hash, raw_data={}),
+            ]
+        )
+        session.commit()
+        session.add(
+            RawTransaction(
+                content_hash=old_hash,
+                raw_data={"bookingDate": "2026-01-01"},
+                superseded_by=successor_hash,
+            )
+        )
+        session.commit()
+        session.add_all(
+            [
+                NormalizedTransaction(
+                    id=old_hash,
+                    raw_content_hash=old_hash,
+                    booking_date=date(2026, 1, 1),
+                    valuation_date=date(2026, 1, 1),
+                    amount=Decimal("-1.00"),
+                    currency="EUR",
+                    is_recurring=False,
+                    is_outlier=False,
+                    internal_transfer=True,
+                    accounting_version=1,
+                ),
+                NormalizedTransaction(
+                    id=child_hash,
+                    raw_content_hash=child_hash,
+                    booking_date=date(2026, 1, 1),
+                    valuation_date=date(2026, 1, 1),
+                    amount=Decimal("-1.00"),
+                    currency="EUR",
+                    is_recurring=False,
+                    is_outlier=False,
+                    internal_transfer=False,
+                    accounting_version=1,
+                ),
+            ]
+        )
+        session.flush()
+        session.add(
+            TransactionLink(
+                id="empty-frame-link",
+                parent_transaction_id=old_hash,
+                child_transaction_id=child_hash,
+                link_type="manual",
+            )
+        )
+        session.commit()
+
+    frame, _run_id = NormalizationPipeline(postgres_url).process_and_normalize()
+    assert frame.empty
+
+    with Session(db_engine) as session:
+        predecessor = session.get(NormalizedTransaction, old_hash)
+        link = session.get(TransactionLink, "empty-frame-link")
+        child = session.get(NormalizedTransaction, child_hash)
+        assert predecessor.is_active is False
+        assert predecessor.normalization_status == "superseded"
+        assert predecessor.superseded_by_id == successor_hash
+        assert link.is_active is False
+        assert link.status == "invalid_participant"
+        assert link.version == 2
+        assert child.is_active is True
+        assert child.accounting_version == 2
 
 
 def test_normalize_preserves_existing_category(postgres_url, db_engine):

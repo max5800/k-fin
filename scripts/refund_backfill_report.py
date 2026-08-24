@@ -95,6 +95,7 @@ def main() -> int:
                 NormalizedTransaction.description,
                 NormalizedTransaction.is_refund,
             )
+            .where(NormalizedTransaction.is_active.is_(True))
             .where(NormalizedTransaction.category_id == args.category_id)
             .where(NormalizedTransaction.amount > 0)
             .order_by(NormalizedTransaction.booking_date.desc())

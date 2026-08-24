@@ -22,8 +22,9 @@ Re-parses every active Comdirect raw transaction from its
 content hash. For a row whose canonical content changed (a credit that
 gains a sender name / IBAN) it re-ingests the row as a new version — the
 old row is superseded, exactly as for a Comdirect correction — then
-re-normalizes, carries the user-set category / refund flags onto the
-fresh normalized row, and drops the orphaned old normalized rows.
+re-normalizes and carries the user-set category / refund flags onto the
+fresh normalized row. The predecessor and its transaction-link history remain
+as inactive audit records.
 
 No Comdirect API access: runs entirely off the stored payloads.
 Idempotent — a second run finds nothing to change.
@@ -40,6 +41,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+from collections.abc import Callable
 
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
@@ -63,6 +65,95 @@ def _rehash(raw: RawTransaction) -> tuple[str, dict] | None:
     if new_hash == raw.content_hash:
         return None
     return new_hash, new_raw_data
+
+
+def _collect_carry_fields(
+    session: Session, transitions: list[tuple[str, str]]
+) -> dict[str, dict]:
+    """Snapshot semantics from active predecessors before normalization."""
+    carry: dict[str, dict] = {}
+    for old_hash, new_hash in transitions:
+        old = session.execute(
+            select(NormalizedTransaction)
+            .where(NormalizedTransaction.raw_content_hash == old_hash)
+            .where(NormalizedTransaction.is_active.is_(True))
+            .with_for_update()
+        ).scalar_one_or_none()
+        if old is not None:
+            carry[new_hash] = {
+                "category_id": old.category_id,
+                "is_refund": old.is_refund,
+                "refund_verification_status": old.refund_verification_status,
+                "refund_audit_decided_at": old.refund_audit_decided_at,
+            }
+    return carry
+
+
+def _carry_fields_and_refresh_accounting(
+    session: Session, carry: dict[str, dict], *, commit: bool = True
+) -> int:
+    """Copy predecessor semantics and classify successors in one transaction."""
+    carried = 0
+    for new_hash, fields in carry.items():
+        successor = session.execute(
+            select(NormalizedTransaction)
+            .where(NormalizedTransaction.raw_content_hash == new_hash)
+            .where(NormalizedTransaction.is_active.is_(True))
+        ).scalar_one_or_none()
+        if successor is None:
+            continue
+        # A non-null predecessor category represents an explicit/rule decision
+        # and wins over a category assigned during this normalization pass.
+        if fields["category_id"]:
+            successor.category_id = fields["category_id"]
+        successor.is_refund = fields["is_refund"]
+        successor.refund_verification_status = fields[
+            "refund_verification_status"
+        ]
+        successor.refund_audit_decided_at = fields["refund_audit_decided_at"]
+        carried += 1
+
+    # Do not commit inside the refresh: copied semantics and their derived
+    # accounting interpretation must become visible atomically.
+    NormalizationPipeline._refresh_accounting_classification(session, commit=False)
+    if commit:
+        session.commit()
+    return carried
+
+
+def _reingest_atomically(
+    pipeline: NormalizationPipeline,
+    reingest: list[dict],
+    transitions: list[tuple[str, str]],
+    *,
+    failure_hook: Callable[[str], None] | None = None,
+) -> tuple[int, str, int]:
+    """Apply the full remitter repair in one database transaction.
+
+    ``failure_hook`` is intentionally test-only: raising at any named stage
+    proves that raw versioning, normalized successors, links, SyncRun state,
+    and copied user semantics roll back together.
+    """
+
+    def checkpoint(stage: str) -> None:
+        if failure_hook is not None:
+            failure_hook(stage)
+
+    with Session(pipeline.engine) as session, session.begin():
+        carry = _collect_carry_fields(session, transitions)
+        inserted = pipeline.load_raw_transactions(
+            reingest, session=session, commit=False
+        )
+        checkpoint("after_raw_supersession")
+        _frame, run_id = pipeline.process_and_normalize(
+            session=session, commit=False
+        )
+        checkpoint("after_normalization")
+        carried = _carry_fields_and_refresh_accounting(
+            session, carry, commit=False
+        )
+        checkpoint("after_semantic_carryover")
+    return inserted, run_id, carried
 
 
 def main() -> int:
@@ -128,57 +219,15 @@ def main() -> int:
         print("\nDry run — nothing written. Re-run with --apply to re-ingest.")
         return 0
 
-    # --- carry user-set fields off the soon-to-be-superseded rows -----
-    carry: dict[str, dict] = {}
-    with Session(engine) as session:
-        for old_hash, new_hash in transitions:
-            old = session.get(NormalizedTransaction, old_hash)
-            if old is not None:
-                carry[new_hash] = {
-                    "category_id": old.category_id,
-                    "is_refund": old.is_refund,
-                    "refund_audit_decided_at": old.refund_audit_decided_at,
-                }
-
-    # --- re-ingest as new versions, then re-normalize -----------------
+    # --- one transaction: raw version → normalize → semantic carry ----
     pipeline = NormalizationPipeline(settings.database_url)
-    inserted = pipeline.load_raw_transactions(reingest)
+    inserted, run_id, carried = _reingest_atomically(
+        pipeline, reingest, transitions
+    )
     print(f"Re-ingested {inserted} row(s) as new versions (old rows superseded).")
-
-    _, run_id = pipeline.process_and_normalize()
     print(f"Re-normalized — sync run {run_id}.")
-
-    # --- carry the user-set fields onto the fresh normalized rows -----
-    carried = 0
-    with Session(engine) as session:
-        for new_hash, fields in carry.items():
-            new = session.get(NormalizedTransaction, new_hash)
-            if new is None:
-                continue
-            # A non-null prior category is the user's / agent's choice —
-            # it wins over whatever rule matching just assigned.
-            if fields["category_id"]:
-                new.category_id = fields["category_id"]
-            new.is_refund = fields["is_refund"]
-            new.refund_audit_decided_at = fields["refund_audit_decided_at"]
-            carried += 1
-        session.commit()
     print(f"Carried category / refund flags onto {carried} re-ingested row(s).")
-
-    # --- drop the orphaned old normalized rows ------------------------
-    # _build_dataframe only normalizes active raw rows, so a normalized
-    # row backed by a now-superseded raw row is an orphan.
-    with Session(engine) as session:
-        superseded = select(RawTransaction.content_hash).where(
-            RawTransaction.superseded_by.isnot(None)
-        )
-        deleted = session.execute(
-            NormalizedTransaction.__table__.delete().where(
-                NormalizedTransaction.raw_content_hash.in_(superseded)
-            )
-        ).rowcount
-        session.commit()
-    print(f"Removed {deleted} orphaned normalized row(s).")
+    print("Preserved superseded normalized rows and transaction-link audit history.")
     print("\nDone — Comdirect credits now carry the remitter IBAN as sender_iban.")
     return 0
 

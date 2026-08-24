@@ -107,6 +107,8 @@ class TestManualCategorize:
         with Session(db_engine) as s:
             tx = s.get(NormalizedTransaction, TX_ID)
             assert tx.category_id == "rent"
+            assert tx.accounting_class == "reconciled_consumption"
+            assert tx.accounting_version == 2
 
     def test_set_category_explicit_null_clears(self, api_client, seed, db_engine):
         # Distinguishing "{}" from '{"category_id": null}' is the whole
@@ -122,6 +124,8 @@ class TestManualCategorize:
         with Session(db_engine) as s:
             tx = s.get(NormalizedTransaction, TX_ID)
             assert tx.category_id is None
+            assert tx.accounting_class == "unresolved_ambiguous"
+            assert tx.accounting_version == 2
 
     def test_omitted_key_does_not_change_category(
         self, api_client, seed, db_engine

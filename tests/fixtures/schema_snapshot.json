@@ -144,6 +144,43 @@
         "id"
       ]
     },
+    "analytics_correction_runs": {
+      "columns": {
+        "correction_version": {
+          "nullable": false,
+          "type": "INTEGER"
+        },
+        "finished_at": {
+          "nullable": true,
+          "type": "TIMESTAMP"
+        },
+        "id": {
+          "nullable": false,
+          "type": "VARCHAR(64)"
+        },
+        "mode": {
+          "nullable": false,
+          "type": "VARCHAR(16)"
+        },
+        "result_counts": {
+          "nullable": false,
+          "type": "JSON"
+        },
+        "started_at": {
+          "nullable": false,
+          "type": "TIMESTAMP"
+        },
+        "status": {
+          "nullable": false,
+          "type": "VARCHAR(16)"
+        }
+      },
+      "foreign_keys": [],
+      "indexes": {},
+      "primary_key": [
+        "id"
+      ]
+    },
     "app_settings": {
       "columns": {
         "auto_apply_confidence": {
@@ -674,6 +711,18 @@
     },
     "normalized_transactions": {
       "columns": {
+        "accounting_class": {
+          "nullable": false,
+          "type": "VARCHAR(48)"
+        },
+        "accounting_confidence": {
+          "nullable": false,
+          "type": "NUMERIC(4, 3)"
+        },
+        "accounting_version": {
+          "nullable": false,
+          "type": "INTEGER"
+        },
         "amount": {
           "nullable": false,
           "type": "NUMERIC(14, 2)"
@@ -722,6 +771,18 @@
           "nullable": false,
           "type": "BOOLEAN"
         },
+        "is_active": {
+          "nullable": false,
+          "type": "BOOLEAN"
+        },
+        "normalization_status": {
+          "nullable": false,
+          "type": "VARCHAR(32)"
+        },
+        "normalization_version": {
+          "nullable": false,
+          "type": "INTEGER"
+        },
         "original_amount": {
           "nullable": true,
           "type": "NUMERIC(14, 2)"
@@ -750,6 +811,10 @@
           "nullable": true,
           "type": "TIMESTAMP"
         },
+        "refund_verification_status": {
+          "nullable": false,
+          "type": "VARCHAR(32)"
+        },
         "sender": {
           "nullable": true,
           "type": "VARCHAR"
@@ -761,6 +826,10 @@
         "source": {
           "nullable": false,
           "type": "VARCHAR(12)"
+        },
+        "superseded_by_id": {
+          "nullable": true,
+          "type": "VARCHAR(64)"
         },
         "updated_at": {
           "nullable": false,
@@ -777,6 +846,12 @@
         "['recurring_pattern_id']->recurring_patterns.['id']"
       ],
       "indexes": {
+        "ix_normalized_transactions_accounting_class": {
+          "columns": [
+            "accounting_class"
+          ],
+          "unique": false
+        },
         "ix_normalized_transactions_booking_date": {
           "columns": [
             "booking_date"
@@ -794,6 +869,12 @@
         "ix_normalized_transactions_external_id": {
           "columns": [
             "external_id"
+          ],
+          "unique": false
+        },
+        "ix_normalized_transactions_is_active": {
+          "columns": [
+            "is_active"
           ],
           "unique": false
         },
@@ -1286,6 +1367,130 @@
         "id"
       ]
     },
+    "source_statement_periods": {
+      "columns": {
+        "id": {
+          "nullable": false,
+          "type": "VARCHAR(64)"
+        },
+        "observed_row_count": {
+          "nullable": false,
+          "type": "INTEGER"
+        },
+        "period_end": {
+          "nullable": false,
+          "type": "DATE"
+        },
+        "period_start": {
+          "nullable": false,
+          "type": "DATE"
+        },
+        "rows_present": {
+          "nullable": false,
+          "type": "BOOLEAN"
+        },
+        "source": {
+          "nullable": false,
+          "type": "VARCHAR(12)"
+        },
+        "updated_at": {
+          "nullable": false,
+          "type": "TIMESTAMP"
+        },
+        "verification_method": {
+          "nullable": true,
+          "type": "VARCHAR(64)"
+        },
+        "verified_at": {
+          "nullable": true,
+          "type": "TIMESTAMP"
+        },
+        "verified_complete": {
+          "nullable": false,
+          "type": "BOOLEAN"
+        }
+      },
+      "foreign_keys": [],
+      "indexes": {
+        "ix_source_statement_periods_period_start": {
+          "columns": [
+            "period_start"
+          ],
+          "unique": false
+        },
+        "uq_source_period": {
+          "columns": [
+            "source",
+            "period_start",
+            "period_end"
+          ],
+          "unique": true
+        }
+      },
+      "primary_key": [
+        "id"
+      ]
+    },
+    "subscription_records": {
+      "columns": {
+        "amount_scenarios": {
+          "nullable": true,
+          "type": "JSON"
+        },
+        "confidence": {
+          "nullable": false,
+          "type": "NUMERIC(4, 3)"
+        },
+        "created_at": {
+          "nullable": false,
+          "type": "TIMESTAMP"
+        },
+        "evidence_source": {
+          "nullable": false,
+          "type": "VARCHAR(32)"
+        },
+        "id": {
+          "nullable": false,
+          "type": "VARCHAR(64)"
+        },
+        "label": {
+          "nullable": false,
+          "type": "VARCHAR(200)"
+        },
+        "next_review_date": {
+          "nullable": true,
+          "type": "DATE"
+        },
+        "status": {
+          "nullable": false,
+          "type": "VARCHAR(32)"
+        },
+        "transaction_id": {
+          "nullable": true,
+          "type": "VARCHAR(64)"
+        }
+      },
+      "foreign_keys": [
+        "['transaction_id']->normalized_transactions.['id']"
+      ],
+      "indexes": {
+        "ix_subscription_records_status": {
+          "columns": [
+            "status"
+          ],
+          "unique": false
+        },
+        "ix_subscription_records_transaction_id": {
+          "columns": [
+            "transaction_id"
+          ],
+          "unique": false
+        }
+      },
+      "primary_key": [
+        "id"
+      ]
+    },
     "sync_runs": {
       "columns": {
         "data_source": {
@@ -1422,6 +1627,10 @@
           "nullable": false,
           "type": "TIMESTAMP"
         },
+        "confidence": {
+          "nullable": false,
+          "type": "NUMERIC(4, 3)"
+        },
         "id": {
           "nullable": false,
           "type": "VARCHAR(64)"
@@ -1430,9 +1639,25 @@
           "nullable": false,
           "type": "VARCHAR(32)"
         },
+        "is_active": {
+          "nullable": false,
+          "type": "BOOLEAN"
+        },
+        "match_reason": {
+          "nullable": true,
+          "type": "VARCHAR(200)"
+        },
         "parent_transaction_id": {
           "nullable": false,
           "type": "VARCHAR(64)"
+        },
+        "status": {
+          "nullable": false,
+          "type": "VARCHAR(32)"
+        },
+        "version": {
+          "nullable": false,
+          "type": "INTEGER"
         }
       },
       "foreign_keys": [
@@ -1443,6 +1668,12 @@
         "ix_transaction_links_child": {
           "columns": [
             "child_transaction_id"
+          ],
+          "unique": false
+        },
+        "ix_transaction_links_is_active": {
+          "columns": [
+            "is_active"
           ],
           "unique": false
         },
@@ -1484,6 +1715,82 @@
       "primary_key": [
         "tag_id",
         "transaction_id"
+      ]
+    },
+    "value_assessments": {
+      "columns": {
+        "confidence": {
+          "nullable": false,
+          "type": "NUMERIC(4, 3)"
+        },
+        "cooling_off_regret": {
+          "nullable": true,
+          "type": "BOOLEAN"
+        },
+        "cost_per_use": {
+          "nullable": true,
+          "type": "NUMERIC(14, 2)"
+        },
+        "created_at": {
+          "nullable": false,
+          "type": "TIMESTAMP"
+        },
+        "declared_priority": {
+          "nullable": true,
+          "type": "INTEGER"
+        },
+        "duplication": {
+          "nullable": true,
+          "type": "BOOLEAN"
+        },
+        "duration_months": {
+          "nullable": true,
+          "type": "INTEGER"
+        },
+        "id": {
+          "nullable": false,
+          "type": "VARCHAR(64)"
+        },
+        "observed_use_count": {
+          "nullable": true,
+          "type": "INTEGER"
+        },
+        "opportunity_cost": {
+          "nullable": true,
+          "type": "NUMERIC(14, 2)"
+        },
+        "question": {
+          "nullable": true,
+          "type": "VARCHAR(300)"
+        },
+        "transaction_id": {
+          "nullable": false,
+          "type": "VARCHAR(64)"
+        },
+        "value_class": {
+          "nullable": false,
+          "type": "VARCHAR(48)"
+        }
+      },
+      "foreign_keys": [
+        "['transaction_id']->normalized_transactions.['id']"
+      ],
+      "indexes": {
+        "ix_value_assessments_transaction_id": {
+          "columns": [
+            "transaction_id"
+          ],
+          "unique": false
+        },
+        "value_assessments_transaction_id_key": {
+          "columns": [
+            "transaction_id"
+          ],
+          "unique": true
+        }
+      },
+      "primary_key": [
+        "id"
       ]
     },
     "users": {

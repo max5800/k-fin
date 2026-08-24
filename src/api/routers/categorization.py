@@ -11,7 +11,7 @@ from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, ConfigDict
-from sqlalchemy import select, update
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from src.api.deps import Auth, get_db
@@ -23,6 +23,7 @@ from src.core.db.models import (
     ReviewedSuggestion,
     RunStatus,
 )
+from src.normalization.pipeline import refresh_transaction_accounting
 
 router = APIRouter(
     prefix="/categorization", tags=["categorization"], dependencies=[Auth]
@@ -110,7 +111,9 @@ def list_pending(db: Session = Depends(get_db)) -> PendingResponse:
 
     tx_ids = [s["transaction_id"] for s in candidates]
     tx_rows = db.execute(
-        select(NormalizedTransaction).where(NormalizedTransaction.id.in_(tx_ids))
+        select(NormalizedTransaction)
+        .where(NormalizedTransaction.id.in_(tx_ids))
+        .where(NormalizedTransaction.is_active.is_(True))
     ).scalars().all()
     tx_by_id = {t.id: t for t in tx_rows if t.category_id is None}
 
@@ -161,7 +164,7 @@ def accept_pending(
     db: Session = Depends(get_db),
 ) -> None:
     tx = db.get(NormalizedTransaction, transaction_id)
-    if tx is None:
+    if tx is None or not tx.is_active:
         raise HTTPException(status_code=404, detail="Transaction not found")
 
     chosen_id = body.category_id if (body and body.category_id) else None
@@ -192,15 +195,20 @@ def accept_pending(
         body.is_refund if (body and body.is_refund is not None) else suggested_is_refund
     )
 
-    values: dict = {"category_id": chosen_id}
+    tx.category_id = chosen_id
     if is_refund_value is not None:
-        values["is_refund"] = is_refund_value
-
-    db.execute(
-        update(NormalizedTransaction)
-        .where(NormalizedTransaction.id == transaction_id)
-        .values(**values)
-    )
+        if is_refund_value and tx.amount <= 0:
+            raise HTTPException(
+                status_code=422,
+                detail="Only a positive transaction can be verified as a refund",
+            )
+        tx.is_refund = is_refund_value
+        tx.refund_verification_status = (
+            "user_verified"
+            if is_refund_value
+            else ("income_verified" if tx.amount > 0 else "unverified")
+        )
+    refresh_transaction_accounting(db, tx)
     db.commit()
 
 
@@ -209,7 +217,7 @@ def reject_pending(
     transaction_id: str, db: Session = Depends(get_db)
 ) -> None:
     tx = db.get(NormalizedTransaction, transaction_id)
-    if tx is None:
+    if tx is None or not tx.is_active:
         raise HTTPException(status_code=404, detail="Transaction not found")
 
     existing = db.get(ReviewedSuggestion, transaction_id)

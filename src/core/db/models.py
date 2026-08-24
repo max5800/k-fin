@@ -223,6 +223,19 @@ class NormalizedTransaction(Base):
     external_id: Mapped[Optional[str]] = mapped_column(
         String, nullable=True, index=True
     )
+    # Normalization rows are an audit chain, not a mutable cache.  A corrected
+    # raw record creates a new active normalized version and leaves its
+    # predecessor reversibly superseded.
+    normalization_version: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=1, server_default="1"
+    )
+    normalization_status: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="active", server_default="active"
+    )
+    is_active: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default="true", index=True
+    )
+    superseded_by_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
 
     booking_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
     valuation_date: Mapped[date] = mapped_column(Date, nullable=False)
@@ -259,6 +272,26 @@ class NormalizedTransaction(Base):
     # Excluded from income, folded into the *original* category's expenses so
     # budgets see net spend.
     is_refund: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    refund_verification_status: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="unverified", server_default="unverified"
+    )
+    # Versioned, mutually-exclusive accounting interpretation.  Values are
+    # strings deliberately: adding a classification must not require an unsafe
+    # PostgreSQL enum rewrite.  ``unresolved_ambiguous`` is the fail-closed
+    # default for legacy and insufficiently evidenced rows.
+    accounting_class: Mapped[str] = mapped_column(
+        String(48),
+        nullable=False,
+        default="unresolved_ambiguous",
+        server_default="unresolved_ambiguous",
+        index=True,
+    )
+    accounting_confidence: Mapped[Decimal] = mapped_column(
+        Numeric(4, 3), nullable=False, default=Decimal("0.000"), server_default="0.000"
+    )
+    accounting_version: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=2, server_default="2"
+    )
     # Timestamp set when the user walks the manual refund-audit. Either a
     # row is reclassified as a refund (is_refund=True, category swapped) or
     # confirmed as real income (no other change) — both paths set this
@@ -366,8 +399,112 @@ class TransactionLink(Base):
         ForeignKey("normalized_transactions.id", ondelete="CASCADE"), nullable=False
     )
     link_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    status: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="active", server_default="active"
+    )
+    is_active: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default="true", index=True
+    )
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1, server_default="1")
+    confidence: Mapped[Decimal] = mapped_column(
+        Numeric(4, 3), nullable=False, default=Decimal("1.000"), server_default="1.000"
+    )
+    match_reason: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class SourceStatementPeriod(Base):
+    """Source-period evidence; row presence is not statement completeness."""
+
+    __tablename__ = "source_statement_periods"
+    __table_args__ = (
+        UniqueConstraint("source", "period_start", "period_end", name="uq_source_period"),
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    source: Mapped[DataSource] = mapped_column(
+        SQLEnum(DataSource, name="data_source", values_callable=lambda e: [m.value for m in e]),
+        nullable=False,
+    )
+    period_start: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    period_end: Mapped[date] = mapped_column(Date, nullable=False)
+    rows_present: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
+    observed_row_count: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
+    verified_complete: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
+    verification_method: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    verified_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+
+class SubscriptionRecord(Base):
+    """Itemized evidence state; recurrence never proves a live contract."""
+
+    __tablename__ = "subscription_records"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    label: Mapped[str] = mapped_column(String(200), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    confidence: Mapped[Decimal] = mapped_column(Numeric(4, 3), nullable=False)
+    evidence_source: Mapped[str] = mapped_column(String(32), nullable=False)
+    transaction_id: Mapped[Optional[str]] = mapped_column(
+        ForeignKey("normalized_transactions.id"), nullable=True, index=True
+    )
+    amount_scenarios: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
+    next_review_date: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class ValueAssessment(Base):
+    """Evidence for priority-aligned value decisions; low confidence asks."""
+
+    __tablename__ = "value_assessments"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    transaction_id: Mapped[str] = mapped_column(
+        ForeignKey("normalized_transactions.id"), nullable=False, unique=True, index=True
+    )
+    value_class: Mapped[str] = mapped_column(String(48), nullable=False)
+    confidence: Mapped[Decimal] = mapped_column(Numeric(4, 3), nullable=False)
+    declared_priority: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    observed_use_count: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    cost_per_use: Mapped[Optional[Decimal]] = mapped_column(Numeric(14, 2), nullable=True)
+    duration_months: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    duplication: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
+    cooling_off_regret: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
+    opportunity_cost: Mapped[Optional[Decimal]] = mapped_column(Numeric(14, 2), nullable=True)
+    question: Mapped[Optional[str]] = mapped_column(String(300), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class AnalyticsCorrectionRun(Base):
+    """Count-only audit record for an explicitly applied correction pass."""
+
+    __tablename__ = "analytics_correction_runs"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    correction_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    mode: Mapped[str] = mapped_column(String(16), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    result_counts: Mapped[dict] = mapped_column(JSON, nullable=False)
+    started_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    finished_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
     )
 
 

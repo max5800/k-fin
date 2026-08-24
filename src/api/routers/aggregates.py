@@ -118,6 +118,7 @@ def cashflow_over_time(
         )
         .group_by("year", "month")
         .order_by("year", "month")
+        .where(NormalizedTransaction.is_active.is_(True))
     )
 
     if exclude_internal:

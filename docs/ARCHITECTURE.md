@@ -29,6 +29,7 @@ One-line overviews. The code is the source of truth.
 | `src/mcp_server/` | MCP server exposing the Finance API as agent tools; read-only unless write tools are explicitly enabled. |
 | `src/exporter/` | Finance agent mapper + model-based JSON export. |
 | `src/scheduler/` | Sync job orchestration and backfill driver (worker-side). |
+| `src/services/trustworthy_analytics.py` | Completeness-gated, versioned accounting and monthly-review facts. |
 | `src/core/` | Config (pydantic-settings), logging, SQLAlchemy DB models. |
 | `alembic/` | DB migrations; runs on worker startup or via `scripts/migrate.py`. |
 | `scripts/` | Export, report, migration, and debug CLIs. |
@@ -80,6 +81,10 @@ reference.
 _TODO_: describe orchestrator → categorization → anomaly → monthly/weekly →
 synthesizer flow, including where runs are persisted and how rerun/cancel work.
 Models and prompts live under `src/agents/`.
+
+The deterministic monthly-review contract is documented in
+[`trustworthy-analytics.md`](trustworthy-analytics.md). It is deliberately
+separate from LLM interpretation and runs only after verified source periods.
 
 ## MCP Server
 

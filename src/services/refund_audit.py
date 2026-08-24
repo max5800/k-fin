@@ -26,6 +26,7 @@ no schema mapping. Routers stay thin and testable.
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from decimal import Decimal
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -126,6 +127,7 @@ def _undecided_erstattungen_query():
         .where(NormalizedTransaction.is_refund.is_(False))
         .where(NormalizedTransaction.amount > 0)
         .where(NormalizedTransaction.internal_transfer.is_(False))
+        .where(NormalizedTransaction.is_active.is_(True))
         .where(NormalizedTransaction.refund_audit_decided_at.is_(None))
     )
 
@@ -170,9 +172,17 @@ def apply_refund_heuristic(session: Session) -> dict[str, int]:
         if suggested is not None:
             tx.category_id = suggested
             tx.is_refund = True
+            tx.refund_verification_status = "heuristic_candidate"
+            tx.accounting_class = "unresolved_ambiguous"
+            tx.accounting_confidence = Decimal("0.250")
+            tx.accounting_version = 2
             applied_refund += 1
         else:
             # "Real income" pattern (Finanzamt, Cashback, …) — stamp only.
+            tx.refund_verification_status = "heuristic_candidate"
+            tx.accounting_class = "unresolved_ambiguous"
+            tx.accounting_confidence = Decimal("0.250")
+            tx.accounting_version = 2
             applied_income += 1
         tx.refund_audit_decided_at = now
 

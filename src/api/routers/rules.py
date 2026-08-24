@@ -25,7 +25,7 @@ from fastapi import (
     Response,
     status,
 )
-from sqlalchemy import func, select, update
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from src.api.deps import get_db, require_token
@@ -34,6 +34,7 @@ from src.core.db.models import Category, NormalizedTransaction, Rule
 from src.normalization.pipeline import (
     build_rule_haystack,
     match_rule,
+    refresh_transaction_accounting,
     sort_rules_by_priority,
 )
 
@@ -167,7 +168,8 @@ def _apply_rules_to_uncategorised(session: Session) -> RulesApplyResult:
     rows = (
         session.execute(
             select(NormalizedTransaction).where(
-                NormalizedTransaction.category_id.is_(None)
+                NormalizedTransaction.category_id.is_(None),
+                NormalizedTransaction.is_active.is_(True),
             )
         )
         .scalars()
@@ -192,11 +194,8 @@ def _apply_rules_to_uncategorised(session: Session) -> RulesApplyResult:
         rule = match_rule(rules_sorted, haystack)
         if rule is None:
             continue
-        session.execute(
-            update(NormalizedTransaction)
-            .where(NormalizedTransaction.id == tx.id)
-            .values(category_id=rule.target_category_id)
-        )
+        tx.category_id = rule.target_category_id
+        refresh_transaction_accounting(session, tx)
         matched += 1
 
     session.commit()
@@ -252,6 +251,7 @@ def apply_all_rules(
         select(func.count())
         .select_from(NormalizedTransaction)
         .where(NormalizedTransaction.category_id.is_(None))
+        .where(NormalizedTransaction.is_active.is_(True))
     ).scalar_one()
 
     if pending_count > _APPLY_ALL_SYNC_LIMIT:

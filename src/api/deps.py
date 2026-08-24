@@ -6,6 +6,7 @@ from typing import Annotated, Union
 
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from src.core.config import settings
@@ -25,6 +26,26 @@ def _get_engine():
 
 
 Db = Annotated[Session, Depends(get_db)]
+
+
+def get_report_db():
+    """Yield an independent, transactionally consistent report snapshot.
+
+    Authentication may query through the request-scoped ``get_db`` session
+    before an endpoint starts.  A separate session lets PostgreSQL establish
+    REPEATABLE READ before the first report query, so multi-query monthly
+    reports cannot mix pre- and post-refresh accounting state.
+    """
+    from src.core.db import get_session_factory
+
+    db = get_session_factory()()
+    try:
+        if db.get_bind().dialect.name == "postgresql":
+            db.connection(execution_options={"isolation_level": "REPEATABLE READ"})
+            db.execute(text("SET TRANSACTION READ ONLY"))
+        yield db
+    finally:
+        db.close()
 
 
 def _require_credentials(

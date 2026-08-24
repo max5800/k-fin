@@ -339,6 +339,7 @@ def match_evidence_to_transactions(
             and_(
                 NormalizedTransaction.booking_date >= start,
                 NormalizedTransaction.booking_date <= end,
+                NormalizedTransaction.is_active.is_(True),
                 NormalizedTransaction.internal_transfer.is_(False),
             )
         )

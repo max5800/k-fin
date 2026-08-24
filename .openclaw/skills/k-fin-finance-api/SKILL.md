@@ -5,47 +5,51 @@ description: Access personal finance data via the k-fin read-only API. Use when 
 
 # k-fin Finance API
 
-Read-only access to exported financial data (Comdirect bank + depot).
+Read-only access to normalized financial data (bank, payment, card, and depot).
 
 ## Connection
 
-- **Base URL:** `http://localhost:8001` (or `COMDIRECT_API_URL` env var if set)
-- **Auth:** Query param `?token=<COMDIRECT_API_TOKEN>` (stored in OpenClaw config)
-- **All endpoints are GET, read-only**
+- **Base URL:** `http://localhost:8000` (or `FINANCE_API_URL` env var if set)
+- **Auth:** `Authorization: Bearer <FINANCE_API_TOKEN>`
+- Finance facts and bank access are GET/read-only. Analytics evidence PUTs are
+  user-authenticated local metadata updates; they never mutate a bank.
 
 ## Endpoints
 
 | Endpoint | Returns |
 |---|---|
-| `GET /exports?token=...` | All available CSV export files (filename, size, modified) |
-| `GET /exports/latest?token=...` | Most recent file per category |
-| `GET /exports/{filename}?token=...` | Download a specific CSV file |
+| `GET /api/v1/transactions` | Active normalized transactions |
+| `DELETE /api/v1/categories/{category_id}` | Deletes only an unreferenced category; returns 409 when transaction history or rules reference it |
+| `GET /api/v1/aggregates/monthly-summary` | Legacy monthly summary with explicit metric labels |
+| `GET /api/v1/analytics/v2/accounting-report` | Versioned accounting partition with unresolved residuals |
+| `GET /api/v1/analytics/v2/monthly-review` | Completeness-first monthly review state and facts |
+| `PUT /api/v1/analytics/v2/source-periods/verification` | User-only statement verification |
+| `PUT /api/v1/analytics/v2/subscriptions/{id}` | User-only itemized recurring-service evidence |
+| `PUT /api/v1/analytics/v2/value-assessments/{transaction_id}` | User-only priority/value evidence |
 
 ## Workflow
 
-1. Call `/exports/latest` to see what is available and get filenames
-2. Download the relevant CSV with `/exports/{filename}`
-3. Parse CSV: **semicolon-delimited**, UTF-8-sig, German number/date formats (e.g. `1.234,56` = 1234.56)
-
-## Export Categories
-
-| Prefix | Content |
-|---|---|
-| `umsaetze_` | Account transactions (Girokonto) |
-| `depot_positionen_` | Current depot positions (securities) |
-| `depot_umsaetze_` | Depot transactions (buys/sells) |
-| `finanzuebersicht_` | Financial overview (accounts + depot combined) |
+1. Send the Bearer header on every request.
+2. Call the narrowest Finance API endpoint that answers the question.
+3. For broad monthly analysis, call the v2 monthly-review gate before using facts.
 
 ## Important Notes
 
-- The API only serves **already exported** CSVs — it does NOT trigger new exports from Comdirect
-- If data is stale, the export job must be run manually: `uv run python scripts/export_csv.py`
+- The Finance API reads already-normalized local data and never triggers bank writes.
 - Never display raw IBANs, full account numbers, or credentials — mask sensitive fields
-- See `references/api.md` for full response format and CSV parsing examples
+- Never call observed rows a complete statement. Monthly analysis is valid only
+  when `source_completeness.complete` is true.
+- Never collapse `gross_cash_outflow` or `reconciled_consumption_net` into a bare
+  “total spending” label. Report the named metric, formula version, confidence,
+  and unresolved residuals.
+- Recurring amounts are discrete scenarios. A booked recurrence does not prove
+  an active contract or projected renewal.
+- See `references/api.md` for the trustworthy analytics response contract.
 
 ## Error Handling
 
 - `401` — Token wrong or missing
-- `404` — File not found (export may not have run yet)
-- `400` — Invalid filename
-- Unreachable — tell the user the export service may not be running
+- `404` — Requested active resource not found
+- `409` — Category deletion refused because audit history or rules still reference it
+- `422` — Invalid filter or reporting window
+- Unreachable — tell the user the Finance API may not be running

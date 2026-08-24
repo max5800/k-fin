@@ -45,6 +45,7 @@ def get_uncategorized_transactions(engine: Engine, limit: int = 200) -> list[dic
                 NormalizedTransaction.recipient,
                 NormalizedTransaction.description,
             )
+            .where(NormalizedTransaction.is_active.is_(True))
             .where(NormalizedTransaction.category_id.is_(None))
             .where(NormalizedTransaction.internal_transfer == False)  # noqa: E712
             .order_by(NormalizedTransaction.booking_date.desc())
@@ -69,6 +70,7 @@ def count_uncategorized_transactions(engine: Engine) -> int:
         return session.execute(
             select(func.count())
             .select_from(NormalizedTransaction)
+            .where(NormalizedTransaction.is_active.is_(True))
             .where(NormalizedTransaction.category_id.is_(None))
             .where(NormalizedTransaction.internal_transfer == False)  # noqa: E712
         ).scalar_one()
@@ -151,6 +153,7 @@ def get_similar_categorized_transactions(
             Category.name.label("category_name"),
         )
         .join(Category, NormalizedTransaction.category_id == Category.id)
+        .where(NormalizedTransaction.is_active.is_(True))
         .where(NormalizedTransaction.category_id.isnot(None))
         .where(NormalizedTransaction.internal_transfer == False)  # noqa: E712
         .where(or_(*ilike_clauses))
@@ -219,6 +222,7 @@ def get_monthly_summary(engine: Engine, months: int = 6) -> list[dict]:
             func.coalesce(func.sum(NormalizedTransaction.amount), 0).label("net"),
             func.count().label("count"),
         )
+        .where(NormalizedTransaction.is_active.is_(True))
         .where(NormalizedTransaction.internal_transfer == False)  # noqa: E712
         .group_by(month_col)
         .order_by(month_col.desc())
@@ -252,6 +256,7 @@ def get_category_breakdown(
             func.count().label("count"),
         )
         .outerjoin(Category, NormalizedTransaction.category_id == Category.id)
+        .where(NormalizedTransaction.is_active.is_(True))
         .where(NormalizedTransaction.internal_transfer == False)  # noqa: E712
     )
     if date_from:
@@ -282,7 +287,16 @@ def get_recurring_patterns(engine: Engine) -> list[dict]:
     """All detected recurring patterns."""
     with Session(engine) as session:
         rows = (
-            session.execute(select(RecurringPattern).order_by(RecurringPattern.avg_amount))
+            session.execute(
+                select(RecurringPattern)
+                .join(
+                    NormalizedTransaction,
+                    NormalizedTransaction.recurring_pattern_id == RecurringPattern.id,
+                )
+                .where(NormalizedTransaction.is_active.is_(True))
+                .distinct()
+                .order_by(RecurringPattern.avg_amount)
+            )
             .scalars()
             .all()
         )
@@ -325,6 +339,7 @@ def get_period_transactions(engine: Engine, date_from: date, date_to: date) -> l
             Category.name.label("category_name"),
         )
         .outerjoin(Category, NormalizedTransaction.category_id == Category.id)
+        .where(NormalizedTransaction.is_active.is_(True))
         .where(NormalizedTransaction.booking_date >= date_from)
         .where(NormalizedTransaction.booking_date <= date_to)
         .order_by(NormalizedTransaction.booking_date)
@@ -353,6 +368,7 @@ def get_new_counterparties(engine: Engine, since_date: date) -> list[str]:
     min_date = func.min(NormalizedTransaction.booking_date).label("first_seen")
     subq = (
         select(NormalizedTransaction.recipient, min_date)
+        .where(NormalizedTransaction.is_active.is_(True))
         .where(NormalizedTransaction.recipient.isnot(None))
         .where(NormalizedTransaction.recipient != "")
         .group_by(NormalizedTransaction.recipient)
@@ -382,6 +398,7 @@ def get_outlier_transactions(engine: Engine, date_from: date, date_to: date) -> 
             Category.name.label("category_name"),
         )
         .outerjoin(Category, NormalizedTransaction.category_id == Category.id)
+        .where(NormalizedTransaction.is_active.is_(True))
         .where(NormalizedTransaction.is_outlier == True)  # noqa: E712
         .where(NormalizedTransaction.booking_date >= date_from)
         .where(NormalizedTransaction.booking_date <= date_to)
@@ -425,6 +442,7 @@ def get_savings_rate(engine: Engine, date_from: date, date_to: date) -> dict:
             func.coalesce(func.sum(income_case), 0).label("income"),
             func.coalesce(func.sum(expense_case), 0).label("expenses"),
         )
+        .where(NormalizedTransaction.is_active.is_(True))
         .where(NormalizedTransaction.internal_transfer == False)  # noqa: E712
         .where(NormalizedTransaction.booking_date >= date_from)
         .where(NormalizedTransaction.booking_date <= date_to)

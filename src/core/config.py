@@ -76,6 +76,9 @@ class Settings(BaseSettings):
 
     # Database / normalization
     database_url: str = ""
+    # Statement sources that must be explicitly verified before trustworthy
+    # monthly analytics can run. This is server policy, never a caller filter.
+    analytics_required_sources: str = "comdirect,paypal,santander_cc"
 
     # Dev-only DB tools (wipe transactions, seed mock dataset).
     # Default False; the dev router's destructive endpoints (/wipe, /seed)
@@ -121,6 +124,24 @@ class Settings(BaseSettings):
     def get_cors_origins(self) -> list[str]:
         """Parse comma-separated CORS_ORIGINS into a list."""
         return [s.strip() for s in self.cors_origins.split(",") if s.strip()]
+
+    def get_analytics_required_sources(self) -> list[str]:
+        """Return unique configured sources, rejecting unsafe empty policy."""
+        sources = list(
+            dict.fromkeys(
+                part.strip().lower()
+                for part in self.analytics_required_sources.split(",")
+                if part.strip()
+            )
+        )
+        supported = {"comdirect", "paypal", "santander_cc"}
+        unsupported = set(sources) - supported
+        if not sources or unsupported:
+            raise ValueError(
+                "ANALYTICS_REQUIRED_SOURCES must contain one or more of: "
+                "comdirect,paypal,santander_cc"
+            )
+        return sources
 
 
 settings = Settings()

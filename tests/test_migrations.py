@@ -1,10 +1,8 @@
-"""Forward + reverse migration tests.
+"""Forward and production-safe migration tests.
 
 The CI `test-migrations` job only runs `upgrade head` once. These tests
-add real coverage: full upgrade/downgrade reversibility, and a targeted
-data-integrity check for `0022_external_source` (the M16-P1 schema
-generalization) — the backfill of `external_id` from `comdirect_id` and
-its restoration on downgrade.
+add real coverage for the fail-closed 0028 boundary and reversible earlier
+migrations, including the 0022 `external_id` backfill and restoration.
 
 Each test runs against its own throw-away PostgreSQL container so the
 schema mutations never leak into the shared integration-test database.
@@ -13,12 +11,14 @@ schema mutations never leak into the shared integration-test database.
 from __future__ import annotations
 
 import contextlib
+import io
 import sys
 import time
 from pathlib import Path
 
 import pytest
 from sqlalchemy import create_engine, inspect, text
+from sqlalchemy.exc import DBAPIError
 
 _ROOT = Path(__file__).resolve().parent.parent
 
@@ -97,22 +97,71 @@ def _alembic_config():
     return cfg
 
 
-def test_full_upgrade_downgrade_roundtrip(fresh_db_url):
-    """upgrade head → downgrade base → upgrade head must all succeed."""
+def test_0028_downgrade_fails_closed_and_preserves_evidence(fresh_db_url):
+    """A downgrade cannot erase v2 user decisions or accounting evidence."""
     from alembic import command
 
     cfg = _alembic_config()
     with _force_db_url(fresh_db_url):
         command.upgrade(cfg, "head")
-        command.downgrade(cfg, "base")
-        command.upgrade(cfg, "head")
 
     engine = create_engine(fresh_db_url)
     try:
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    "INSERT INTO analytics_correction_runs "
+                    "(id, correction_version, mode, status, result_counts) "
+                    "VALUES ('dummy-audit-run', 1, 'apply', 'succeeded', '{}')"
+                )
+            )
+
+        with _force_db_url(fresh_db_url), pytest.raises(
+            DBAPIError, match="cannot be restored losslessly"
+        ):
+            command.downgrade(cfg, "0027_mail_evidence_context")
+
         tables = set(inspect(engine).get_table_names())
-        assert {"raw_transactions", "normalized_transactions", "sync_runs"} <= tables
+        assert {
+            "analytics_correction_runs",
+            "source_statement_periods",
+            "subscription_records",
+            "value_assessments",
+        } <= tables
+        columns = {
+            column["name"]
+            for column in inspect(engine).get_columns("normalized_transactions")
+        }
+        assert {"accounting_class", "refund_verification_status", "is_active"} <= columns
+        with engine.connect() as conn:
+            assert conn.execute(
+                text("SELECT count(*) FROM analytics_correction_runs")
+            ).scalar_one() == 1
+            assert conn.execute(
+                text("SELECT version_num FROM alembic_version")
+            ).scalar_one() == "0028_trustworthy_analytics"
     finally:
         engine.dispose()
+
+
+def test_0028_offline_downgrade_sql_is_non_destructive_fail_closed():
+    """Offline rollback artifacts retain the same production safety gate."""
+    from alembic import command
+
+    cfg = _alembic_config()
+    output = io.StringIO()
+    cfg.output_buffer = output
+    with _force_db_url("postgresql+psycopg://test@localhost/test"):
+        command.downgrade(
+            cfg,
+            "0028_trustworthy_analytics:0027_mail_evidence_context",
+            sql=True,
+        )
+    sql = output.getvalue()
+    assert "RAISE EXCEPTION" in sql
+    assert "cannot be restored losslessly" in sql
+    assert "DROP TABLE" not in sql.upper()
+    assert "DROP COLUMN" not in sql.upper()
 
 
 def test_0022_backfills_external_id_and_is_reversible(fresh_db_url):

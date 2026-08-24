@@ -2,8 +2,9 @@
 
 from datetime import date, datetime, timedelta
 from decimal import Decimal
+from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class CategoryOut(BaseModel):
@@ -94,6 +95,7 @@ class TransactionOut(BaseModel):
     is_outlier: bool
     internal_transfer: bool
     is_refund: bool
+    refund_verification_status: str
     created_at: datetime
     updated_at: datetime
 
@@ -384,6 +386,105 @@ class AnalysisContextOut(BaseModel):
     mail_evidence: list[dict]
     top_transactions: list[dict]
     assumptions: list[str]
+
+
+class SourcePeriodVerificationIn(BaseModel):
+    source: str
+    period_start: date
+    period_end: date
+    verified_complete: bool
+    verification_method: str
+
+
+class SourcePeriodStateOut(BaseModel):
+    source: str
+    period_start: str
+    period_end: str
+    state: str
+    rows_present: bool
+    observed_row_count: int
+    verified_complete: bool
+    verification_method: str | None
+
+
+class SourceCompletenessOut(BaseModel):
+    complete: bool
+    periods: list[SourcePeriodStateOut]
+    missing_periods: list[dict[str, str]]
+
+
+class TrustworthyAccountingReportOut(BaseModel):
+    report_version: int
+    period_start: str
+    period_end: str
+    transaction_count: int
+    gross_cash_outflow: Decimal
+    internal_transfer_and_settlement_parent_outflow: Decimal
+    financial_asset_building_outflow: Decimal
+    distinguishable_debt_principal_financing_outflow: Decimal
+    verified_refunds_reimbursements: Decimal
+    reconciled_consumption_gross: Decimal
+    reconciled_consumption_net: Decimal
+    unresolved_ambiguous_outflow_residual: Decimal
+    unresolved_ambiguous_inflow_residual: Decimal
+    non_outflow_income: Decimal
+    confidence: str
+    minimum_classification_confidence: Decimal
+    formulas: dict[str, str]
+
+
+class MonthlyReviewOut(BaseModel):
+    workflow_version: int
+    year: int
+    month: int
+    state: str
+    can_analyze: bool
+    source_completeness: SourceCompletenessOut
+    scheduler_enabled: bool
+    scheduler_note: str
+    facts: TrustworthyAccountingReportOut | None
+    confidence: str
+    high_impact_questions: list[dict]
+    value_review: dict | None
+    subscriptions: list[dict]
+
+
+class SubscriptionRecordIn(BaseModel):
+    label: str = Field(min_length=1, max_length=200)
+    status: Literal[
+        "booked_payment",
+        "active_contract",
+        "projected_renewal",
+        "variable_service",
+        "declined_charge",
+        "mail_only_evidence",
+        "one_off_candidate",
+    ]
+    confidence: Decimal = Field(ge=0, le=1)
+    evidence_source: str = Field(min_length=1, max_length=32)
+    transaction_id: str | None = None
+    amount_scenarios: list[Decimal] = Field(default_factory=list)
+    next_review_date: date | None = None
+
+
+class ValueAssessmentIn(BaseModel):
+    value_class: Literal[
+        "unavoidable_obligation",
+        "financial_asset_building",
+        "durable_capability_health_home_investment",
+        "intentional_experience_joy",
+        "convenience",
+        "leakage_waste",
+    ]
+    confidence: Decimal = Field(ge=0, le=1)
+    declared_priority: int | None = Field(default=None, ge=0, le=100)
+    observed_use_count: int | None = Field(default=None, ge=0)
+    cost_per_use: Decimal | None = Field(default=None, ge=0)
+    duration_months: int | None = Field(default=None, ge=0)
+    duplication: bool | None = None
+    cooling_off_regret: bool | None = None
+    opportunity_cost: Decimal | None = Field(default=None, ge=0)
+    question: str | None = Field(default=None, max_length=300)
 
 
 class RefundAuditCandidate(BaseModel):

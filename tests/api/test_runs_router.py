@@ -100,6 +100,7 @@ def _seed_pending_tx(
     raw_hash: str,
     source: DataSource,
     internal_transfer: bool = False,
+    is_active: bool = True,
 ) -> None:
     session.add(
         RawTransaction(
@@ -127,6 +128,7 @@ def _seed_pending_tx(
             is_recurring=False,
             is_outlier=False,
             internal_transfer=internal_transfer,
+            is_active=is_active,
         )
     )
 
@@ -396,6 +398,13 @@ class TestRunsHealth:
                 raw_hash="c" * 64,
                 source=DataSource.COMDIRECT,
                 internal_transfer=True,
+            )
+            _seed_pending_tx(
+                s,
+                tx_id="pending-inactive",
+                raw_hash="d" * 64,
+                source=DataSource.PAYPAL,
+                is_active=False,
             )
             s.commit()
 

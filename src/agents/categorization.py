@@ -25,7 +25,7 @@ import httpx
 from pydantic_ai import Agent
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError
 from pydantic_ai.settings import ModelSettings
-from sqlalchemy import Engine, update
+from sqlalchemy import Engine
 from sqlalchemy.orm import Session
 
 from src.agents._anthropic import make_anthropic_model
@@ -41,6 +41,7 @@ from src.agents.prompts.categorization import CATEGORIZATION_SYSTEM_PROMPT
 from src.agents.types import CategorizationResult, CategorySuggestion
 from src.core.config import settings
 from src.core.db.models import NormalizedTransaction
+from src.normalization.pipeline import refresh_transaction_accounting
 from src.services.llm_context import sanitize_search_query
 
 logger = logging.getLogger(__name__)
@@ -257,12 +258,18 @@ def apply_high_confidence(
     applied = 0
     with Session(engine) as session:
         for s in to_apply:
-            applied += session.execute(
-                update(NormalizedTransaction)
-                .where(NormalizedTransaction.id == s.transaction_id)
-                .where(NormalizedTransaction.category_id.is_(None))
-                .values(category_id=s.suggested_category_id, is_refund=s.is_refund)
-            ).rowcount
+            tx = session.get(NormalizedTransaction, s.transaction_id)
+            if tx is None or not tx.is_active or tx.category_id is not None:
+                continue
+            tx.category_id = s.suggested_category_id
+            if s.is_refund and tx.amount > 0:
+                tx.is_refund = True
+                tx.refund_verification_status = "heuristic_candidate"
+            else:
+                tx.is_refund = False
+                tx.refund_verification_status = "unverified"
+            refresh_transaction_accounting(session, tx)
+            applied += 1
         session.commit()
     return applied
 

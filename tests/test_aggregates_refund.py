@@ -274,14 +274,13 @@ class TestBudgetSpending:
 
 
 class TestTransactionRefundPatch:
-    def test_patch_sets_is_refund(self, api_client, refund_seed):
+    def test_patch_rejects_negative_refund(self, api_client, refund_seed):
         resp = api_client.patch(
             "/api/v1/transactions/apo",
             json={"is_refund": True},
             headers=AUTH,
         )
-        assert resp.status_code == 200
-        assert resp.json()["is_refund"] is True
+        assert resp.status_code == 422
 
     def test_patch_clears_is_refund(self, api_client, refund_seed):
         resp = api_client.patch(

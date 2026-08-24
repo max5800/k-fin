@@ -56,6 +56,7 @@ def monthly_summary(
         func.coalesce(func.sum(_expense_case()), 0).label("expenses"),
         func.count().label("transaction_count"),
     ).where(
+        NormalizedTransaction.is_active.is_(True),
         extract("year", NormalizedTransaction.booking_date) == year,
         extract("month", NormalizedTransaction.booking_date) == month,
     )
@@ -77,6 +78,7 @@ def monthly_summary(
         )
         .join(Category, NormalizedTransaction.category_id == Category.id)
         .where(
+            NormalizedTransaction.is_active.is_(True),
             extract("year", NormalizedTransaction.booking_date) == year,
             extract("month", NormalizedTransaction.booking_date) == month,
         )
@@ -147,6 +149,7 @@ def budget_spending(db: Session, *, year: int, month: int) -> dict[str, Any]:
             NormalizedTransaction,
             and_(
                 NormalizedTransaction.category_id == Budget.category_id,
+                NormalizedTransaction.is_active.is_(True),
                 NormalizedTransaction.internal_transfer.is_(False),
                 extract("year", NormalizedTransaction.booking_date) == year,
                 extract("month", NormalizedTransaction.booking_date) == month,
@@ -259,6 +262,7 @@ def _top_transactions(db: Session, start: date, end: date, *, limit: int = 20) -
         .outerjoin(MailEvidence, MailEvidence.id == TransactionEvidenceLink.evidence_id)
         .where(NormalizedTransaction.booking_date >= start)
         .where(NormalizedTransaction.booking_date <= end)
+        .where(NormalizedTransaction.is_active.is_(True))
         .where(NormalizedTransaction.internal_transfer.is_(False))
         .where(NormalizedTransaction.amount < 0)
         .order_by(NormalizedTransaction.amount.asc())
@@ -303,7 +307,9 @@ def analysis_context(db: Session, *, year: int, month: int) -> dict[str, Any]:
         .select_from(NormalizedTransaction)
         .where(NormalizedTransaction.booking_date >= start)
         .where(NormalizedTransaction.booking_date <= end)
+        .where(NormalizedTransaction.is_active.is_(True))
         .where(NormalizedTransaction.category_id.is_(None))
+        .where(NormalizedTransaction.is_active.is_(True))
         .where(NormalizedTransaction.internal_transfer.is_(False))
     ).scalar_one()
 

@@ -432,6 +432,7 @@ def get_runs_health(
 
     pending_rows = db.execute(
         select(NormalizedTransaction.source, func.count())
+        .where(NormalizedTransaction.is_active.is_(True))
         .where(NormalizedTransaction.category_id.is_(None))
         .where(NormalizedTransaction.internal_transfer.is_(False))
         .group_by(NormalizedTransaction.source)

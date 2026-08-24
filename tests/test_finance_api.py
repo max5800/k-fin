@@ -352,6 +352,63 @@ class TestCategoryEndpoints:
         resp = api_client.delete("/api/v1/categories/fun", headers=AUTH)
         assert resp.status_code == 204
 
+    def test_delete_rejects_active_and_inactive_transaction_history(
+        self, api_client, db_engine, seed_data
+    ):
+        with Session(db_engine) as s:
+            s.add(
+                Category(
+                    id="audit-protected",
+                    name="Audit Protected",
+                    type=TypeEnum.VARIABEL,
+                )
+            )
+            for marker in ("e", "f"):
+                s.add(
+                    RawTransaction(
+                        content_hash=marker * 64,
+                        external_id=f"TEST-{marker}",
+                        raw_data={"stub": True},
+                    )
+                )
+            s.flush()
+            for tx_id, marker, active in (
+                ("audit-active", "e", True),
+                ("audit-inactive", "f", False),
+            ):
+                s.add(
+                    NormalizedTransaction(
+                        id=tx_id,
+                        raw_content_hash=marker * 64,
+                        booking_date=date(2026, 3, 20),
+                        valuation_date=date(2026, 3, 20),
+                        amount=Decimal("-1.00"),
+                        currency="EUR",
+                        category_id="audit-protected",
+                        is_active=active,
+                        normalization_status="active" if active else "superseded",
+                        is_recurring=False,
+                        is_outlier=False,
+                        internal_transfer=False,
+                        accounting_class="reconciled_consumption",
+                        accounting_confidence=Decimal("0.950"),
+                        accounting_version=2,
+                    )
+                )
+            s.commit()
+
+        resp = api_client.delete("/api/v1/categories/audit-protected", headers=AUTH)
+        assert resp.status_code == 409
+
+        with Session(db_engine) as s:
+            assert s.get(Category, "audit-protected") is not None
+            for tx_id in ("audit-active", "audit-inactive"):
+                tx = s.get(NormalizedTransaction, tx_id)
+                assert tx.category_id == "audit-protected"
+                assert tx.accounting_class == "reconciled_consumption"
+                assert tx.accounting_confidence == Decimal("0.950")
+                assert tx.accounting_version == 2
+
 
 # --- Tags ---
 

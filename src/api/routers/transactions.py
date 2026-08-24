@@ -28,6 +28,7 @@ from src.core.db.models import (
     TransactionLink,
     TransactionTag,
 )
+from src.normalization.pipeline import refresh_transaction_accounting
 
 router = APIRouter(
     prefix="/transactions",
@@ -69,6 +70,7 @@ def _enrich(tx: NormalizedTransaction, db: Session) -> TransactionOut:
         is_outlier=tx.is_outlier,
         internal_transfer=tx.internal_transfer,
         is_refund=tx.is_refund,
+        refund_verification_status=tx.refund_verification_status,
         created_at=tx.created_at,
         updated_at=tx.updated_at,
     )
@@ -96,6 +98,7 @@ def _apply_filters(
     search: str | None,
     source: str | None,
 ) -> Select:
+    stmt = stmt.where(NormalizedTransaction.is_active.is_(True))
     if tag_ids is not None and len(tag_ids) > _MAX_TAG_IDS:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -351,13 +354,14 @@ def get_transaction_links(
     db: Session = Depends(get_db),
 ):
     tx = db.get(NormalizedTransaction, transaction_id)
-    if not tx:
+    if not tx or not tx.is_active:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Transaction not found")
 
     child_links = (
         db.execute(
             select(TransactionLink)
             .where(TransactionLink.parent_transaction_id == transaction_id)
+            .where(TransactionLink.is_active.is_(True))
             .order_by(TransactionLink.link_type, TransactionLink.child_transaction_id)
         )
         .scalars()
@@ -367,6 +371,7 @@ def get_transaction_links(
         db.execute(
             select(TransactionLink)
             .where(TransactionLink.child_transaction_id == transaction_id)
+            .where(TransactionLink.is_active.is_(True))
             .order_by(TransactionLink.link_type, TransactionLink.parent_transaction_id)
         )
         .scalars()
@@ -375,7 +380,7 @@ def get_transaction_links(
 
     def _link_out(link: TransactionLink, related_id: str) -> TransactionLinkOut:
         related = db.get(NormalizedTransaction, related_id)
-        if related is None:
+        if related is None or not related.is_active:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="Transaction link points to a missing transaction",
@@ -399,7 +404,7 @@ def get_transaction(
     db: Session = Depends(get_db),
 ):
     tx = db.get(NormalizedTransaction, transaction_id)
-    if not tx:
+    if not tx or not tx.is_active:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Transaction not found")
     return _enrich(tx, db)
 
@@ -411,7 +416,7 @@ def update_transaction(
     db: Session = Depends(get_db),
 ):
     tx = db.get(NormalizedTransaction, transaction_id)
-    if not tx:
+    if not tx or not tx.is_active:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Transaction not found")
 
     # Distinguish "field omitted" (no change) from "field set to null"
@@ -432,7 +437,17 @@ def update_transaction(
             tx.category_id = body.category_id
 
     if body.is_refund is not None:
+        if body.is_refund and tx.amount <= 0:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail="Only a positive transaction can be verified as a refund",
+            )
         tx.is_refund = body.is_refund
+        tx.refund_verification_status = (
+            "user_verified"
+            if body.is_refund
+            else ("income_verified" if tx.amount > 0 else "unverified")
+        )
         # Reclassifying a row as a refund counts as a deliberate audit
         # decision — stamp it so the candidate doesn't re-surface in the
         # /review#refunds queue. Explicit refund_audit_decided=False below
@@ -447,6 +462,12 @@ def update_transaction(
         tx.refund_audit_decided_at = (
             datetime.now(timezone.utc) if body.refund_audit_decided else None
         )
+        if body.refund_audit_decided and tx.amount > 0:
+            tx.refund_verification_status = (
+                "user_verified" if tx.is_refund else "income_verified"
+            )
+        elif not body.refund_audit_decided:
+            tx.refund_verification_status = "unverified"
 
     if body.tags is not None:
         db.execute(
@@ -460,6 +481,14 @@ def update_transaction(
                     detail=f"Tag '{tag_id}' not found",
                 )
             db.add(TransactionTag(transaction_id=transaction_id, tag_id=tag_id))
+
+    if {
+        "category_id",
+        "is_refund",
+        "internal_transfer",
+        "refund_audit_decided",
+    } & body.model_fields_set:
+        refresh_transaction_accounting(db, tx)
 
     db.commit()
     db.refresh(tx)

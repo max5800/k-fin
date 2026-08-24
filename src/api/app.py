@@ -13,6 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from src.api.routers import (
     aggregates,
+    analytics,
     auth,
     categories,
     categorization,
@@ -122,6 +123,7 @@ def create_app() -> FastAPI:
     app.include_router(categories.router, prefix="/api/v1")
     app.include_router(runs.router, prefix="/api/v1")
     app.include_router(aggregates.router, prefix="/api/v1")
+    app.include_router(analytics.router, prefix="/api/v1")
     app.include_router(reports.router, prefix="/api/v1")
     app.include_router(tags.router, prefix="/api/v1")
     app.include_router(sync.router, prefix="/api/v1")
