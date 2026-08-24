@@ -1,8 +1,8 @@
 """Forward and production-safe migration tests.
 
 The CI `test-migrations` job only runs `upgrade head` once. These tests
-add real coverage for the fail-closed 0028 boundary and reversible earlier
-migrations, including the 0022 `external_id` backfill and restoration.
+add real coverage for the preservation-backed 0028 boundary and reversible
+earlier migrations, including the 0022 `external_id` backfill and restoration.
 
 Each test runs against its own throw-away PostgreSQL container so the
 schema mutations never leak into the shared integration-test database.
@@ -97,8 +97,134 @@ def _alembic_config():
     return cfg
 
 
-def test_0028_downgrade_fails_closed_and_preserves_evidence(fresh_db_url):
-    """A downgrade cannot erase v2 user decisions or accounting evidence."""
+_PRESERVED_TABLES = (
+    "raw_transactions",
+    "normalized_transactions",
+    "transaction_links",
+    "mail_evidence",
+    "transaction_evidence_links",
+    "source_statement_periods",
+    "subscription_records",
+    "value_assessments",
+    "analytics_correction_runs",
+)
+
+
+def _json_snapshots(engine) -> dict[str, list[str]]:
+    snapshots: dict[str, list[str]] = {}
+    with engine.connect() as conn:
+        for table_name in _PRESERVED_TABLES:
+            snapshots[table_name] = list(
+                conn.execute(
+                    text(
+                        f"SELECT to_jsonb(snapshot_row)::text "
+                        f"FROM (SELECT * FROM {table_name}) AS snapshot_row "
+                        "ORDER BY 1"
+                    )
+                ).scalars()
+            )
+    return snapshots
+
+
+def _seed_0028_evidence(engine) -> None:
+    first_hash = "a" * 64
+    second_hash = "b" * 64
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "INSERT INTO raw_transactions "
+                "(content_hash, source, external_id, raw_data, version, superseded_by) "
+                "VALUES "
+                "(:first_hash, 'comdirect', 'DUMMY-OLD', '{\"stub\": true}', 1, :second_hash), "
+                "(:second_hash, 'comdirect', 'DUMMY-NEW', '{\"stub\": true}', 2, NULL)"
+            ),
+            {"first_hash": first_hash, "second_hash": second_hash},
+        )
+        conn.execute(
+            text(
+                "INSERT INTO normalized_transactions "
+                "(id, raw_content_hash, source, external_id, booking_date, valuation_date, "
+                " amount, currency, is_recurring, is_outlier, internal_transfer, is_refund, "
+                " normalization_version, normalization_status, is_active, superseded_by_id, "
+                " accounting_class, accounting_confidence, accounting_version, "
+                " refund_verification_status, description) "
+                "VALUES "
+                "(:first_hash, :first_hash, 'comdirect', 'DUMMY-OLD', '2026-01-01', "
+                " '2026-01-01', 0.00, 'EUR', false, false, true, false, 1, 'superseded', "
+                " false, :second_hash, 'excluded_internal_transfer', 0.875, 2, 'verified', "
+                " 'preserved-before'), "
+                "(:second_hash, :second_hash, 'comdirect', 'DUMMY-NEW', '2026-01-02', "
+                " '2026-01-02', 0.00, 'EUR', false, false, false, false, 2, 'active', true, "
+                " NULL, 'unresolved_ambiguous', 0.000, 2, 'unverified', 'preserved-second')"
+            ),
+            {"first_hash": first_hash, "second_hash": second_hash},
+        )
+        conn.execute(
+            text(
+                "INSERT INTO transaction_links "
+                "(id, parent_transaction_id, child_transaction_id, link_type, status, "
+                " is_active, version, confidence, match_reason) "
+                "VALUES ('dummy-link', :first_hash, :second_hash, 'funding', 'superseded', "
+                " false, 2, 0.500, 'synthetic evidence')"
+            ),
+            {"first_hash": first_hash, "second_hash": second_hash},
+        )
+        conn.execute(
+            text(
+                "INSERT INTO mail_evidence "
+                "(id, source, evidence_type, merchant_name, currency, confidence) "
+                "VALUES ('dummy-mail', 'fixture', 'receipt', 'Example Merchant', 'EUR', 0.500)"
+            )
+        )
+        conn.execute(
+            text(
+                "INSERT INTO transaction_evidence_links "
+                "(id, transaction_id, evidence_id, match_type, confidence, match_reason) "
+                "VALUES ('dummy-evidence-link', :first_hash, 'dummy-mail', 'manual', 0.500, "
+                "'synthetic evidence')"
+            ),
+            {"first_hash": first_hash},
+        )
+        conn.execute(
+            text(
+                "INSERT INTO source_statement_periods "
+                "(id, source, period_start, period_end, rows_present, observed_row_count, "
+                " verified_complete, verification_method) "
+                "VALUES ('dummy-period', 'comdirect', '2026-01-01', '2026-01-31', true, 2, "
+                " false, 'synthetic')"
+            )
+        )
+        conn.execute(
+            text(
+                "INSERT INTO subscription_records "
+                "(id, label, status, confidence, evidence_source, transaction_id, "
+                " amount_scenarios) "
+                "VALUES ('dummy-subscription', 'Example Subscription', 'review', 0.500, "
+                " 'manual', :first_hash, '[{\"amount\": \"0.00\"}]')"
+            ),
+            {"first_hash": first_hash},
+        )
+        conn.execute(
+            text(
+                "INSERT INTO value_assessments "
+                "(id, transaction_id, value_class, confidence, question) "
+                "VALUES ('dummy-value', :second_hash, 'unresolved', 0.500, "
+                " 'Synthetic review question?')"
+            ),
+            {"second_hash": second_hash},
+        )
+        conn.execute(
+            text(
+                "INSERT INTO analytics_correction_runs "
+                "(id, correction_version, mode, status, result_counts) "
+                "VALUES ('dummy-audit-run', 1, 'apply', 'succeeded', "
+                " '{\"unchanged\": 2}')"
+            )
+        )
+
+
+def test_0028_round_trips_populated_evidence_and_fails_closed(fresh_db_url):
+    """Partial and full rollback cycles preserve every source/evidence row."""
     from alembic import command
 
     cfg = _alembic_config()
@@ -107,36 +233,100 @@ def test_0028_downgrade_fails_closed_and_preserves_evidence(fresh_db_url):
 
     engine = create_engine(fresh_db_url)
     try:
-        with engine.begin() as conn:
-            conn.execute(
-                text(
-                    "INSERT INTO analytics_correction_runs "
-                    "(id, correction_version, mode, status, result_counts) "
-                    "VALUES ('dummy-audit-run', 1, 'apply', 'succeeded', '{}')"
-                )
-            )
+        _seed_0028_evidence(engine)
+        expected = _json_snapshots(engine)
 
-        with _force_db_url(fresh_db_url), pytest.raises(
-            DBAPIError, match="cannot be restored losslessly"
-        ):
+        # One-revision rollback: public raw and 0027 evidence rows stay exact;
+        # only 0028-owned public objects are removed after the snapshot commits.
+        with _force_db_url(fresh_db_url):
             command.downgrade(cfg, "0027_mail_evidence_context")
 
         tables = set(inspect(engine).get_table_names())
-        assert {
-            "analytics_correction_runs",
-            "source_statement_periods",
-            "subscription_records",
-            "value_assessments",
-        } <= tables
+        assert "analytics_correction_runs" not in tables
+        assert "source_statement_periods" not in tables
+        assert "raw_transactions" in tables
         columns = {
             column["name"]
             for column in inspect(engine).get_columns("normalized_transactions")
         }
-        assert {"accounting_class", "refund_verification_status", "is_active"} <= columns
+        assert "accounting_class" not in columns
         with engine.connect() as conn:
             assert conn.execute(
-                text("SELECT count(*) FROM analytics_correction_runs")
-            ).scalar_one() == 1
+                text("SELECT count(*) FROM raw_transactions")
+            ).scalar_one() == 2
+            assert conn.execute(
+                text(
+                    "SELECT row_count FROM k_fin_0028_preservation.snapshot_tables "
+                    "WHERE table_name = 'raw_transactions'"
+                )
+            ).scalar_one() == 2
+            assert conn.execute(
+                text("SELECT version_num FROM alembic_version")
+            ).scalar_one() == "0027_mail_evidence_context"
+
+        # A conflicting 0027-era write is never overwritten.  Re-upgrade
+        # fails transactionally, keeps that write, and retains the snapshot.
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    "UPDATE normalized_transactions SET description = 'changed-at-0027' "
+                    "WHERE id = :first_hash"
+                ),
+                {"first_hash": "a" * 64},
+            )
+        with _force_db_url(fresh_db_url), pytest.raises(
+            DBAPIError, match="restore blocked"
+        ):
+            command.upgrade(cfg, "head")
+        with engine.connect() as conn:
+            assert conn.execute(
+                text(
+                    "SELECT description FROM normalized_transactions WHERE id = :first_hash"
+                ),
+                {"first_hash": "a" * 64},
+            ).scalar_one() == "changed-at-0027"
+            assert conn.execute(
+                text("SELECT to_regclass('k_fin_0028_preservation.snapshot_rows')")
+            ).scalar_one() == "k_fin_0028_preservation.snapshot_rows"
+            assert conn.execute(
+                text("SELECT version_num FROM alembic_version")
+            ).scalar_one() == "0027_mail_evidence_context"
+
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    "UPDATE normalized_transactions SET description = 'preserved-before' "
+                    "WHERE id = :first_hash"
+                ),
+                {"first_hash": "a" * 64},
+            )
+        with _force_db_url(fresh_db_url):
+            command.upgrade(cfg, "head")
+        assert _json_snapshots(engine) == expected
+
+        # Full repository smoke contract: all public tables may disappear at
+        # base, but raw source records and every v2/evidence row remain in the
+        # enum-independent preservation schema and return exactly on upgrade.
+        with _force_db_url(fresh_db_url):
+            command.downgrade(cfg, "base")
+        with engine.connect() as conn:
+            assert conn.execute(
+                text("SELECT to_regclass('public.raw_transactions')")
+            ).scalar_one() is None
+            assert conn.execute(
+                text(
+                    "SELECT row_count FROM k_fin_0028_preservation.snapshot_tables "
+                    "WHERE table_name = 'raw_transactions'"
+                )
+            ).scalar_one() == 2
+
+        with _force_db_url(fresh_db_url):
+            command.upgrade(cfg, "head")
+        assert _json_snapshots(engine) == expected
+        with engine.connect() as conn:
+            assert conn.execute(
+                text("SELECT to_regclass('k_fin_0028_preservation.snapshot_rows')")
+            ).scalar_one() is None
             assert conn.execute(
                 text("SELECT version_num FROM alembic_version")
             ).scalar_one() == "0028_trustworthy_analytics"
@@ -144,24 +334,45 @@ def test_0028_downgrade_fails_closed_and_preserves_evidence(fresh_db_url):
         engine.dispose()
 
 
-def test_0028_offline_downgrade_sql_is_non_destructive_fail_closed():
-    """Offline rollback artifacts retain the same production safety gate."""
+def test_0028_offline_sql_preserves_before_reverse_and_restores_exactly():
+    """Offline artifacts preserve first and retain fail-closed verification."""
     from alembic import command
 
     cfg = _alembic_config()
-    output = io.StringIO()
-    cfg.output_buffer = output
+    downgrade_output = io.StringIO()
+    cfg.output_buffer = downgrade_output
     with _force_db_url("postgresql+psycopg://test@localhost/test"):
         command.downgrade(
             cfg,
             "0028_trustworthy_analytics:0027_mail_evidence_context",
             sql=True,
         )
-    sql = output.getvalue()
-    assert "RAISE EXCEPTION" in sql
-    assert "cannot be restored losslessly" in sql
-    assert "DROP TABLE" not in sql.upper()
-    assert "DROP COLUMN" not in sql.upper()
+    downgrade_sql = downgrade_output.getvalue()
+    preserve_position = downgrade_sql.index("CREATE SCHEMA IF NOT EXISTS")
+    first_public_drop = downgrade_sql.index("DROP TABLE analytics_correction_runs")
+    assert preserve_position < first_public_drop
+    assert "LOCK TABLE public.%I IN ACCESS EXCLUSIVE MODE" in downgrade_sql
+    assert "to_jsonb(source_row)" in downgrade_sql
+    assert "preserved %s of %s rows" in downgrade_sql
+    assert "DROP TABLE raw_transactions" not in downgrade_sql
+    assert "UPDATE raw_transactions" not in downgrade_sql
+    assert "DELETE FROM raw_transactions" not in downgrade_sql
+
+    upgrade_output = io.StringIO()
+    cfg.output_buffer = upgrade_output
+    with _force_db_url("postgresql+psycopg://test@localhost/test"):
+        command.upgrade(
+            cfg,
+            "0027_mail_evidence_context:0028_trustworthy_analytics",
+            sql=True,
+        )
+    upgrade_sql = upgrade_output.getvalue()
+    assert "jsonb_populate_record" in upgrade_sql
+    assert "ON CONFLICT DO NOTHING" in upgrade_sql
+    assert "restore blocked" in upgrade_sql
+    assert upgrade_sql.index("restore blocked") < upgrade_sql.index(
+        "DROP SCHEMA k_fin_0028_preservation CASCADE"
+    )
 
 
 def test_0022_backfills_external_id_and_is_reversible(fresh_db_url):
