@@ -129,15 +129,25 @@ def _database_state(engine) -> dict[str, dict[str, object]]:
         ).scalars()
         for table_name in table_names:
             quoted_table = conn.dialect.identifier_preparer.quote(table_name)
-            tables[table_name] = list(
-                conn.execute(
+            tables[table_name] = {
+                "owner": conn.execute(
                     text(
-                        "SELECT to_jsonb(snapshot_row)::text "
-                        f"FROM (SELECT * FROM {quoted_table}) AS snapshot_row "
-                        "ORDER BY 1"
-                    )
-                ).scalars()
-            )
+                        "SELECT table_relation.relowner::regrole::text "
+                        "FROM pg_class AS table_relation "
+                        "WHERE table_relation.oid = to_regclass(:qualified_name)"
+                    ),
+                    {"qualified_name": f"public.{table_name}"},
+                ).scalar_one(),
+                "rows": list(
+                    conn.execute(
+                        text(
+                            "SELECT to_jsonb(snapshot_row)::text "
+                            f"FROM (SELECT * FROM {quoted_table}) AS snapshot_row "
+                            "ORDER BY 1"
+                        )
+                    ).scalars()
+                ),
+            }
 
         sequence_names = conn.execute(
             text(
@@ -469,6 +479,57 @@ def test_0028_every_persistent_sequence_customization_fails_closed(fresh_db_url)
         engine.dispose()
 
 
+def test_0028_coordinated_table_and_sequence_owner_change_fails_closed(
+    fresh_db_url,
+):
+    """Equal table/sequence owners cannot conceal a changed owner identity."""
+    from alembic import command
+
+    cfg = _alembic_config()
+    with _force_db_url(fresh_db_url):
+        command.upgrade(cfg, "head")
+
+    engine = create_engine(fresh_db_url)
+    synthetic_owner = f"k_fin_0028_owner_{uuid.uuid4().hex}"
+    quoted_owner = engine.dialect.identifier_preparer.quote(synthetic_owner)
+    try:
+        with engine.begin() as conn:
+            conn.execute(text(f"CREATE ROLE {quoted_owner} NOLOGIN"))
+            conn.execute(text(f"ALTER TABLE public.rules OWNER TO {quoted_owner}"))
+            owners = tuple(
+                conn.execute(
+                    text(
+                        "SELECT relation.relowner::regrole::text "
+                        "FROM pg_class AS relation "
+                        "WHERE relation.oid IN "
+                        "(to_regclass('public.rules'), to_regclass('public.rules_id_seq')) "
+                        "ORDER BY relation.relkind"
+                    )
+                ).scalars()
+            )
+        assert owners == (synthetic_owner, synthetic_owner)
+        expected = _database_state(engine)
+
+        with _force_db_url(fresh_db_url), pytest.raises(
+            DBAPIError, match="owner verification blocked: object .* owner identity changed"
+        ):
+            command.downgrade(cfg, "base")
+
+        assert _database_state(engine) == expected
+        with engine.connect() as conn:
+            assert conn.execute(
+                text("SELECT version_num FROM alembic_version")
+            ).scalar_one() == "0028_trustworthy_analytics"
+            assert conn.execute(
+                text("SELECT to_regnamespace('k_fin_0028_preservation')")
+            ).scalar_one() is None
+    finally:
+        with engine.begin() as conn:
+            conn.execute(text("ALTER TABLE public.rules OWNER TO CURRENT_USER"))
+            conn.execute(text(f"DROP ROLE IF EXISTS {quoted_owner}"))
+        engine.dispose()
+
+
 def test_0028_concurrent_sequence_definition_and_state_changes_fail_closed(
     fresh_db_url,
 ):
@@ -750,6 +811,7 @@ def test_0028_offline_sql_preserves_before_reverse_and_restores_exactly():
     assert "sequence_metadata.seqcache" in downgrade_sql
     assert "sequence_metadata.seqcycle" in downgrade_sql
     assert "ALTER SEQUENCE %I.%I OWNED BY" in downgrade_sql
+    assert "owner identity changed" in downgrade_sql
     assert "serial sequence %I contains application state" in downgrade_sql
     assert "to_jsonb(source_row)" in downgrade_sql
     assert "preserved %s of %s rows" in downgrade_sql

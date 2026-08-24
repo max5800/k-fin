@@ -23,6 +23,51 @@ _PRESERVATION_SCHEMA = "k_fin_0028_preservation"
 _ROLLBACK_MARKER = "k-fin 0028 preservation snapshot is active"
 
 
+_VERIFY_OWNER_FIDELITY_SQL = """
+DO $k_fin$
+DECLARE
+    expected_owner oid;
+    target record;
+BEGIN
+    -- alembic_version predates 0028 and survives a downgrade to base.  Its
+    -- owner is therefore the exact migration owner anchor for both directions;
+    -- comparing only a sequence with its table would admit coordinated changes.
+    SELECT version_relation.relowner
+    INTO expected_owner
+    FROM pg_class AS version_relation
+    JOIN pg_namespace AS version_namespace
+      ON version_namespace.oid = version_relation.relnamespace
+    WHERE version_namespace.nspname = 'public'
+      AND version_relation.relname = 'alembic_version'
+      AND version_relation.relkind IN ('r', 'p');
+
+    IF expected_owner IS NULL THEN
+        RAISE EXCEPTION
+            'k-fin 0028 owner verification blocked: migration owner anchor is missing';
+    END IF;
+
+    FOR target IN
+        SELECT relation.relname, relation.relkind, relation.relowner
+        FROM pg_class AS relation
+        JOIN pg_namespace AS namespace
+          ON namespace.oid = relation.relnamespace
+        WHERE namespace.nspname = 'public'
+          AND relation.relkind IN ('r', 'p', 'S')
+          AND relation.relname <> 'alembic_version'
+        ORDER BY relation.relname
+    LOOP
+        IF target.relowner IS DISTINCT FROM expected_owner THEN
+            RAISE EXCEPTION USING MESSAGE = format(
+                'k-fin 0028 owner verification blocked: object %I owner identity changed',
+                target.relname
+            );
+        END IF;
+    END LOOP;
+END
+$k_fin$;
+"""
+
+
 _EMPTY_CATEGORY_ROWS = (
     ("miete", "Miete & Nebenkosten", "fix"),
     ("strom-gas", "Strom & Gas", "fix"),
@@ -1053,6 +1098,7 @@ def upgrade() -> None:
     # any mismatch aborts transactionally and leaves the snapshot available.
     op.execute(sa.text(_LOCK_RESTORE_TABLES_SQL))
     op.execute(sa.text(_LOCK_RESTORE_SEQUENCES_SQL))
+    op.execute(sa.text(_VERIFY_OWNER_FIDELITY_SQL))
     op.execute(sa.text(_RESTORE_SQL))
 
 
@@ -1064,6 +1110,7 @@ def downgrade() -> None:
     # eligible for the repository's empty HEAD -> base -> HEAD smoke cycle.
     op.execute(sa.text(_LOCK_DOWNGRADE_TABLES_SQL))
     op.execute(sa.text(_LOCK_DOWNGRADE_SEQUENCES_SQL))
+    op.execute(sa.text(_VERIFY_OWNER_FIDELITY_SQL))
     op.execute(sa.text(_FAIL_CLOSED_SQL))
 
     # Preserve the eligible bootstrap rows so their generated values also
