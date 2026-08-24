@@ -89,6 +89,31 @@ def _collect_carry_fields(
     return carry
 
 
+def _enforce_raw_supersession(
+    session: Session, transitions: list[tuple[str, str]]
+) -> None:
+    """Persist each planned predecessor/successor edge explicitly.
+
+    Generic ingest versioning discovers predecessors through ``external_id``.
+    That column is nullable for legacy rows, while this maintenance pass already
+    has the exact content-hash transitions.  Use those authoritative edges so a
+    null legacy identifier cannot leave both raw and normalized revisions active.
+    """
+    for old_hash, new_hash in transitions:
+        predecessor = session.execute(
+            select(RawTransaction)
+            .where(RawTransaction.content_hash == old_hash)
+            .with_for_update()
+        ).scalar_one_or_none()
+        successor = session.get(RawTransaction, new_hash)
+        if predecessor is None or successor is None:
+            raise RuntimeError("remitter re-ingest transition is incomplete")
+        if predecessor.superseded_by not in {None, new_hash}:
+            raise RuntimeError("remitter re-ingest predecessor already has another successor")
+        predecessor.superseded_by = new_hash
+        successor.version = max(successor.version, predecessor.version + 1)
+
+
 def _carry_fields_and_refresh_accounting(
     session: Session, carry: dict[str, dict], *, commit: bool = True
 ) -> int:
@@ -144,6 +169,7 @@ def _reingest_atomically(
         inserted = pipeline.load_raw_transactions(
             reingest, session=session, commit=False
         )
+        _enforce_raw_supersession(session, transitions)
         checkpoint("after_raw_supersession")
         _frame, run_id = pipeline.process_and_normalize(
             session=session, commit=False

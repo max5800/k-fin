@@ -103,8 +103,9 @@ def test_carry_preserves_predecessor_and_link_history_and_refreshes_successor(
         assert successor.accounting_version == 2
 
 
+@pytest.mark.parametrize("external_id", ["DUMMY-REFERENCE-1", None])
 def test_reingest_failure_rolls_back_every_stage_and_retry_is_idempotent(
-    db_engine,
+    db_engine, external_id,
 ):
     old_data = {
         "reference": "DUMMY-REFERENCE-1",
@@ -131,7 +132,7 @@ def test_reingest_failure_rolls_back_every_stage_and_retry_is_idempotent(
             RawTransaction(
                 content_hash=old_hash,
                 source=DataSource.COMDIRECT,
-                external_id="DUMMY-REFERENCE-1",
+                external_id=external_id,
                 raw_data=old_data,
             )
         )
@@ -151,7 +152,7 @@ def test_reingest_failure_rolls_back_every_stage_and_retry_is_idempotent(
             "content_hash": new_hash,
             "raw_data": new_data,
             "source": DataSource.COMDIRECT,
-            "external_id": "DUMMY-REFERENCE-1",
+            "external_id": external_id,
             "batch_id": None,
         }
     ]
@@ -186,6 +187,7 @@ def test_reingest_failure_rolls_back_every_stage_and_retry_is_idempotent(
         assert (inserted, carried) == (1, 1)
         with Session(db_engine) as session:
             assert session.get(RawTransaction, old_hash).superseded_by == new_hash
+            assert session.get(RawTransaction, new_hash).version == 2
             assert session.get(NormalizedTransaction, old_hash).is_active is False
             successor = session.get(NormalizedTransaction, new_hash)
             assert successor.is_active is True
