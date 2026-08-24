@@ -23,16 +23,227 @@ _PRESERVATION_SCHEMA = "k_fin_0028_preservation"
 _ROLLBACK_MARKER = "k-fin 0028 preservation snapshot is active"
 
 
+_EMPTY_CATEGORY_ROWS = (
+    ("miete", "Miete & Nebenkosten", "fix"),
+    ("strom-gas", "Strom & Gas", "fix"),
+    ("internet-telefon", "Internet & Telefon", "fix"),
+    ("versicherungen", "Versicherungen", "fix"),
+    ("auto-fix", "Auto (Steuer, Versicherung)", "fix"),
+    ("oepnv-abo", "ÖPNV-Abo", "fix"),
+    ("abos-streaming", "Abos & Streaming", "fix"),
+    ("mitgliedschaften", "Mitgliedschaften", "fix"),
+    ("kredit-tilgung", "Kredit & Tilgung", "fix"),
+    ("gez", "Rundfunkbeitrag", "fix"),
+    ("lebensmittel", "Lebensmittel", "variabel"),
+    ("drogerie", "Drogerie & Hygiene", "variabel"),
+    ("tanken", "Tanken & Laden", "variabel"),
+    ("auto-variabel", "Auto (Werkstatt, Parken)", "variabel"),
+    ("gesundheit", "Gesundheit & Apotheke", "variabel"),
+    ("haushalt", "Haushalt & Wohnung", "variabel"),
+    ("restaurant-cafe", "Restaurant & Café", "diskretionaer"),
+    ("bars-ausgehen", "Bars & Ausgehen", "diskretionaer"),
+    ("kleidung", "Kleidung & Schuhe", "diskretionaer"),
+    ("elektronik", "Elektronik & Software", "diskretionaer"),
+    ("freizeit", "Freizeit & Hobby", "diskretionaer"),
+    ("reisen", "Reisen & Urlaub", "diskretionaer"),
+    ("geschenke", "Geschenke & Spenden", "diskretionaer"),
+    ("bildung", "Bildung & Bücher", "diskretionaer"),
+    ("gehalt", "Gehalt & Lohn", "fix"),
+    ("nebeneinkuenfte", "Nebeneinkünfte", "variabel"),
+    ("kapitalertraege", "Kapitalerträge", "variabel"),
+    ("erstattungen", "Erstattungen & Rückzahlungen", "variabel"),
+    ("etf-sparplan", "ETF-Sparplan", "fix"),
+    ("wertpapierkauf", "Wertpapierkauf", "diskretionaer"),
+    ("umbuchung", "Umbuchung", "fix"),
+)
+
+
+def _sql_literal(value: str) -> str:
+    return "'" + value.replace("'", "''") + "'"
+
+
+_EMPTY_CATEGORY_VALUES_SQL = ",\n            ".join(
+    "(" + ", ".join(_sql_literal(value) for value in row) + ")"
+    for row in _EMPTY_CATEGORY_ROWS
+)
+
+
+_FAIL_CLOSED_SQL = f"""
+DO $k_fin$
+DECLARE
+    unexpected_rows bigint;
+    target record;
+    sequence_target record;
+    sequence_value bigint;
+    sequence_is_called boolean;
+BEGIN
+    -- Hold every application table stable from the predicate through the
+    -- reverse migration.  A blocked attempt releases these locks when its
+    -- transaction aborts and has not changed any row, sequence, or schema.
+    FOR target IN
+        SELECT tablename
+        FROM pg_tables
+        WHERE schemaname = 'public'
+          AND tablename <> 'alembic_version'
+        ORDER BY tablename
+    LOOP
+        EXECUTE format('LOCK TABLE public.%I IN ACCESS EXCLUSIVE MODE', target.tablename);
+    END LOOP;
+
+    -- Inspect every public application table dynamically.  Only the exact
+    -- migration-owned category catalog and app-settings singleton constitute
+    -- an empty database; changes to either are application state too.
+    FOR target IN
+        SELECT tablename
+        FROM pg_tables
+        WHERE schemaname = 'public'
+          AND tablename <> 'alembic_version'
+        ORDER BY tablename
+    LOOP
+        IF target.tablename = 'categories' THEN
+            WITH seed (id, name, type) AS (
+                VALUES {_EMPTY_CATEGORY_VALUES_SQL}
+            ), expected AS (
+                SELECT id,
+                       name,
+                       type,
+                       'expense'::varchar AS kind,
+                       true AS budgetable,
+                       NULL::varchar AS analysis_group,
+                       NULL::varchar AS description,
+                       NULL::jsonb AS examples,
+                       NULL::jsonb AS anti_examples,
+                       NULL::varchar AS llm_hints
+                FROM seed
+            )
+            SELECT count(*)
+            INTO unexpected_rows
+            FROM (
+                (
+                    SELECT id,
+                           name,
+                           type::text,
+                           kind,
+                           budgetable,
+                           analysis_group,
+                           description,
+                           examples::jsonb,
+                           anti_examples::jsonb,
+                           llm_hints
+                    FROM public.categories
+                    EXCEPT
+                    SELECT * FROM expected
+                )
+                UNION ALL
+                (
+                    SELECT * FROM expected
+                    EXCEPT
+                    SELECT id,
+                           name,
+                           type::text,
+                           kind,
+                           budgetable,
+                           analysis_group,
+                           description,
+                           examples::jsonb,
+                           anti_examples::jsonb,
+                           llm_hints
+                    FROM public.categories
+                )
+            ) AS differences;
+        ELSIF target.tablename = 'app_settings' THEN
+            WITH expected (id, auto_apply_confidence, page_size, webhook_url, own_ibans) AS (
+                VALUES (1, 0.60::numeric, 25, NULL::varchar, ''::varchar)
+            )
+            SELECT count(*)
+            INTO unexpected_rows
+            FROM (
+                (
+                    SELECT id, auto_apply_confidence, page_size, webhook_url, own_ibans
+                    FROM public.app_settings
+                    EXCEPT
+                    SELECT * FROM expected
+                )
+                UNION ALL
+                (
+                    SELECT * FROM expected
+                    EXCEPT
+                    SELECT id, auto_apply_confidence, page_size, webhook_url, own_ibans
+                    FROM public.app_settings
+                )
+            ) AS differences;
+        ELSE
+            EXECUTE format('SELECT count(*) FROM public.%I', target.tablename)
+            INTO unexpected_rows;
+        END IF;
+
+        IF unexpected_rows <> 0 THEN
+            RAISE EXCEPTION USING MESSAGE = format(
+                'k-fin 0028 downgrade blocked before schema change: '
+                'table %I contains application state',
+                target.tablename
+            );
+        END IF;
+    END LOOP;
+
+    -- Empty tables can still carry state in an advanced SERIAL/IDENTITY
+    -- sequence after rows were deleted.  Discover every sequence owned by a
+    -- public application-table column and require its original start state.
+    FOR sequence_target IN
+        SELECT sequence_namespace.nspname AS schema_name,
+               sequence_relation.relname AS sequence_name,
+               sequence_metadata.seqstart AS start_value
+        FROM pg_class AS sequence_relation
+        JOIN pg_namespace AS sequence_namespace
+          ON sequence_namespace.oid = sequence_relation.relnamespace
+        JOIN pg_sequence AS sequence_metadata
+          ON sequence_metadata.seqrelid = sequence_relation.oid
+        JOIN pg_depend AS dependency
+          ON dependency.classid = 'pg_class'::regclass
+         AND dependency.objid = sequence_relation.oid
+         AND dependency.deptype IN ('a', 'i')
+        JOIN pg_class AS owner_relation
+          ON owner_relation.oid = dependency.refobjid
+        JOIN pg_namespace AS owner_namespace
+          ON owner_namespace.oid = owner_relation.relnamespace
+        WHERE sequence_relation.relkind = 'S'
+          AND sequence_namespace.nspname = 'public'
+          AND owner_namespace.nspname = 'public'
+          AND owner_relation.relname <> 'alembic_version'
+        ORDER BY sequence_relation.relname
+    LOOP
+        EXECUTE format(
+            'SELECT last_value, is_called FROM %I.%I',
+            sequence_target.schema_name,
+            sequence_target.sequence_name
+        )
+        INTO sequence_value, sequence_is_called;
+
+        IF sequence_value <> sequence_target.start_value OR sequence_is_called THEN
+            RAISE EXCEPTION USING MESSAGE = format(
+                'k-fin 0028 downgrade blocked before schema change: '
+                'serial sequence %I contains application state',
+                sequence_target.sequence_name
+            );
+        END IF;
+    END LOOP;
+END
+$k_fin$;
+"""
+
+
 _RESTORE_SQL = f"""
 DO $k_fin$
 DECLARE
     is_full_round_trip boolean;
     restored_in_pass integer;
     remaining integer;
+    current_count bigint;
     target record;
     sequence_target record;
     sequence_name text;
     sequence_value bigint;
+    sequence_is_called boolean;
     table_list text;
 BEGIN
     IF to_regclass('{_PRESERVATION_SCHEMA}.snapshot_state') IS NOT NULL THEN
@@ -171,43 +382,62 @@ BEGIN
                 target.table_name
             ) INTO remaining;
 
-            IF remaining <> target.row_count THEN
+            EXECUTE format(
+                'SELECT count(*) FROM public.%I',
+                target.table_name
+            ) INTO current_count;
+
+            IF remaining <> target.row_count OR current_count <> target.row_count THEN
                 RAISE EXCEPTION USING MESSAGE = format(
-                    'k-fin 0028 restore blocked: table %I restored %s of %s preserved rows',
+                    'k-fin 0028 restore blocked: table %I restored %s of %s '
+                    'preserved rows with %s current rows',
                     target.table_name,
                     remaining,
-                    target.row_count
+                    target.row_count,
+                    current_count
                 );
             END IF;
         END LOOP;
 
-        -- Explicit serial values do not advance recreated sequences.  Keep a
-        -- higher extant value during a one-revision cycle and otherwise move
-        -- each owned sequence to at least the restored maximum.
+        -- The downgrade guard admitted only pristine owned sequences and seed
+        -- rows use explicit ids.  Verify that no sequence was consumed while
+        -- parked at an older revision; never overwrite such intervening state.
         FOR sequence_target IN
-            SELECT table_name, column_name
-            FROM information_schema.columns
-            WHERE table_schema = 'public'
-            ORDER BY table_name, ordinal_position
+            SELECT sequence_namespace.nspname AS schema_name,
+                   sequence_relation.relname AS sequence_name,
+                   sequence_metadata.seqstart AS start_value
+            FROM pg_class AS sequence_relation
+            JOIN pg_namespace AS sequence_namespace
+              ON sequence_namespace.oid = sequence_relation.relnamespace
+            JOIN pg_sequence AS sequence_metadata
+              ON sequence_metadata.seqrelid = sequence_relation.oid
+            JOIN pg_depend AS dependency
+              ON dependency.classid = 'pg_class'::regclass
+             AND dependency.objid = sequence_relation.oid
+             AND dependency.deptype IN ('a', 'i')
+            JOIN pg_class AS owner_relation
+              ON owner_relation.oid = dependency.refobjid
+            JOIN pg_namespace AS owner_namespace
+              ON owner_namespace.oid = owner_relation.relnamespace
+            WHERE sequence_relation.relkind = 'S'
+              AND sequence_namespace.nspname = 'public'
+              AND owner_namespace.nspname = 'public'
+              AND owner_relation.relname <> 'alembic_version'
+            ORDER BY sequence_relation.relname
         LOOP
-            sequence_name := pg_get_serial_sequence(
-                format('public.%I', sequence_target.table_name),
-                sequence_target.column_name
-            );
-            IF sequence_name IS NOT NULL THEN
-                EXECUTE format(
-                    'SELECT max(%I)::bigint FROM public.%I',
-                    sequence_target.column_name,
-                    sequence_target.table_name
-                ) INTO sequence_value;
-                IF sequence_value IS NOT NULL THEN
-                    EXECUTE format(
-                        'SELECT setval(%L, GREATEST((SELECT last_value FROM %s), %s), true)',
-                        sequence_name,
-                        sequence_name,
-                        sequence_value
-                    );
-                END IF;
+            EXECUTE format(
+                'SELECT last_value, is_called FROM %I.%I',
+                sequence_target.schema_name,
+                sequence_target.sequence_name
+            )
+            INTO sequence_value, sequence_is_called;
+
+            IF sequence_value <> sequence_target.start_value OR sequence_is_called THEN
+                RAISE EXCEPTION USING MESSAGE = format(
+                    'k-fin 0028 restore blocked: serial sequence %I changed '
+                    'while the preservation snapshot was active',
+                    sequence_target.sequence_name
+                );
             END IF;
         END LOOP;
 
@@ -483,11 +713,16 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    # Public v2 objects have no representation at 0027, and a full downgrade
-    # also removes the raw audit ledger.  Preserve every application table as
-    # JSONB under an enum-independent schema before removing any public object.
-    # PostgreSQL transactional DDL makes snapshot + reverse schema changes
-    # atomic; the subsequent 0028 upgrade restores and verifies exact rows.
+    # No historical, evidence, audit, derived, or user-configured row has a
+    # lossless representation throughout the path to base.  Refuse a
+    # populated downgrade before creating the preservation schema or removing
+    # any public object.  The exact migration-owned bootstrap state remains
+    # eligible for the repository's empty HEAD -> base -> HEAD smoke cycle.
+    op.execute(sa.text(_FAIL_CLOSED_SQL))
+
+    # Preserve the eligible bootstrap rows so their generated values also
+    # round-trip exactly.  The fail-closed predicate guarantees this snapshot
+    # never becomes an implicit backup mechanism for application data.
     op.execute(sa.text(_PRESERVE_SQL))
 
     op.drop_table("analytics_correction_runs")

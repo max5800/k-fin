@@ -42,14 +42,14 @@ jobs:
         run: uv python install 3.13
 
       - name: Install dependencies
-        run: uv sync --dev
+        run: uv sync --frozen --no-dev
 
       - name: Export locked requirements and run pip-audit
-        # Non-blocking (continue-on-error) until false-positive rate is
-        # understood for the native-code deps added in M16 (pdfplumber,
-        # pdfminer.six, pillow, pypdfium2, python-multipart). Promote to
-        # blocking once the baseline is clean. `uv export` produces a
-        # requirements.txt from the lockfile; `uvx pip-audit` runs in an
-        # isolated env so it doesn't require pip-audit to be in uv.lock.
-        run: uv export --format requirements-txt --no-emit-project | uvx pip-audit -r /dev/stdin
-        continue-on-error: true
+        # The export is the frozen runtime closure from uv.lock. Because every
+        # requirement is pinned and hashed, pip-audit can query it directly
+        # without creating a temporary pip environment. pipefail also makes an
+        # export failure fail the job instead of auditing an empty stream.
+        run: |
+          set -o pipefail
+          uv export --frozen --no-dev --format requirements-txt --no-emit-project |
+            uvx pip-audit --disable-pip --require-hashes -r /dev/stdin

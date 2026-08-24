@@ -85,12 +85,45 @@ failure rolls back the entire repair; the same input can then be retried safely.
 
 ## Migration downgrade policy
 
-Revision `0028_trustworthy_analytics` cannot be represented losslessly by the
-0027 schema. Its downgrade therefore fails closed with a PostgreSQL exception;
-it does not drop v2 tables, audit rows, links, decisions, or accounting columns.
-The same guard is present in offline Alembic downgrade SQL. Restore an older
-application only after a separate, explicitly reviewed compatibility migration
-has preserved every v2 evidence field.
+Revision `0028_trustworthy_analytics` cannot carry populated application state
+losslessly through every older revision. Downgrade is therefore allowed only
+for the repository's empty migration-smoke state: the exact migration-owned
+category catalog, the untouched app-settings defaults, empty remaining
+application tables, and every owned serial/identity sequence at its pristine
+start value. The predicate discovers all public application tables and owned
+sequences from the PostgreSQL catalogs; it does not rely on a selected-table
+list.
+
+The downgrade first takes `ACCESS EXCLUSIVE` locks on every public application
+table so the predicate and reverse migration observe one stable state. If any
+row, customized bootstrap value, or consumed sequence is present, PostgreSQL
+raises an exception before the preservation schema is created or any public
+row, schema object, or Alembic version is changed. The transaction releases the
+locks and leaves the database at `0028_trustworthy_analytics` exactly as it was.
+The same fail-closed guard is emitted in offline Alembic downgrade SQL.
+
+For an eligible empty smoke cycle, the migration stores only the bootstrap rows
+in `k_fin_0028_preservation` as JSONB while traversing to `base`; empty tables
+contribute metadata but no row copies. A subsequent upgrade restores and
+verifies that state and then drops the preservation schema. Operators must
+allow temporary database storage for that small migration-owned snapshot and
+must expect writes to wait behind the table locks for the duration of the
+downgrade transaction.
+
+Do not resume application writes between an empty downgrade to an intermediate
+revision and its re-upgrade. The restore verifies exact table counts, complete
+row representations, and pristine owned sequences. Any intervening row or
+sequence change aborts the re-upgrade transaction, retains both that older-
+schema state and the preservation snapshot, and requires a reviewed migration
+proposal before proceeding.
+
+When a downgrade is blocked, diagnose only: record the current Alembic revision
+and the table or sequence named by the exception, then inventory the affected
+schema with read-only queries. Do not delete records, reset sequences, edit raw
+imports, or run a correction/backfill merely to satisfy the guard. Keep the
+database at HEAD and propose a separate, explicitly reviewed compatibility
+migration (or an application rollback that remains compatible with the HEAD
+schema) before attempting any schema rollback again.
 
 ## Source completeness and monthly-review UI contract
 

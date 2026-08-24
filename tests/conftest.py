@@ -48,6 +48,11 @@ def _docker_available() -> bool:
 
 @pytest.fixture(scope="session")
 def postgres_url():
+    external_url = os.environ.get("KFIN_TEST_POSTGRES_URL")
+    if external_url:
+        yield external_url
+        return
+
     if not _docker_available():
         pytest.skip("Docker not available — integration tests need testcontainers")
 

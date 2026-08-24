@@ -4,20 +4,23 @@ The CI `test-migrations` job only runs `upgrade head` once. These tests
 add real coverage for the preservation-backed 0028 boundary and reversible
 earlier migrations, including the 0022 `external_id` backfill and restoration.
 
-Each test runs against its own throw-away PostgreSQL container so the
-schema mutations never leak into the shared integration-test database.
+Each test runs against its own throw-away PostgreSQL database, provisioned
+either from an explicit test-only admin URL or from testcontainers.
 """
 
 from __future__ import annotations
 
 import contextlib
 import io
+import os
 import sys
 import time
+import uuid
 from pathlib import Path
 
 import pytest
 from sqlalchemy import create_engine, inspect, text
+from sqlalchemy.engine import make_url
 from sqlalchemy.exc import DBAPIError
 
 _ROOT = Path(__file__).resolve().parent.parent
@@ -70,6 +73,21 @@ def _force_db_url(url: str):
 @pytest.fixture
 def fresh_db_url():
     """A brand-new empty PostgreSQL database — isolated per test."""
+    external_admin_url = os.environ.get("KFIN_TEST_POSTGRES_ADMIN_URL")
+    if external_admin_url:
+        database_name = f"kfin_migration_{uuid.uuid4().hex}"
+        admin_engine = create_engine(external_admin_url, isolation_level="AUTOCOMMIT")
+        database_url = make_url(external_admin_url).set(database=database_name)
+        try:
+            with admin_engine.connect() as conn:
+                conn.execute(text(f'CREATE DATABASE "{database_name}"'))
+            yield database_url.render_as_string(hide_password=False)
+        finally:
+            with admin_engine.connect() as conn:
+                conn.execute(text(f'DROP DATABASE IF EXISTS "{database_name}" WITH (FORCE)'))
+            admin_engine.dispose()
+        return
+
     if not _docker_available():
         pytest.skip("Docker not available — migration tests need testcontainers")
 
@@ -97,33 +115,43 @@ def _alembic_config():
     return cfg
 
 
-_PRESERVED_TABLES = (
-    "raw_transactions",
-    "normalized_transactions",
-    "transaction_links",
-    "mail_evidence",
-    "transaction_evidence_links",
-    "source_statement_periods",
-    "subscription_records",
-    "value_assessments",
-    "analytics_correction_runs",
-)
-
-
-def _json_snapshots(engine) -> dict[str, list[str]]:
-    snapshots: dict[str, list[str]] = {}
+def _database_state(engine) -> dict[str, dict[str, object]]:
+    """Snapshot every public table and owned sequence, including Alembic."""
+    tables: dict[str, object] = {}
+    sequences: dict[str, object] = {}
     with engine.connect() as conn:
-        for table_name in _PRESERVED_TABLES:
-            snapshots[table_name] = list(
+        table_names = conn.execute(
+            text(
+                "SELECT tablename FROM pg_tables "
+                "WHERE schemaname = 'public' ORDER BY tablename"
+            )
+        ).scalars()
+        for table_name in table_names:
+            quoted_table = conn.dialect.identifier_preparer.quote(table_name)
+            tables[table_name] = list(
                 conn.execute(
                     text(
-                        f"SELECT to_jsonb(snapshot_row)::text "
-                        f"FROM (SELECT * FROM {table_name}) AS snapshot_row "
+                        "SELECT to_jsonb(snapshot_row)::text "
+                        f"FROM (SELECT * FROM {quoted_table}) AS snapshot_row "
                         "ORDER BY 1"
                     )
                 ).scalars()
             )
-    return snapshots
+
+        sequence_names = conn.execute(
+            text(
+                "SELECT sequencename FROM pg_sequences "
+                "WHERE schemaname = 'public' ORDER BY sequencename"
+            )
+        ).scalars()
+        for sequence_name in sequence_names:
+            quoted_sequence = conn.dialect.identifier_preparer.quote(sequence_name)
+            sequences[sequence_name] = tuple(
+                conn.execute(
+                    text(f"SELECT last_value, is_called FROM {quoted_sequence}")
+                ).one()
+            )
+    return {"tables": tables, "sequences": sequences}
 
 
 def _seed_0028_evidence(engine) -> None:
@@ -223,8 +251,50 @@ def _seed_0028_evidence(engine) -> None:
         )
 
 
-def test_0028_round_trips_populated_evidence_and_fails_closed(fresh_db_url):
-    """Partial and full rollback cycles preserve every source/evidence row."""
+def test_0028_populated_rule_downgrade_fails_before_any_mutation(fresh_db_url):
+    """A valid rule targeting a seeded category blocks the entire downgrade."""
+    from alembic import command
+
+    cfg = _alembic_config()
+    with _force_db_url(fresh_db_url):
+        command.upgrade(cfg, "head")
+
+    engine = create_engine(fresh_db_url)
+    try:
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    "INSERT INTO rules (regex_pattern, target_category_id, priority) "
+                    "VALUES ('synthetic-streaming', 'abos-streaming', 10)"
+                )
+            )
+        expected = _database_state(engine)
+
+        with _force_db_url(fresh_db_url), pytest.raises(
+            DBAPIError, match="table rules contains application state"
+        ):
+            command.downgrade(cfg, "base")
+
+        assert _database_state(engine) == expected
+        with engine.connect() as conn:
+            assert conn.execute(
+                text("SELECT version_num FROM alembic_version")
+            ).scalar_one() == "0028_trustworthy_analytics"
+            assert conn.execute(
+                text("SELECT to_regnamespace('k_fin_0028_preservation')")
+            ).scalar_one() is None
+            assert conn.execute(
+                text(
+                    "SELECT count(*) FROM rules "
+                    "WHERE target_category_id = 'abos-streaming'"
+                )
+            ).scalar_one() == 1
+    finally:
+        engine.dispose()
+
+
+def test_0028_populated_evidence_downgrade_rolls_back_exactly(fresh_db_url):
+    """All tables, rows, sequences, schema, and revision stay byte-for-byte stable."""
     from alembic import command
 
     cfg = _alembic_config()
@@ -234,79 +304,100 @@ def test_0028_round_trips_populated_evidence_and_fails_closed(fresh_db_url):
     engine = create_engine(fresh_db_url)
     try:
         _seed_0028_evidence(engine)
-        expected = _json_snapshots(engine)
+        expected = _database_state(engine)
 
-        # One-revision rollback: public raw and 0027 evidence rows stay exact;
-        # only 0028-owned public objects are removed after the snapshot commits.
-        with _force_db_url(fresh_db_url):
+        with _force_db_url(fresh_db_url), pytest.raises(
+            DBAPIError, match="contains application state"
+        ):
             command.downgrade(cfg, "0027_mail_evidence_context")
 
-        tables = set(inspect(engine).get_table_names())
-        assert "analytics_correction_runs" not in tables
-        assert "source_statement_periods" not in tables
-        assert "raw_transactions" in tables
-        columns = {
-            column["name"]
-            for column in inspect(engine).get_columns("normalized_transactions")
-        }
-        assert "accounting_class" not in columns
+        assert _database_state(engine) == expected
         with engine.connect() as conn:
             assert conn.execute(
-                text("SELECT count(*) FROM raw_transactions")
-            ).scalar_one() == 2
+                text("SELECT version_num FROM alembic_version")
+            ).scalar_one() == "0028_trustworthy_analytics"
             assert conn.execute(
+                text("SELECT to_regnamespace('k_fin_0028_preservation')")
+            ).scalar_one() is None
+    finally:
+        engine.dispose()
+
+
+def test_0028_customized_bootstrap_category_fails_closed(fresh_db_url):
+    """Every category field, not only its seed id, belongs to application state."""
+    from alembic import command
+
+    cfg = _alembic_config()
+    with _force_db_url(fresh_db_url):
+        command.upgrade(cfg, "head")
+
+    engine = create_engine(fresh_db_url)
+    try:
+        with engine.begin() as conn:
+            conn.execute(
                 text(
-                    "SELECT row_count FROM k_fin_0028_preservation.snapshot_tables "
-                    "WHERE table_name = 'raw_transactions'"
+                    "UPDATE categories SET description = 'Synthetic operator note' "
+                    "WHERE id = 'abos-streaming'"
                 )
-            ).scalar_one() == 2
-            assert conn.execute(
-                text("SELECT version_num FROM alembic_version")
-            ).scalar_one() == "0027_mail_evidence_context"
+            )
+        expected = _database_state(engine)
 
-        # A conflicting 0027-era write is never overwritten.  Re-upgrade
-        # fails transactionally, keeps that write, and retains the snapshot.
+        with _force_db_url(fresh_db_url), pytest.raises(
+            DBAPIError, match="table categories contains application state"
+        ):
+            command.downgrade(cfg, "base")
+
+        assert _database_state(engine) == expected
+    finally:
+        engine.dispose()
+
+
+def test_0028_consumed_serial_with_empty_tables_fails_closed(fresh_db_url):
+    """Deleted rows cannot hide application state retained by a serial sequence."""
+    from alembic import command
+
+    cfg = _alembic_config()
+    with _force_db_url(fresh_db_url):
+        command.upgrade(cfg, "head")
+
+    engine = create_engine(fresh_db_url)
+    try:
         with engine.begin() as conn:
             conn.execute(
                 text(
-                    "UPDATE normalized_transactions SET description = 'changed-at-0027' "
-                    "WHERE id = :first_hash"
-                ),
-                {"first_hash": "a" * 64},
+                    "INSERT INTO rules (regex_pattern, target_category_id, priority) "
+                    "VALUES ('synthetic-streaming', 'abos-streaming', 10)"
+                )
             )
+            conn.execute(text("DELETE FROM rules"))
+        expected = _database_state(engine)
+
         with _force_db_url(fresh_db_url), pytest.raises(
-            DBAPIError, match="restore blocked"
+            DBAPIError, match="serial sequence rules_id_seq contains application state"
         ):
-            command.upgrade(cfg, "head")
+            command.downgrade(cfg, "base")
+
+        assert _database_state(engine) == expected
         with engine.connect() as conn:
             assert conn.execute(
-                text(
-                    "SELECT description FROM normalized_transactions WHERE id = :first_hash"
-                ),
-                {"first_hash": "a" * 64},
-            ).scalar_one() == "changed-at-0027"
-            assert conn.execute(
-                text("SELECT to_regclass('k_fin_0028_preservation.snapshot_rows')")
-            ).scalar_one() == "k_fin_0028_preservation.snapshot_rows"
-            assert conn.execute(
                 text("SELECT version_num FROM alembic_version")
-            ).scalar_one() == "0027_mail_evidence_context"
+            ).scalar_one() == "0028_trustworthy_analytics"
+    finally:
+        engine.dispose()
 
-        with engine.begin() as conn:
-            conn.execute(
-                text(
-                    "UPDATE normalized_transactions SET description = 'preserved-before' "
-                    "WHERE id = :first_hash"
-                ),
-                {"first_hash": "a" * 64},
-            )
-        with _force_db_url(fresh_db_url):
-            command.upgrade(cfg, "head")
-        assert _json_snapshots(engine) == expected
 
-        # Full repository smoke contract: all public tables may disappear at
-        # base, but raw source records and every v2/evidence row remain in the
-        # enum-independent preservation schema and return exactly on upgrade.
+def test_0028_empty_head_base_head_smoke_is_exact(fresh_db_url):
+    """Migration-owned bootstrap rows and pristine sequences may round-trip."""
+    from alembic import command
+
+    cfg = _alembic_config()
+    with _force_db_url(fresh_db_url):
+        command.upgrade(cfg, "head")
+
+    engine = create_engine(fresh_db_url)
+    try:
+        expected = _database_state(engine)
+
         with _force_db_url(fresh_db_url):
             command.downgrade(cfg, "base")
         with engine.connect() as conn:
@@ -314,15 +405,12 @@ def test_0028_round_trips_populated_evidence_and_fails_closed(fresh_db_url):
                 text("SELECT to_regclass('public.raw_transactions')")
             ).scalar_one() is None
             assert conn.execute(
-                text(
-                    "SELECT row_count FROM k_fin_0028_preservation.snapshot_tables "
-                    "WHERE table_name = 'raw_transactions'"
-                )
-            ).scalar_one() == 2
+                text("SELECT to_regclass('k_fin_0028_preservation.snapshot_rows')")
+            ).scalar_one() == "k_fin_0028_preservation.snapshot_rows"
 
         with _force_db_url(fresh_db_url):
             command.upgrade(cfg, "head")
-        assert _json_snapshots(engine) == expected
+        assert _database_state(engine) == expected
         with engine.connect() as conn:
             assert conn.execute(
                 text("SELECT to_regclass('k_fin_0028_preservation.snapshot_rows')")
@@ -334,8 +422,47 @@ def test_0028_round_trips_populated_evidence_and_fails_closed(fresh_db_url):
         engine.dispose()
 
 
+def test_0028_restore_rejects_intervening_older_schema_write(fresh_db_url):
+    """A write at 0027 is retained while the attempted re-upgrade rolls back."""
+    from alembic import command
+
+    cfg = _alembic_config()
+    with _force_db_url(fresh_db_url):
+        command.upgrade(cfg, "head")
+        command.downgrade(cfg, "0027_mail_evidence_context")
+
+    engine = create_engine(fresh_db_url)
+    try:
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    "INSERT INTO rules (regex_pattern, target_category_id, priority) "
+                    "VALUES ('synthetic-streaming', 'abos-streaming', 10)"
+                )
+            )
+
+        with _force_db_url(fresh_db_url), pytest.raises(
+            DBAPIError, match="restore blocked: table rules"
+        ):
+            command.upgrade(cfg, "head")
+
+        with engine.connect() as conn:
+            assert conn.execute(
+                text("SELECT version_num FROM alembic_version")
+            ).scalar_one() == "0027_mail_evidence_context"
+            assert conn.execute(text("SELECT count(*) FROM rules")).scalar_one() == 1
+            assert conn.execute(
+                text("SELECT to_regclass('public.analytics_correction_runs')")
+            ).scalar_one() is None
+            assert conn.execute(
+                text("SELECT to_regclass('k_fin_0028_preservation.snapshot_rows')")
+            ).scalar_one() == "k_fin_0028_preservation.snapshot_rows"
+    finally:
+        engine.dispose()
+
+
 def test_0028_offline_sql_preserves_before_reverse_and_restores_exactly():
-    """Offline artifacts preserve first and retain fail-closed verification."""
+    """Offline artifacts guard first, then preserve eligible bootstrap state."""
     from alembic import command
 
     cfg = _alembic_config()
@@ -348,10 +475,14 @@ def test_0028_offline_sql_preserves_before_reverse_and_restores_exactly():
             sql=True,
         )
     downgrade_sql = downgrade_output.getvalue()
+    guard_position = downgrade_sql.index("blocked before schema change")
     preserve_position = downgrade_sql.index("CREATE SCHEMA IF NOT EXISTS")
     first_public_drop = downgrade_sql.index("DROP TABLE analytics_correction_runs")
-    assert preserve_position < first_public_drop
+    assert guard_position < preserve_position < first_public_drop
     assert "LOCK TABLE public.%I IN ACCESS EXCLUSIVE MODE" in downgrade_sql
+    assert "FROM pg_tables" in downgrade_sql
+    assert "JOIN pg_sequence AS sequence_metadata" in downgrade_sql
+    assert "serial sequence %I contains application state" in downgrade_sql
     assert "to_jsonb(source_row)" in downgrade_sql
     assert "preserved %s of %s rows" in downgrade_sql
     assert "DROP TABLE raw_transactions" not in downgrade_sql

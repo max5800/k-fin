@@ -12,6 +12,7 @@ logging never breaks the run.
 
 from __future__ import annotations
 
+import inspect
 import logging
 from dataclasses import dataclass, field
 from decimal import Decimal
@@ -49,7 +50,9 @@ def extract_usage(result: Any) -> tuple[int, int]:
     → `input_tokens`); probe for both so we survive upgrades.
     """
     try:
-        usage = result.usage()
+        usage = result.usage
+        if inspect.isroutine(usage):
+            usage = usage()
     except Exception:  # pragma: no cover — defensive
         logger.exception("Failed to extract usage from agent result")
         return 0, 0

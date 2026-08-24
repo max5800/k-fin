@@ -1,8 +1,8 @@
-"""Anthropic model factory with explicit httpx timeouts.
+"""Anthropic model factory with explicit httpx2 timeouts.
 
 Pydantic-AI's default `Agent("anthropic:...")` shortcut creates an Anthropic
-client with no httpx timeout — a TCP stall during a tool call can hang
-indefinitely. This module wires `httpx.AsyncClient(timeout=...)` into the
+client with no httpx2 timeout — a TCP stall during a tool call can hang
+indefinitely. This module wires `httpx2.AsyncClient(timeout=...)` into the
 provider so every agent gets a hard upper bound per request.
 
 A single `connect=10s, read=180s, write=10s, pool=10s` budget covers
@@ -15,7 +15,7 @@ from __future__ import annotations
 import os
 from dataclasses import replace
 
-import httpx
+import httpx2
 from pydantic_ai.models.anthropic import AnthropicModel
 from pydantic_ai.profiles.anthropic import anthropic_model_profile
 from pydantic_ai.providers.anthropic import AnthropicProvider
@@ -23,7 +23,7 @@ from pydantic_ai.providers.anthropic import AnthropicProvider
 # Numbers tuned to the largest known operation (50-tx categorization batch
 # with WebSearchTool fan-out). Read-timeout is the upper bound on a single
 # Anthropic streaming response; connect/write/pool catch hung sockets.
-_DEFAULT_TIMEOUT = httpx.Timeout(connect=10.0, read=180.0, write=10.0, pool=10.0)
+_DEFAULT_TIMEOUT = httpx2.Timeout(connect=10.0, read=180.0, write=10.0, pool=10.0)
 
 
 def make_anthropic_model(
@@ -31,7 +31,7 @@ def make_anthropic_model(
     *,
     prefer_prompted_output: bool = False,
 ) -> AnthropicModel | str:
-    """Return an `AnthropicModel` with a timeout-bounded httpx client.
+    """Return an `AnthropicModel` with a timeout-bounded httpx2 client.
 
     Falls back to the bare `"anthropic:..."` model string when the
     `ANTHROPIC_API_KEY` env var is missing — this preserves legacy
@@ -51,7 +51,7 @@ def make_anthropic_model(
     if not api_key:
         return model
 
-    client = httpx.AsyncClient(timeout=_DEFAULT_TIMEOUT)
+    client = httpx2.AsyncClient(timeout=_DEFAULT_TIMEOUT)
     provider = AnthropicProvider(api_key=api_key, http_client=client)
     profile = None
     if prefer_prompted_output:
