@@ -7,7 +7,7 @@ import uuid
 from datetime import date, datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from src.api.deps import CurrentUser, get_db, get_report_db, require_token
@@ -70,7 +70,6 @@ def set_source_period_verification(
     This updates local evidence only; it never contacts or mutates a bank.
     Service tokens cannot assert completeness on a user's behalf.
     """
-    del current_user
     try:
         source = DataSource(body.source)
     except ValueError as exc:
@@ -100,27 +99,35 @@ def set_source_period_verification(
         )
     )
     now = datetime.now(timezone.utc)
-    stmt = pg_insert(SourceStatementPeriod).values(
-        id=record_id,
-        source=source,
-        period_start=body.period_start,
-        period_end=body.period_end,
-        rows_present=False,
-        observed_row_count=0,
-        verified_complete=body.verified_complete,
-        verification_method=body.verification_method,
-        verified_at=now if body.verified_complete else None,
-    )
-    stmt = stmt.on_conflict_do_update(
-        index_elements=["id"],
-        set_={
-            "verified_complete": body.verified_complete,
-            "verification_method": body.verification_method,
-            "verified_at": now if body.verified_complete else None,
-            "updated_at": now,
-        },
-    )
-    db.execute(stmt)
+    record = db.execute(
+        select(SourceStatementPeriod)
+        .where(
+            SourceStatementPeriod.source == source,
+            SourceStatementPeriod.period_start == body.period_start,
+            SourceStatementPeriod.period_end == body.period_end,
+        )
+        .with_for_update()
+    ).scalar_one_or_none()
+    if record is not None and record.verified_by_user_id not in {
+        None,
+        current_user.id,
+    }:
+        raise HTTPException(status_code=404, detail="source period not found")
+    if record is None:
+        record = SourceStatementPeriod(
+            id=record_id,
+            source=source,
+            period_start=body.period_start,
+            period_end=body.period_end,
+            rows_present=False,
+            observed_row_count=0,
+        )
+        db.add(record)
+    record.verified_complete = body.verified_complete
+    record.verification_method = body.verification_method
+    record.verified_by_user_id = current_user.id
+    record.verified_at = now if body.verified_complete else None
+    record.updated_at = now
     db.commit()
     return {
         "source": source.value,
@@ -138,34 +145,32 @@ def upsert_subscription_record(
     db: Session = Depends(get_db),
 ):
     """Store itemized evidence state; scenario amounts stay discrete."""
-    del current_user
     if body.transaction_id:
         tx = db.get(NormalizedTransaction, body.transaction_id)
         if tx is None or not tx.is_active:
             raise HTTPException(status_code=404, detail="active transaction not found")
-    stmt = pg_insert(SubscriptionRecord).values(
-        id=record_id,
-        label=body.label,
-        status=body.status,
-        confidence=body.confidence,
-        evidence_source=body.evidence_source,
-        transaction_id=body.transaction_id,
-        amount_scenarios=[str(value) for value in body.amount_scenarios],
-        next_review_date=body.next_review_date,
-    )
-    stmt = stmt.on_conflict_do_update(
-        index_elements=["id"],
-        set_={
-            "label": body.label,
-            "status": body.status,
-            "confidence": body.confidence,
-            "evidence_source": body.evidence_source,
-            "transaction_id": body.transaction_id,
-            "amount_scenarios": [str(value) for value in body.amount_scenarios],
-            "next_review_date": body.next_review_date,
-        },
-    )
-    db.execute(stmt)
+    record = db.execute(
+        select(SubscriptionRecord)
+        .where(SubscriptionRecord.id == record_id)
+        .with_for_update()
+    ).scalar_one_or_none()
+    if record is not None and record.owner_user_id is None:
+        raise HTTPException(
+            status_code=409,
+            detail="legacy subscription evidence has no attributable owner",
+        )
+    if record is not None and record.owner_user_id != current_user.id:
+        raise HTTPException(status_code=404, detail="subscription record not found")
+    if record is None:
+        record = SubscriptionRecord(id=record_id, owner_user_id=current_user.id)
+        db.add(record)
+    record.label = body.label
+    record.status = body.status
+    record.confidence = body.confidence
+    record.evidence_source = body.evidence_source
+    record.transaction_id = body.transaction_id
+    record.amount_scenarios = [str(value) for value in body.amount_scenarios]
+    record.next_review_date = body.next_review_date
     db.commit()
     return {"id": record_id, "status": body.status}
 
@@ -178,24 +183,33 @@ def upsert_value_assessment(
     db: Session = Depends(get_db),
 ):
     """Record user evidence; ambiguity remains a question, never a relabel."""
-    del current_user
     tx = db.get(NormalizedTransaction, transaction_id)
     if tx is None or not tx.is_active:
         raise HTTPException(status_code=404, detail="active transaction not found")
     assessment_id = str(
         uuid.uuid5(uuid.NAMESPACE_URL, f"k-fin:value-assessment:{transaction_id}")
     )
-    values = {
-        "id": assessment_id,
-        "transaction_id": transaction_id,
-        **body.model_dump(),
-    }
-    stmt = pg_insert(ValueAssessment).values(**values)
-    stmt = stmt.on_conflict_do_update(
-        index_elements=["transaction_id"],
-        set_=body.model_dump(),
-    )
-    db.execute(stmt)
+    assessment = db.execute(
+        select(ValueAssessment)
+        .where(ValueAssessment.transaction_id == transaction_id)
+        .with_for_update()
+    ).scalar_one_or_none()
+    if assessment is not None and assessment.owner_user_id is None:
+        raise HTTPException(
+            status_code=409,
+            detail="legacy value assessment has no attributable owner",
+        )
+    if assessment is not None and assessment.owner_user_id != current_user.id:
+        raise HTTPException(status_code=404, detail="value assessment not found")
+    if assessment is None:
+        assessment = ValueAssessment(
+            id=assessment_id,
+            transaction_id=transaction_id,
+            owner_user_id=current_user.id,
+        )
+        db.add(assessment)
+    for field, value in body.model_dump().items():
+        setattr(assessment, field, value)
     db.commit()
     return {
         "id": assessment_id,

@@ -7,7 +7,7 @@ on:
       - develop
 
 # Serialise releases per branch so a re-run can't race the prior one
-# at the `:latest` image push or the Fleet bundle commit. We do not
+# at the `:latest` image push. We do not
 # cancel-in-progress: an in-flight semantic-release that has already
 # tagged + pushed must finish to keep tag and image consistent.
 concurrency:
@@ -27,6 +27,7 @@ jobs:
     outputs:
       published: ${{ steps.semantic.outputs.new_release_published }}
       version: ${{ steps.semantic.outputs.new_release_version }}
+      source_sha: ${{ github.sha }}
 
     steps:
       - name: Checkout
@@ -46,10 +47,6 @@ jobs:
       - name: Semantic Release
         id: semantic
         uses: cycjimmy/semantic-release-action@v4
-        with:
-          extra_plugins: |
-            @semantic-release/changelog
-            @semantic-release/git
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           HUSKY: "0"
@@ -59,6 +56,12 @@ jobs:
     needs: release
     if: needs.release.outputs.published == 'true'
     runs-on: ubuntu-latest
+    outputs:
+      api_image: ghcr.io/max5800/k-fin-api:v${{ needs.release.outputs.version }}
+      api_digest: ${{ steps.build-api.outputs.digest }}
+      worker_image: ghcr.io/max5800/k-fin-worker:v${{ needs.release.outputs.version }}
+      worker_digest: ${{ steps.build-worker.outputs.digest }}
+      chart: oci://ghcr.io/max5800/helm-charts/k-fin:${{ needs.release.outputs.version }}
 
     steps:
       - name: Checkout
@@ -90,6 +93,7 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       - name: Build and push API image
+        id: build-api
         uses: docker/build-push-action@v5
         with:
           context: .
@@ -98,6 +102,7 @@ jobs:
           tags: ${{ steps.image-tags.outputs.api }}
 
       - name: Build and push Worker image
+        id: build-worker
         uses: docker/build-push-action@v5
         with:
           context: .
@@ -114,30 +119,13 @@ jobs:
       - name: Push Helm chart
         run: helm push k-fin-${{ needs.release.outputs.version }}.tgz oci://ghcr.io/max5800/helm-charts
 
-  update-fleet:
-    name: Pin Fleet version
-    needs: [release, publish]
-    # Homelab-only step. Skipped on forks because the target repo and the
-    # HOME_LAB_PAT secret only exist for max5800.
-    if: needs.release.outputs.published == 'true' && github.ref == 'refs/heads/main' && github.repository_owner == 'max5800'
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout home-lab
-        uses: actions/checkout@v7
-        with:
-          repository: max5800/home-lab
-          token: ${{ secrets.HOME_LAB_PAT }}
-
-      - name: Bump k-fin chart version in Fleet bundle
+      - name: Record immutable release evidence
         run: |
-          yq e '.helm.version = "${{ needs.release.outputs.version }}"' -i \
-            kubernetes/apps/k-fin/app/fleet.yaml
-
-      - name: Commit and push
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add kubernetes/apps/k-fin/app/fleet.yaml
-          git commit -m "chore(release): bump k-fin to v${{ needs.release.outputs.version }}"
-          git push
+          {
+            echo "## k-fin release evidence"
+            echo "- version: v${{ needs.release.outputs.version }}"
+            echo "- source SHA: ${{ needs.release.outputs.source_sha }}"
+            echo "- API image: ghcr.io/max5800/k-fin-api:v${{ needs.release.outputs.version }}@${{ steps.build-api.outputs.digest }}"
+            echo "- worker image: ghcr.io/max5800/k-fin-worker:v${{ needs.release.outputs.version }}@${{ steps.build-worker.outputs.digest }}"
+            echo "- chart: oci://ghcr.io/max5800/helm-charts/k-fin:${{ needs.release.outputs.version }}"
+          } >> "$GITHUB_STEP_SUMMARY"

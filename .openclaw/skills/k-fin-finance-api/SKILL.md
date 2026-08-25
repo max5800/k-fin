@@ -47,6 +47,9 @@ Read-only access to normalized financial data (bank, payment, card, and depot).
   the separate v2 fields returned by the API.
 - Recurring amounts are discrete scenarios. A booked recurrence does not prove
   an active contract or projected renewal.
+- Analytics evidence writes retain the authenticated user's durable actor/owner
+  identity. A different user receives `404`; unattributed legacy subscription
+  or value evidence remains readable but returns `409` instead of being claimed.
 - See `references/api.md` for the trustworthy analytics response contract.
 
 ## Error Handling
@@ -54,5 +57,6 @@ Read-only access to normalized financial data (bank, payment, card, and depot).
 - `401` — Token wrong or missing
 - `404` — Requested active resource not found
 - `409` — Category deletion refused because audit history or rules still reference it
+- `409` — Unattributed legacy analytics evidence cannot be claimed by an update
 - `422` — Invalid filter or reporting window
 - Unreachable — tell the user the Finance API may not be running

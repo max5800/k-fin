@@ -8,8 +8,9 @@ from unittest.mock import patch
 
 import pandas as pd
 import pytest
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
@@ -25,7 +26,18 @@ from src.core.db.models import (
     SubscriptionRecord,
     TransactionLink,
     TypeEnum,
+    User,
     ValueAssessment,
+)
+from src.api.routers.analytics import (
+    set_source_period_verification,
+    upsert_subscription_record,
+    upsert_value_assessment,
+)
+from src.api.schemas import (
+    SourcePeriodVerificationIn,
+    SubscriptionRecordIn,
+    ValueAssessmentIn,
 )
 from src.agents.gather import get_uncategorized_transactions
 from src.normalization.pipeline import NormalizationPipeline
@@ -372,6 +384,136 @@ def test_partial_source_period_blocks_monthly_review(analytics_engine):
                 "reason": "missing",
             },
         ]
+
+
+def test_analytics_writes_persist_actor_and_refuse_cross_user_access(
+    analytics_engine,
+):
+    user_a = User(
+        id="00000000-0000-0000-0000-000000000001",
+        email="john-a@example.invalid",
+        display_name="John Doe",
+        password_hash="dummy-hash",
+    )
+    user_b = User(
+        id="00000000-0000-0000-0000-000000000002",
+        email="john-b@example.invalid",
+        display_name="John Doe",
+        password_hash="dummy-hash",
+    )
+    period_body = SourcePeriodVerificationIn(
+        source="comdirect",
+        period_start=date(2026, 1, 1),
+        period_end=date(2026, 1, 31),
+        verified_complete=True,
+        verification_method="manual_statement_check",
+    )
+    subscription_body = SubscriptionRecordIn(
+        label="Dummy service",
+        status="booked_payment",
+        confidence=Decimal("1.000"),
+        evidence_source="manual",
+        transaction_id="owned-transaction",
+        amount_scenarios=[Decimal("0.00")],
+    )
+    assessment_body = ValueAssessmentIn(
+        value_class="convenience",
+        confidence=Decimal("1.000"),
+    )
+
+    with Session(analytics_engine) as db:
+        db.add_all([user_a, user_b, _raw("f"), _tx("owned-transaction", "f", "0.00")])
+        db.commit()
+
+        set_source_period_verification(period_body, user_a, db)
+        upsert_subscription_record(
+            "owned-subscription", subscription_body, user_a, db
+        )
+        upsert_value_assessment(
+            "owned-transaction", assessment_body, user_a, db
+        )
+
+        period = db.scalar(select(SourceStatementPeriod))
+        subscription = db.get(SubscriptionRecord, "owned-subscription")
+        assessment = db.scalar(select(ValueAssessment))
+        assert period.verified_by_user_id == user_a.id
+        assert subscription.owner_user_id == user_a.id
+        assert assessment.owner_user_id == user_a.id
+
+        for write in (
+            lambda: set_source_period_verification(period_body, user_b, db),
+            lambda: upsert_subscription_record(
+                "owned-subscription", subscription_body, user_b, db
+            ),
+            lambda: upsert_value_assessment(
+                "owned-transaction", assessment_body, user_b, db
+            ),
+        ):
+            with pytest.raises(HTTPException) as exc_info:
+                write()
+            assert exc_info.value.status_code == 404
+
+
+def test_legacy_analytics_rows_remain_unattributed_and_fail_closed_on_claim(
+    analytics_engine,
+):
+    user = User(
+        id="00000000-0000-0000-0000-000000000003",
+        email="john-legacy@example.invalid",
+        display_name="John Doe",
+        password_hash="dummy-hash",
+    )
+    with Session(analytics_engine) as db:
+        db.add_all(
+            [
+                user,
+                _raw("e"),
+                _tx("legacy-transaction", "e", "0.00"),
+                SubscriptionRecord(
+                    id="legacy-subscription",
+                    label="Legacy service",
+                    status="booked_payment",
+                    confidence=Decimal("1.000"),
+                    evidence_source="manual",
+                    transaction_id="legacy-transaction",
+                ),
+                ValueAssessment(
+                    id="legacy-assessment",
+                    transaction_id="legacy-transaction",
+                    value_class="convenience",
+                    confidence=Decimal("1.000"),
+                ),
+            ]
+        )
+        db.commit()
+
+        with pytest.raises(HTTPException) as subscription_error:
+            upsert_subscription_record(
+                "legacy-subscription",
+                SubscriptionRecordIn(
+                    label="Legacy service",
+                    status="booked_payment",
+                    confidence=Decimal("1.000"),
+                    evidence_source="manual",
+                    transaction_id="legacy-transaction",
+                ),
+                user,
+                db,
+            )
+        assert subscription_error.value.status_code == 409
+
+        with pytest.raises(HTTPException) as assessment_error:
+            upsert_value_assessment(
+                "legacy-transaction",
+                ValueAssessmentIn(
+                    value_class="convenience", confidence=Decimal("1.000")
+                ),
+                user,
+                db,
+            )
+        assert assessment_error.value.status_code == 409
+        assert db.get(SubscriptionRecord, "legacy-subscription").owner_user_id is None
+        assert db.get(ValueAssessment, "legacy-assessment").owner_user_id is None
 
 
 def test_observed_source_cannot_be_omitted_by_narrow_server_policy(

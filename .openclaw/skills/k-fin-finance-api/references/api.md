@@ -32,6 +32,11 @@ accounting partition and formulas. Always preserve these response labels:
 
 The API intentionally has no field called `total_spending`.
 
+Analytics evidence PUTs persist the JWT user's identity. Updates by another
+user fail without revealing the record (`404`). Legacy subscription and value
+rows with no attributable owner remain available to read-only analytics, but
+updates fail closed with `409`; they are never assigned to a guessed owner.
+
 ## Category deletion
 
 `DELETE /api/v1/categories/{category_id}` returns `204` only for an unreferenced

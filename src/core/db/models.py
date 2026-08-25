@@ -440,6 +440,11 @@ class SourceStatementPeriod(Base):
         Boolean, nullable=False, default=False, server_default="false"
     )
     verification_method: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    # Nullable by design: pre-attribution rows remain readable but are never
+    # silently assigned to a user by the migration.
+    verified_by_user_id: Mapped[Optional[str]] = mapped_column(
+        ForeignKey("users.id"), nullable=True, index=True
+    )
     verified_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
@@ -456,6 +461,9 @@ class SubscriptionRecord(Base):
     status: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
     confidence: Mapped[Decimal] = mapped_column(Numeric(4, 3), nullable=False)
     evidence_source: Mapped[str] = mapped_column(String(32), nullable=False)
+    owner_user_id: Mapped[Optional[str]] = mapped_column(
+        ForeignKey("users.id"), nullable=True, index=True
+    )
     transaction_id: Mapped[Optional[str]] = mapped_column(
         ForeignKey("normalized_transactions.id"), nullable=True, index=True
     )
@@ -474,6 +482,9 @@ class ValueAssessment(Base):
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
     transaction_id: Mapped[str] = mapped_column(
         ForeignKey("normalized_transactions.id"), nullable=False, unique=True, index=True
+    )
+    owner_user_id: Mapped[Optional[str]] = mapped_column(
+        ForeignKey("users.id"), nullable=True, index=True
     )
     value_class: Mapped[str] = mapped_column(String(48), nullable=False)
     confidence: Mapped[Decimal] = mapped_column(Numeric(4, 3), nullable=False)

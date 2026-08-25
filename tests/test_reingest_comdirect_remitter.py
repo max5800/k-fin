@@ -4,6 +4,7 @@ from datetime import date, datetime, timezone
 from decimal import Decimal
 
 import pytest
+from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
 from scripts.reingest_comdirect_remitter import (
@@ -13,15 +14,33 @@ from scripts.reingest_comdirect_remitter import (
 )
 from src.core.db.models import (
     Category,
+    Base,
     DataSource,
+    MailEvidence,
     NormalizedTransaction,
     RawTransaction,
+    ReviewedSuggestion,
+    SubscriptionRecord,
     SyncRun,
+    Tag,
+    TransactionEvidenceLink,
     TransactionLink,
+    TransactionTag,
     TypeEnum,
+    ValueAssessment,
 )
 from src.normalization.canonicalize import canonicalize, content_hash
 from src.normalization.pipeline import NormalizationPipeline
+
+
+@pytest.fixture
+def graph_engine():
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    try:
+        yield engine
+    finally:
+        engine.dispose()
 
 
 def _tx(tx_id: str, raw_hash: str, *, active: bool = True) -> NormalizedTransaction:
@@ -101,6 +120,86 @@ def test_carry_preserves_predecessor_and_link_history_and_refreshes_successor(
         assert successor.accounting_class == "verified_refund_reimbursement"
         assert successor.accounting_confidence == Decimal("1.000")
         assert successor.accounting_version == 2
+
+
+def test_carry_migrates_complete_reference_graph_without_duplicates(graph_engine):
+    old_hash = "7" * 64
+    successor_hash = "8" * 64
+
+    with Session(graph_engine) as session:
+        session.add_all(
+            [
+                RawTransaction(content_hash=old_hash, raw_data={"stub": True}),
+                RawTransaction(content_hash=successor_hash, raw_data={"stub": True}),
+                _tx("predecessor", old_hash),
+                _tx("successor", successor_hash),
+                Tag(id="reviewed", name="Reviewed"),
+                MailEvidence(
+                    id="dummy-evidence",
+                    evidence_type="invoice",
+                    order_ref_hash="0" * 64,
+                    confidence=Decimal("1.000"),
+                ),
+            ]
+        )
+        session.flush()
+        session.add_all(
+            [
+                TransactionTag(transaction_id="predecessor", tag_id="reviewed"),
+                ReviewedSuggestion(
+                    transaction_id="predecessor", reason="user rejected suggestion"
+                ),
+                TransactionEvidenceLink(
+                    id="old-evidence-link",
+                    transaction_id="predecessor",
+                    evidence_id="dummy-evidence",
+                    match_type="amount_date",
+                    confidence=Decimal("1.000"),
+                    match_reason="dummy exact match",
+                ),
+                SubscriptionRecord(
+                    id="dummy-subscription",
+                    label="Dummy subscription",
+                    status="review",
+                    confidence=Decimal("0.500"),
+                    evidence_source="manual",
+                    transaction_id="predecessor",
+                ),
+                ValueAssessment(
+                    id="dummy-assessment",
+                    transaction_id="predecessor",
+                    value_class="uncertain",
+                    confidence=Decimal("0.500"),
+                ),
+            ]
+        )
+        session.commit()
+
+        carry = _collect_carry_fields(session, [(old_hash, successor_hash)])
+        predecessor = session.get(NormalizedTransaction, "predecessor")
+        predecessor.is_active = False
+        predecessor.normalization_status = "superseded"
+        assert _carry_fields_and_refresh_accounting(session, carry) == 1
+        assert _carry_fields_and_refresh_accounting(session, carry) == 1
+
+    with Session(graph_engine) as session:
+        assert session.get(TransactionTag, ("predecessor", "reviewed")) is not None
+        assert session.get(TransactionTag, ("successor", "reviewed")) is not None
+        assert session.get(ReviewedSuggestion, "predecessor") is not None
+        assert session.get(ReviewedSuggestion, "successor") is not None
+        successor_links = session.query(TransactionEvidenceLink).filter_by(
+            transaction_id="successor",
+            evidence_id="dummy-evidence",
+            match_type="amount_date",
+        )
+        assert successor_links.count() == 1
+        assert session.get(TransactionEvidenceLink, "old-evidence-link") is not None
+        assert session.get(SubscriptionRecord, "dummy-subscription").transaction_id == (
+            "successor"
+        )
+        assert session.get(ValueAssessment, "dummy-assessment").transaction_id == (
+            "successor"
+        )
 
 
 @pytest.mark.parametrize("external_id", ["DUMMY-REFERENCE-1", None])

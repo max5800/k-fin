@@ -327,7 +327,7 @@ def test_0028_populated_rule_downgrade_fails_before_any_mutation(fresh_db_url):
         with engine.connect() as conn:
             assert conn.execute(
                 text("SELECT version_num FROM alembic_version")
-            ).scalar_one() == "0028_trustworthy_analytics"
+            ).scalar_one() == "0029_analytics_actor_attribution"
             assert conn.execute(
                 text("SELECT to_regnamespace('k_fin_0028_preservation')")
             ).scalar_one() is None
@@ -363,7 +363,7 @@ def test_0028_populated_evidence_downgrade_rolls_back_exactly(fresh_db_url):
         with engine.connect() as conn:
             assert conn.execute(
                 text("SELECT version_num FROM alembic_version")
-            ).scalar_one() == "0028_trustworthy_analytics"
+            ).scalar_one() == "0029_analytics_actor_attribution"
             assert conn.execute(
                 text("SELECT to_regnamespace('k_fin_0028_preservation')")
             ).scalar_one() is None
@@ -429,7 +429,7 @@ def test_0028_consumed_serial_with_empty_tables_fails_closed(fresh_db_url):
         with engine.connect() as conn:
             assert conn.execute(
                 text("SELECT version_num FROM alembic_version")
-            ).scalar_one() == "0028_trustworthy_analytics"
+            ).scalar_one() == "0029_analytics_actor_attribution"
     finally:
         engine.dispose()
 
@@ -519,7 +519,7 @@ def test_0028_coordinated_table_and_sequence_owner_change_fails_closed(
         with engine.connect() as conn:
             assert conn.execute(
                 text("SELECT version_num FROM alembic_version")
-            ).scalar_one() == "0028_trustworthy_analytics"
+            ).scalar_one() == "0029_analytics_actor_attribution"
             assert conn.execute(
                 text("SELECT to_regnamespace('k_fin_0028_preservation')")
             ).scalar_one() is None
@@ -605,7 +605,7 @@ def test_0028_concurrent_sequence_definition_and_state_changes_fail_closed(
             with engine.connect() as conn:
                 assert conn.execute(
                     text("SELECT version_num FROM alembic_version")
-                ).scalar_one() == "0028_trustworthy_analytics"
+                ).scalar_one() == "0029_analytics_actor_attribution"
                 assert conn.execute(
                     text("SELECT to_regnamespace('k_fin_0028_preservation')")
                 ).scalar_one() is None
@@ -653,7 +653,7 @@ def test_0028_sequence_schema_move_fails_closed_and_is_preserved(fresh_db_url):
         with engine.connect() as conn:
             assert conn.execute(
                 text("SELECT version_num FROM alembic_version")
-            ).scalar_one() == "0028_trustworthy_analytics"
+            ).scalar_one() == "0029_analytics_actor_attribution"
             assert conn.execute(
                 text("SELECT to_regclass('public.rules_id_seq')")
             ).scalar_one() is None
@@ -706,7 +706,7 @@ def test_0028_empty_head_base_head_smoke_is_exact(fresh_db_url):
             ).scalar_one() is None
             assert conn.execute(
                 text("SELECT version_num FROM alembic_version")
-            ).scalar_one() == "0028_trustworthy_analytics"
+            ).scalar_one() == "0029_analytics_actor_attribution"
     finally:
         engine.dispose()
 
@@ -834,6 +834,105 @@ def test_0028_offline_sql_preserves_before_reverse_and_restores_exactly():
     assert upgrade_sql.index("restore blocked") < upgrade_sql.index(
         "DROP SCHEMA k_fin_0028_preservation CASCADE"
     )
+
+
+def test_0029_actor_attribution_is_nullable_reversible_and_fail_closed(
+    fresh_db_url,
+):
+    from alembic import command
+
+    cfg = _alembic_config()
+    with _force_db_url(fresh_db_url):
+        command.upgrade(cfg, "head")
+
+    engine = create_engine(fresh_db_url)
+    try:
+        columns = {
+            table_name: {
+                column["name"]: column
+                for column in inspect(engine).get_columns(table_name)
+            }
+            for table_name in (
+                "source_statement_periods",
+                "subscription_records",
+                "value_assessments",
+            )
+        }
+        assert columns["source_statement_periods"]["verified_by_user_id"][
+            "nullable"
+        ]
+        assert columns["subscription_records"]["owner_user_id"]["nullable"]
+        assert columns["value_assessments"]["owner_user_id"]["nullable"]
+
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    "INSERT INTO users "
+                    "(id, email, display_name, password_hash, is_active, role) "
+                    "VALUES ('00000000-0000-0000-0000-000000000001', "
+                    "'john@example.invalid', 'John Doe', 'dummy-hash', true, 'admin')"
+                )
+            )
+            conn.execute(
+                text(
+                    "INSERT INTO source_statement_periods "
+                    "(id, source, period_start, period_end, rows_present, "
+                    "observed_row_count, verified_complete) VALUES "
+                    "('legacy-period', 'comdirect', '2026-01-01', '2026-01-31', "
+                    "false, 0, false)"
+                )
+            )
+            assert conn.execute(
+                text(
+                    "SELECT verified_by_user_id FROM source_statement_periods "
+                    "WHERE id = 'legacy-period'"
+                )
+            ).scalar_one() is None
+            conn.execute(
+                text(
+                    "UPDATE source_statement_periods SET verified_by_user_id = "
+                    "'00000000-0000-0000-0000-000000000001' "
+                    "WHERE id = 'legacy-period'"
+                )
+            )
+
+        with _force_db_url(fresh_db_url), pytest.raises(
+            DBAPIError, match="actor attribution contains application state"
+        ):
+            command.downgrade(cfg, "0028_trustworthy_analytics")
+
+        with engine.begin() as conn:
+            assert conn.execute(
+                text("SELECT version_num FROM alembic_version")
+            ).scalar_one() == "0029_analytics_actor_attribution"
+            conn.execute(
+                text(
+                    "UPDATE source_statement_periods "
+                    "SET verified_by_user_id = NULL WHERE id = 'legacy-period'"
+                )
+            )
+
+        with _force_db_url(fresh_db_url):
+            command.downgrade(cfg, "0028_trustworthy_analytics")
+        assert "verified_by_user_id" not in {
+            column["name"]
+            for column in inspect(engine).get_columns("source_statement_periods")
+        }
+
+        with _force_db_url(fresh_db_url):
+            command.upgrade(cfg, "head")
+        with engine.connect() as conn:
+            assert conn.execute(
+                text(
+                    "SELECT verified_by_user_id FROM source_statement_periods "
+                    "WHERE id = 'legacy-period'"
+                )
+            ).scalar_one() is None
+            assert conn.execute(
+                text("SELECT version_num FROM alembic_version")
+            ).scalar_one() == "0029_analytics_actor_attribution"
+    finally:
+        engine.dispose()
 
 
 def test_0022_backfills_external_id_and_is_reversible(fresh_db_url):

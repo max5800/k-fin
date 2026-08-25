@@ -41,13 +41,23 @@ from __future__ import annotations
 
 import argparse
 import sys
+import uuid
 from collections.abc import Callable
 
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
 from src.core.config import settings
-from src.core.db.models import DataSource, NormalizedTransaction, RawTransaction
+from src.core.db.models import (
+    DataSource,
+    NormalizedTransaction,
+    RawTransaction,
+    ReviewedSuggestion,
+    SubscriptionRecord,
+    TransactionEvidenceLink,
+    TransactionTag,
+    ValueAssessment,
+)
 from src.external.models import ComdirectTransaction
 from src.normalization.canonicalize import canonicalize, content_hash
 from src.normalization.pipeline import NormalizationPipeline
@@ -81,12 +91,115 @@ def _collect_carry_fields(
         ).scalar_one_or_none()
         if old is not None:
             carry[new_hash] = {
+                "predecessor_id": old.id,
                 "category_id": old.category_id,
                 "is_refund": old.is_refund,
                 "refund_verification_status": old.refund_verification_status,
                 "refund_audit_decided_at": old.refund_audit_decided_at,
             }
     return carry
+
+
+def _carry_reference_graph(
+    session: Session, *, predecessor_id: str, successor_id: str
+) -> None:
+    """Make predecessor decisions/evidence reachable from the active revision.
+
+    Association rows are copied so the inactive revision remains a complete
+    audit record. Owned evidence rows are moved without changing their identity
+    or actor attribution. Every operation is duplicate-safe for a transaction
+    retry; conflicting value assessments fail closed instead of overwriting a
+    user decision.
+    """
+    predecessor_tags = session.execute(
+        select(TransactionTag)
+        .where(TransactionTag.transaction_id == predecessor_id)
+        .with_for_update()
+    ).scalars()
+    for predecessor_tag in predecessor_tags:
+        key = (successor_id, predecessor_tag.tag_id)
+        if session.get(TransactionTag, key) is None:
+            session.add(
+                TransactionTag(transaction_id=successor_id, tag_id=predecessor_tag.tag_id)
+            )
+
+    predecessor_review = session.execute(
+        select(ReviewedSuggestion)
+        .where(ReviewedSuggestion.transaction_id == predecessor_id)
+        .with_for_update()
+    ).scalar_one_or_none()
+    if (
+        predecessor_review is not None
+        and session.get(ReviewedSuggestion, successor_id) is None
+    ):
+        session.add(
+            ReviewedSuggestion(
+                transaction_id=successor_id,
+                reason=predecessor_review.reason,
+                decided_at=predecessor_review.decided_at,
+            )
+        )
+
+    predecessor_evidence = session.execute(
+        select(TransactionEvidenceLink)
+        .where(TransactionEvidenceLink.transaction_id == predecessor_id)
+        .with_for_update()
+    ).scalars()
+    for link in predecessor_evidence:
+        duplicate = session.execute(
+            select(TransactionEvidenceLink.id).where(
+                TransactionEvidenceLink.transaction_id == successor_id,
+                TransactionEvidenceLink.evidence_id == link.evidence_id,
+                TransactionEvidenceLink.match_type == link.match_type,
+            )
+        ).scalar_one_or_none()
+        if duplicate is None:
+            link_id = str(
+                uuid.uuid5(
+                    uuid.NAMESPACE_URL,
+                    "k-fin:transaction-evidence-link:"
+                    f"{successor_id}:{link.evidence_id}:{link.match_type}",
+                )
+            )
+            session.add(
+                TransactionEvidenceLink(
+                    id=link_id,
+                    transaction_id=successor_id,
+                    evidence_id=link.evidence_id,
+                    match_type=link.match_type,
+                    confidence=link.confidence,
+                    match_reason=link.match_reason,
+                    created_at=link.created_at,
+                )
+            )
+
+    subscriptions = session.execute(
+        select(SubscriptionRecord)
+        .where(SubscriptionRecord.transaction_id == predecessor_id)
+        .with_for_update()
+    ).scalars()
+    for subscription in subscriptions:
+        subscription.transaction_id = successor_id
+
+    predecessor_assessment = session.execute(
+        select(ValueAssessment)
+        .where(ValueAssessment.transaction_id == predecessor_id)
+        .with_for_update()
+    ).scalar_one_or_none()
+    if predecessor_assessment is not None:
+        successor_assessment = session.execute(
+            select(ValueAssessment)
+            .where(ValueAssessment.transaction_id == successor_id)
+            .with_for_update()
+        ).scalar_one_or_none()
+        if (
+            successor_assessment is not None
+            and successor_assessment is not predecessor_assessment
+        ):
+            raise RuntimeError(
+                "remitter re-ingest cannot merge conflicting value assessments"
+            )
+        predecessor_assessment.transaction_id = successor_id
 
 
 def _enforce_raw_supersession(
@@ -136,6 +249,11 @@ def _carry_fields_and_refresh_accounting(
             "refund_verification_status"
         ]
         successor.refund_audit_decided_at = fields["refund_audit_decided_at"]
+        _carry_reference_graph(
+            session,
+            predecessor_id=fields["predecessor_id"],
+            successor_id=successor.id,
+        )
         carried += 1
 
     # Do not commit inside the refresh: copied semantics and their derived

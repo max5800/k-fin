@@ -1405,16 +1405,28 @@
           "nullable": true,
           "type": "TIMESTAMP"
         },
+        "verified_by_user_id": {
+          "nullable": true,
+          "type": "VARCHAR(36)"
+        },
         "verified_complete": {
           "nullable": false,
           "type": "BOOLEAN"
         }
       },
-      "foreign_keys": [],
+      "foreign_keys": [
+        "['verified_by_user_id']->users.['id']"
+      ],
       "indexes": {
         "ix_source_statement_periods_period_start": {
           "columns": [
             "period_start"
+          ],
+          "unique": false
+        },
+        "ix_source_statement_periods_verified_by_user_id": {
+          "columns": [
+            "verified_by_user_id"
           ],
           "unique": false
         },
@@ -1461,6 +1473,10 @@
           "nullable": true,
           "type": "DATE"
         },
+        "owner_user_id": {
+          "nullable": true,
+          "type": "VARCHAR(36)"
+        },
         "status": {
           "nullable": false,
           "type": "VARCHAR(32)"
@@ -1471,9 +1487,16 @@
         }
       },
       "foreign_keys": [
+        "['owner_user_id']->users.['id']",
         "['transaction_id']->normalized_transactions.['id']"
       ],
       "indexes": {
+        "ix_subscription_records_owner_user_id": {
+          "columns": [
+            "owner_user_id"
+          ],
+          "unique": false
+        },
         "ix_subscription_records_status": {
           "columns": [
             "status"
@@ -1759,6 +1782,10 @@
           "nullable": true,
           "type": "NUMERIC(14, 2)"
         },
+        "owner_user_id": {
+          "nullable": true,
+          "type": "VARCHAR(36)"
+        },
         "question": {
           "nullable": true,
           "type": "VARCHAR(300)"
@@ -1773,9 +1800,16 @@
         }
       },
       "foreign_keys": [
+        "['owner_user_id']->users.['id']",
         "['transaction_id']->normalized_transactions.['id']"
       ],
       "indexes": {
+        "ix_value_assessments_owner_user_id": {
+          "columns": [
+            "owner_user_id"
+          ],
+          "unique": false
+        },
         "ix_value_assessments_transaction_id": {
           "columns": [
             "transaction_id"
