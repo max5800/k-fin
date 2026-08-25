@@ -115,44 +115,51 @@ def _carry_reference_graph(
         select(TransactionTag)
         .where(TransactionTag.transaction_id == predecessor_id)
         .with_for_update()
-    ).scalars()
-    for predecessor_tag in predecessor_tags:
-        key = (successor_id, predecessor_tag.tag_id)
-        if session.get(TransactionTag, key) is None:
-            session.add(
-                TransactionTag(transaction_id=successor_id, tag_id=predecessor_tag.tag_id)
-            )
+    ).scalars().all()
 
     predecessor_review = session.execute(
         select(ReviewedSuggestion)
         .where(ReviewedSuggestion.transaction_id == predecessor_id)
         .with_for_update()
     ).scalar_one_or_none()
-    if (
-        predecessor_review is not None
-        and session.get(ReviewedSuggestion, successor_id) is None
-    ):
-        session.add(
-            ReviewedSuggestion(
-                transaction_id=successor_id,
-                reason=predecessor_review.reason,
-                decided_at=predecessor_review.decided_at,
+    successor_review = session.execute(
+        select(ReviewedSuggestion)
+        .where(ReviewedSuggestion.transaction_id == successor_id)
+        .with_for_update()
+    ).scalar_one_or_none()
+    if predecessor_review is not None and successor_review is not None:
+        if (
+            predecessor_review.reason != successor_review.reason
+            or predecessor_review.decided_at != successor_review.decided_at
+        ):
+            raise RuntimeError(
+                "remitter re-ingest cannot merge conflicting reviewed suggestions"
             )
-        )
 
     predecessor_evidence = session.execute(
         select(TransactionEvidenceLink)
         .where(TransactionEvidenceLink.transaction_id == predecessor_id)
         .with_for_update()
-    ).scalars()
+    ).scalars().all()
+    successor_evidence = session.execute(
+        select(TransactionEvidenceLink)
+        .where(TransactionEvidenceLink.transaction_id == successor_id)
+        .with_for_update()
+    ).scalars().all()
+    successor_evidence_by_key = {
+        (link.evidence_id, link.match_type): link for link in successor_evidence
+    }
+    evidence_links_to_copy: list[tuple[TransactionEvidenceLink, str]] = []
     for link in predecessor_evidence:
-        duplicate = session.execute(
-            select(TransactionEvidenceLink.id).where(
-                TransactionEvidenceLink.transaction_id == successor_id,
-                TransactionEvidenceLink.evidence_id == link.evidence_id,
-                TransactionEvidenceLink.match_type == link.match_type,
+        duplicate = successor_evidence_by_key.get((link.evidence_id, link.match_type))
+        if duplicate is not None and (
+            duplicate.confidence != link.confidence
+            or duplicate.match_reason != link.match_reason
+            or duplicate.created_at != link.created_at
+        ):
+            raise RuntimeError(
+                "remitter re-ingest cannot merge conflicting mail-evidence links"
             )
-        ).scalar_one_or_none()
         if duplicate is None:
             link_id = str(
                 uuid.uuid5(
@@ -161,37 +168,34 @@ def _carry_reference_graph(
                     f"{successor_id}:{link.evidence_id}:{link.match_type}",
                 )
             )
-            session.add(
-                TransactionEvidenceLink(
-                    id=link_id,
-                    transaction_id=successor_id,
-                    evidence_id=link.evidence_id,
-                    match_type=link.match_type,
-                    confidence=link.confidence,
-                    match_reason=link.match_reason,
-                    created_at=link.created_at,
+            if session.get(TransactionEvidenceLink, link_id) is not None:
+                raise RuntimeError(
+                    "remitter re-ingest evidence-link identity already exists"
                 )
-            )
+            evidence_links_to_copy.append((link, link_id))
 
-    subscriptions = session.execute(
+    predecessor_subscriptions = session.execute(
         select(SubscriptionRecord)
         .where(SubscriptionRecord.transaction_id == predecessor_id)
         .with_for_update()
-    ).scalars()
-    for subscription in subscriptions:
-        subscription.transaction_id = successor_id
+    ).scalars().all()
+    successor_subscriptions = session.execute(
+        select(SubscriptionRecord)
+        .where(SubscriptionRecord.transaction_id == successor_id)
+        .with_for_update()
+    ).scalars().all()
 
     predecessor_assessment = session.execute(
         select(ValueAssessment)
         .where(ValueAssessment.transaction_id == predecessor_id)
         .with_for_update()
     ).scalar_one_or_none()
+    successor_assessment = session.execute(
+        select(ValueAssessment)
+        .where(ValueAssessment.transaction_id == successor_id)
+        .with_for_update()
+    ).scalar_one_or_none()
     if predecessor_assessment is not None:
-        successor_assessment = session.execute(
-            select(ValueAssessment)
-            .where(ValueAssessment.transaction_id == successor_id)
-            .with_for_update()
-        ).scalar_one_or_none()
         if (
             successor_assessment is not None
             and successor_assessment is not predecessor_assessment
@@ -199,6 +203,95 @@ def _carry_reference_graph(
             raise RuntimeError(
                 "remitter re-ingest cannot merge conflicting value assessments"
             )
+
+    owner_identities = {
+        row.owner_user_id
+        for row in [
+            *predecessor_subscriptions,
+            *successor_subscriptions,
+            predecessor_assessment,
+            successor_assessment,
+        ]
+        if row is not None
+    }
+    if len(owner_identities) > 1:
+        raise RuntimeError(
+            "remitter re-ingest cannot merge mixed-owner subscription evidence"
+        )
+
+    subscription_fields = (
+        "label",
+        "status",
+        "confidence",
+        "evidence_source",
+        "owner_user_id",
+        "amount_scenarios",
+        "next_review_date",
+        "created_at",
+    )
+
+    def subscriptions_equivalent(
+        left: SubscriptionRecord, right: SubscriptionRecord
+    ) -> bool:
+        return all(
+            getattr(left, field) == getattr(right, field)
+            for field in subscription_fields
+        )
+
+    if predecessor_subscriptions and successor_subscriptions:
+        if any(
+            not any(
+                subscriptions_equivalent(predecessor, successor)
+                for successor in successor_subscriptions
+            )
+            for predecessor in predecessor_subscriptions
+        ) or any(
+            not any(
+                subscriptions_equivalent(successor, predecessor)
+                for predecessor in predecessor_subscriptions
+            )
+            for successor in successor_subscriptions
+        ):
+            raise RuntimeError(
+                "remitter re-ingest cannot merge conflicting subscription evidence"
+            )
+
+    # All conflicts are checked before adding or reassigning any rows. This
+    # keeps the enclosing re-ingest transaction fail-closed as one graph unit.
+    for predecessor_tag in predecessor_tags:
+        key = (successor_id, predecessor_tag.tag_id)
+        if session.get(TransactionTag, key) is None:
+            session.add(
+                TransactionTag(transaction_id=successor_id, tag_id=predecessor_tag.tag_id)
+            )
+
+    if predecessor_review is not None and successor_review is None:
+        session.add(
+            ReviewedSuggestion(
+                transaction_id=successor_id,
+                reason=predecessor_review.reason,
+                decided_at=predecessor_review.decided_at,
+            )
+        )
+
+    for link, link_id in evidence_links_to_copy:
+        session.add(
+            TransactionEvidenceLink(
+                id=link_id,
+                transaction_id=successor_id,
+                evidence_id=link.evidence_id,
+                match_type=link.match_type,
+                confidence=link.confidence,
+                match_reason=link.match_reason,
+                created_at=link.created_at,
+            )
+        )
+
+    if not successor_subscriptions:
+        for subscription in predecessor_subscriptions:
+            subscription.transaction_id = successor_id
+
+    if predecessor_assessment is not None:
         predecessor_assessment.transaction_id = successor_id
 
 

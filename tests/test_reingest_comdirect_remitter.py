@@ -27,6 +27,7 @@ from src.core.db.models import (
     TransactionLink,
     TransactionTag,
     TypeEnum,
+    User,
     ValueAssessment,
 )
 from src.normalization.canonicalize import canonicalize, content_hash
@@ -57,6 +58,29 @@ def _tx(tx_id: str, raw_hash: str, *, active: bool = True) -> NormalizedTransact
         is_outlier=False,
         internal_transfer=False,
         accounting_version=1,
+    )
+
+
+def _seed_reference_pair(session: Session) -> tuple[str, str]:
+    old_hash = "a" * 64
+    successor_hash = "b" * 64
+    session.add_all(
+        [
+            RawTransaction(content_hash=old_hash, raw_data={"stub": True}),
+            RawTransaction(content_hash=successor_hash, raw_data={"stub": True}),
+            _tx("predecessor", old_hash),
+            _tx("successor", successor_hash),
+        ]
+    )
+    return old_hash, successor_hash
+
+
+def _dummy_user(user_id: str, suffix: str) -> User:
+    return User(
+        id=user_id,
+        email=f"john-{suffix}@example.invalid",
+        display_name="John Doe",
+        password_hash="dummy-hash",
     )
 
 
@@ -198,6 +222,363 @@ def test_carry_migrates_complete_reference_graph_without_duplicates(graph_engine
             "successor"
         )
         assert session.get(ValueAssessment, "dummy-assessment").transaction_id == (
+            "successor"
+        )
+
+
+def test_carry_reuses_equivalent_reviewed_suggestion_idempotently(graph_engine):
+    decided_at = datetime(2026, 1, 2, tzinfo=timezone.utc)
+    with Session(graph_engine) as session:
+        old_hash, successor_hash = _seed_reference_pair(session)
+        session.add_all(
+            [
+                ReviewedSuggestion(
+                    transaction_id="predecessor",
+                    reason="user-rejected",
+                    decided_at=decided_at,
+                ),
+                ReviewedSuggestion(
+                    transaction_id="successor",
+                    reason="user-rejected",
+                    decided_at=decided_at,
+                ),
+            ]
+        )
+        session.commit()
+        carry = _collect_carry_fields(session, [(old_hash, successor_hash)])
+
+        assert _carry_fields_and_refresh_accounting(session, carry) == 1
+        assert _carry_fields_and_refresh_accounting(session, carry) == 1
+        assert session.query(ReviewedSuggestion).count() == 2
+
+
+@pytest.mark.parametrize(
+    "successor_reason,successor_decided_at",
+    [
+        ("different-decision", datetime(2026, 1, 2, tzinfo=timezone.utc)),
+        ("user-rejected", datetime(2026, 1, 3, tzinfo=timezone.utc)),
+    ],
+)
+def test_carry_rejects_conflicting_reviewed_suggestion_fields(
+    graph_engine, successor_reason, successor_decided_at
+):
+    decided_at = datetime(2026, 1, 2, tzinfo=timezone.utc)
+    with Session(graph_engine) as session:
+        old_hash, successor_hash = _seed_reference_pair(session)
+        session.add_all(
+            [
+                ReviewedSuggestion(
+                    transaction_id="predecessor",
+                    reason="user-rejected",
+                    decided_at=decided_at,
+                ),
+                ReviewedSuggestion(
+                    transaction_id="successor",
+                    reason=successor_reason,
+                    decided_at=successor_decided_at,
+                ),
+            ]
+        )
+        session.commit()
+        carry = _collect_carry_fields(session, [(old_hash, successor_hash)])
+
+        with pytest.raises(RuntimeError, match="conflicting reviewed suggestions"):
+            _carry_fields_and_refresh_accounting(session, carry)
+
+
+def test_carry_reuses_equivalent_mail_evidence_link_idempotently(graph_engine):
+    linked_at = datetime(2026, 1, 2, tzinfo=timezone.utc)
+    with Session(graph_engine) as session:
+        old_hash, successor_hash = _seed_reference_pair(session)
+        session.add(
+            MailEvidence(
+                id="dummy-evidence",
+                evidence_type="invoice",
+                order_ref_hash="0" * 64,
+                confidence=Decimal("1.000"),
+            )
+        )
+        session.flush()
+        for link_id, transaction_id in (
+            ("predecessor-link", "predecessor"),
+            ("successor-link", "successor"),
+        ):
+            session.add(
+                TransactionEvidenceLink(
+                    id=link_id,
+                    transaction_id=transaction_id,
+                    evidence_id="dummy-evidence",
+                    match_type="amount_date",
+                    confidence=Decimal("0.900"),
+                    match_reason="dummy compatible match",
+                    created_at=linked_at,
+                )
+            )
+        session.commit()
+        carry = _collect_carry_fields(session, [(old_hash, successor_hash)])
+
+        assert _carry_fields_and_refresh_accounting(session, carry) == 1
+        assert _carry_fields_and_refresh_accounting(session, carry) == 1
+        assert (
+            session.query(TransactionEvidenceLink)
+            .filter_by(transaction_id="successor")
+            .count()
+            == 1
+        )
+
+
+@pytest.mark.parametrize(
+    "successor_confidence,successor_reason,successor_created_at",
+    [
+        (
+            Decimal("0.800"),
+            "dummy compatible match",
+            datetime(2026, 1, 2, tzinfo=timezone.utc),
+        ),
+        (
+            Decimal("0.900"),
+            "dummy conflicting match",
+            datetime(2026, 1, 2, tzinfo=timezone.utc),
+        ),
+        (
+            Decimal("0.900"),
+            "dummy compatible match",
+            datetime(2026, 1, 3, tzinfo=timezone.utc),
+        ),
+    ],
+)
+def test_carry_rejects_conflicting_mail_evidence_link_fields(
+    graph_engine,
+    successor_confidence,
+    successor_reason,
+    successor_created_at,
+):
+    linked_at = datetime(2026, 1, 2, tzinfo=timezone.utc)
+    with Session(graph_engine) as session:
+        old_hash, successor_hash = _seed_reference_pair(session)
+        session.add(
+            MailEvidence(
+                id="dummy-evidence",
+                evidence_type="invoice",
+                order_ref_hash="0" * 64,
+                confidence=Decimal("1.000"),
+            )
+        )
+        session.flush()
+        session.add_all(
+            [
+                TransactionEvidenceLink(
+                    id="predecessor-link",
+                    transaction_id="predecessor",
+                    evidence_id="dummy-evidence",
+                    match_type="amount_date",
+                    confidence=Decimal("0.900"),
+                    match_reason="dummy compatible match",
+                    created_at=linked_at,
+                ),
+                TransactionEvidenceLink(
+                    id="successor-link",
+                    transaction_id="successor",
+                    evidence_id="dummy-evidence",
+                    match_type="amount_date",
+                    confidence=successor_confidence,
+                    match_reason=successor_reason,
+                    created_at=successor_created_at,
+                ),
+            ]
+        )
+        session.commit()
+        carry = _collect_carry_fields(session, [(old_hash, successor_hash)])
+
+        with pytest.raises(RuntimeError, match="conflicting mail-evidence links"):
+            _carry_fields_and_refresh_accounting(session, carry)
+
+
+def test_carry_reuses_equivalent_same_owner_subscription_idempotently(graph_engine):
+    owner_id = "00000000-0000-0000-0000-000000000001"
+    created_at = datetime(2026, 1, 2, tzinfo=timezone.utc)
+    common = {
+        "label": "Dummy subscription",
+        "status": "review",
+        "confidence": Decimal("0.500"),
+        "evidence_source": "manual",
+        "owner_user_id": owner_id,
+        "amount_scenarios": ["0.00"],
+        "next_review_date": date(2026, 2, 1),
+        "created_at": created_at,
+    }
+    with Session(graph_engine) as session:
+        old_hash, successor_hash = _seed_reference_pair(session)
+        session.add(_dummy_user(owner_id, "owner"))
+        session.add_all(
+            [
+                SubscriptionRecord(
+                    id="predecessor-subscription",
+                    transaction_id="predecessor",
+                    **common,
+                ),
+                SubscriptionRecord(
+                    id="successor-subscription",
+                    transaction_id="successor",
+                    **common,
+                ),
+            ]
+        )
+        session.commit()
+        carry = _collect_carry_fields(session, [(old_hash, successor_hash)])
+
+        assert _carry_fields_and_refresh_accounting(session, carry) == 1
+        assert _carry_fields_and_refresh_accounting(session, carry) == 1
+        assert session.get(SubscriptionRecord, "predecessor-subscription").transaction_id == (
+            "predecessor"
+        )
+        assert session.get(SubscriptionRecord, "successor-subscription").transaction_id == (
+            "successor"
+        )
+
+
+@pytest.mark.parametrize(
+    "successor_owner_id,successor_status,error",
+    [
+        (
+            "00000000-0000-0000-0000-000000000002",
+            "review",
+            "mixed-owner subscription evidence",
+        ),
+        (
+            "00000000-0000-0000-0000-000000000001",
+            "booked_payment",
+            "conflicting subscription evidence",
+        ),
+    ],
+)
+def test_carry_rejects_incompatible_successor_subscription(
+    graph_engine, successor_owner_id, successor_status, error
+):
+    owner_id = "00000000-0000-0000-0000-000000000001"
+    created_at = datetime(2026, 1, 2, tzinfo=timezone.utc)
+    with Session(graph_engine) as session:
+        old_hash, successor_hash = _seed_reference_pair(session)
+        session.add_all(
+            [
+                _dummy_user(owner_id, "owner-a"),
+                _dummy_user(
+                    "00000000-0000-0000-0000-000000000002", "owner-b"
+                ),
+            ]
+        )
+        for record_id, transaction_id, record_owner, status in (
+            ("predecessor-subscription", "predecessor", owner_id, "review"),
+            (
+                "successor-subscription",
+                "successor",
+                successor_owner_id,
+                successor_status,
+            ),
+        ):
+            session.add(
+                SubscriptionRecord(
+                    id=record_id,
+                    label="Dummy subscription",
+                    status=status,
+                    confidence=Decimal("0.500"),
+                    evidence_source="manual",
+                    owner_user_id=record_owner,
+                    transaction_id=transaction_id,
+                    amount_scenarios=["0.00"],
+                    next_review_date=date(2026, 2, 1),
+                    created_at=created_at,
+                )
+            )
+        session.commit()
+        carry = _collect_carry_fields(session, [(old_hash, successor_hash)])
+
+        with pytest.raises(RuntimeError, match=error):
+            _carry_fields_and_refresh_accounting(session, carry)
+
+
+def test_carry_rejects_cross_user_evidence_graph_and_rolls_back_all_writes(
+    graph_engine,
+):
+    owner_a = "00000000-0000-0000-0000-000000000001"
+    owner_b = "00000000-0000-0000-0000-000000000002"
+    linked_at = datetime(2026, 1, 2, tzinfo=timezone.utc)
+    with Session(graph_engine) as session:
+        old_hash, successor_hash = _seed_reference_pair(session)
+        predecessor = session.get(NormalizedTransaction, "predecessor")
+        predecessor.is_refund = True
+        session.add_all(
+            [
+                _dummy_user(owner_a, "owner-a"),
+                _dummy_user(owner_b, "owner-b"),
+                Tag(id="reviewed", name="Reviewed"),
+                MailEvidence(
+                    id="dummy-evidence",
+                    evidence_type="invoice",
+                    order_ref_hash="0" * 64,
+                    confidence=Decimal("1.000"),
+                ),
+            ]
+        )
+        session.flush()
+        session.add_all(
+            [
+                TransactionTag(transaction_id="predecessor", tag_id="reviewed"),
+                ReviewedSuggestion(
+                    transaction_id="predecessor",
+                    reason="user-rejected",
+                    decided_at=linked_at,
+                ),
+                TransactionEvidenceLink(
+                    id="predecessor-link",
+                    transaction_id="predecessor",
+                    evidence_id="dummy-evidence",
+                    match_type="amount_date",
+                    confidence=Decimal("0.900"),
+                    match_reason="dummy compatible match",
+                    created_at=linked_at,
+                ),
+                SubscriptionRecord(
+                    id="predecessor-subscription",
+                    label="Dummy subscription",
+                    status="review",
+                    confidence=Decimal("0.500"),
+                    evidence_source="manual",
+                    owner_user_id=owner_a,
+                    transaction_id="predecessor",
+                ),
+                ValueAssessment(
+                    id="successor-assessment",
+                    transaction_id="successor",
+                    owner_user_id=owner_b,
+                    value_class="uncertain",
+                    confidence=Decimal("0.500"),
+                ),
+            ]
+        )
+        session.commit()
+        carry = _collect_carry_fields(session, [(old_hash, successor_hash)])
+
+    with Session(graph_engine) as session:
+        with pytest.raises(RuntimeError, match="mixed-owner subscription evidence"):
+            with session.begin():
+                _carry_fields_and_refresh_accounting(session, carry, commit=False)
+
+    with Session(graph_engine) as session:
+        successor = session.get(NormalizedTransaction, "successor")
+        assert successor.is_refund is False
+        assert session.get(TransactionTag, ("successor", "reviewed")) is None
+        assert session.get(ReviewedSuggestion, "successor") is None
+        assert (
+            session.query(TransactionEvidenceLink)
+            .filter_by(transaction_id="successor")
+            .count()
+            == 0
+        )
+        assert session.get(SubscriptionRecord, "predecessor-subscription").transaction_id == (
+            "predecessor"
+        )
+        assert session.get(ValueAssessment, "successor-assessment").transaction_id == (
             "successor"
         )
 
