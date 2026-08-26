@@ -47,8 +47,10 @@ jobs:
       - name: Export locked requirements and run pip-audit
         # Export first so pip-audit never receives a partial dependency set.
         # `uvx` runs pip-audit in an isolated environment without adding it to
-        # uv.lock. Any setup, export, bootstrap, or audit failure is blocking.
+        # uv.lock. The export is already fully resolved, so pip-audit consumes
+        # every pinned entry directly without bootstrapping an internal pip.
+        # Any setup, export, bootstrap, or audit failure is blocking.
         run: |
           set -euo pipefail
           uv export --format requirements-txt --no-emit-project > "${RUNNER_TEMP}/requirements.txt"
-          uvx pip-audit -r "${RUNNER_TEMP}/requirements.txt"
+          uvx pip-audit --no-deps --disable-pip -r "${RUNNER_TEMP}/requirements.txt"

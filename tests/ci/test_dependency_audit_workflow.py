@@ -6,6 +6,12 @@ import pytest
 
 
 WORKFLOW = Path(__file__).parents[2] / ".github" / "workflows" / "security.yml"
+LOCKED_EXPORT = """\
+direct-package==1.0 \\
+    --hash=sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+transitive-package==2.0 \\
+    --hash=sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+"""
 
 
 def _dependency_audit_job() -> str:
@@ -43,22 +49,29 @@ def _run_audit(
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     marker = tmp_path / "pip-audit-invoked"
+    audit_args = tmp_path / "pip-audit-args"
+    audit_input = tmp_path / "pip-audit-input"
     _write_executable(
         bin_dir,
         "uv",
-        f'printf "locked-dependency==1.0\\n"\nexit {export_exit}\n',
+        f"printf '%s' '{LOCKED_EXPORT}'\nexit {export_exit}\n",
     )
     if install_auditor:
         _write_executable(
             bin_dir,
             "uvx",
-            f'printf "invoked\\n" > "$AUDIT_MARKER"\nexit {audit_exit}\n',
+            'printf "invoked\\n" > "$AUDIT_MARKER"\n'
+            'printf "%s\\n" "$@" > "$AUDIT_ARGS"\n'
+            'cp "$5" "$AUDIT_INPUT"\n'
+            f"exit {audit_exit}\n",
         )
 
     env = os.environ.copy()
     env.update(
         {
             "AUDIT_MARKER": str(marker),
+            "AUDIT_ARGS": str(audit_args),
+            "AUDIT_INPUT": str(audit_input),
             "PATH": f"{bin_dir}:/usr/bin:/bin",
             "RUNNER_TEMP": str(tmp_path),
         }
@@ -71,18 +84,26 @@ def _run_audit(
         text=True,
         check=False,
     )
-    return result, marker
+    return result, marker, audit_args, audit_input
 
 
 def test_dependency_audit_succeeds_only_after_auditor_runs(tmp_path: Path) -> None:
-    result, marker = _run_audit(tmp_path)
+    result, marker, audit_args, audit_input = _run_audit(tmp_path)
 
     assert result.returncode == 0
     assert marker.read_text() == "invoked\n"
+    assert audit_args.read_text().splitlines() == [
+        "pip-audit",
+        "--no-deps",
+        "--disable-pip",
+        "-r",
+        str(tmp_path / "requirements.txt"),
+    ]
+    assert audit_input.read_text() == LOCKED_EXPORT
 
 
 def test_dependency_audit_stops_when_export_setup_fails(tmp_path: Path) -> None:
-    result, marker = _run_audit(tmp_path, export_exit=23)
+    result, marker, _, _ = _run_audit(tmp_path, export_exit=23)
 
     assert result.returncode == 23
     assert not marker.exists()
@@ -92,14 +113,14 @@ def test_dependency_audit_stops_when_export_setup_fails(tmp_path: Path) -> None:
 def test_dependency_audit_fails_on_findings_or_tool_crash(
     tmp_path: Path, audit_exit: int
 ) -> None:
-    result, marker = _run_audit(tmp_path, audit_exit=audit_exit)
+    result, marker, _, _ = _run_audit(tmp_path, audit_exit=audit_exit)
 
     assert result.returncode == audit_exit
     assert marker.exists()
 
 
 def test_dependency_audit_fails_when_auditor_is_absent(tmp_path: Path) -> None:
-    result, marker = _run_audit(tmp_path, install_auditor=False)
+    result, marker, _, _ = _run_audit(tmp_path, install_auditor=False)
 
     assert result.returncode == 127
     assert not marker.exists()
@@ -112,4 +133,7 @@ def test_dependency_audit_job_has_no_masking_or_skip_conditions() -> None:
     assert "if:" not in job
     assert "uv python install 3.13" in job
     assert "uv sync --dev" in job
-    assert 'uvx pip-audit -r "${RUNNER_TEMP}/requirements.txt"' in job
+    assert (
+        'uvx pip-audit --no-deps --disable-pip -r "${RUNNER_TEMP}/requirements.txt"'
+        in job
+    )
