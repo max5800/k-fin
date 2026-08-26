@@ -7,9 +7,7 @@ on:
       - develop
 
 # Serialise releases per branch so a re-run can't race the prior one
-# at the `:latest` image push or the Fleet bundle commit. We do not
-# cancel-in-progress: an in-flight semantic-release that has already
-# tagged + pushed must finish to keep tag and image consistent.
+# at the :latest image push or Fleet branch commit.
 concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false
@@ -27,6 +25,7 @@ jobs:
     outputs:
       published: ${{ steps.semantic.outputs.new_release_published }}
       version: ${{ steps.semantic.outputs.new_release_version }}
+      source_sha: ${{ steps.source-sha.outputs.sha }}
 
     steps:
       - name: Checkout
@@ -34,6 +33,13 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
+
+      - name: Record source SHA
+        id: source-sha
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
       - name: Setup Node.js
         uses: actions/setup-node@v7
@@ -59,6 +65,14 @@ jobs:
     needs: release
     if: needs.release.outputs.published == 'true'
     runs-on: ubuntu-latest
+    outputs:
+      source_sha: ${{ needs.release.outputs.source_sha }}
+      api_image_ref: ${{ steps.artifact-evidence.outputs.api_image_ref }}
+      api_image_digest: ${{ steps.artifact-evidence.outputs.api_image_digest }}
+      worker_image_ref: ${{ steps.artifact-evidence.outputs.worker_image_ref }}
+      worker_image_digest: ${{ steps.artifact-evidence.outputs.worker_image_digest }}
+      helm_chart_ref: ${{ steps.artifact-evidence.outputs.helm_chart_ref }}
+      helm_chart_digest: ${{ steps.artifact-evidence.outputs.helm_chart_digest }}
 
     steps:
       - name: Checkout
@@ -73,23 +87,28 @@ jobs:
 
       - name: Resolve image tags
         id: image-tags
+        env:
+          RELEASE_VERSION: ${{ needs.release.outputs.version }}
+          RELEASE_REF: ${{ github.ref }}
         run: |
+          set -euo pipefail
           {
             echo "api<<EOF"
-            echo "ghcr.io/max5800/k-fin-api:v${{ needs.release.outputs.version }}"
-            if [ "${{ github.ref }}" = "refs/heads/main" ]; then
+            echo "ghcr.io/max5800/k-fin-api:v${RELEASE_VERSION}"
+            if [ "${RELEASE_REF}" = "refs/heads/main" ]; then
               echo "ghcr.io/max5800/k-fin-api:latest"
             fi
             echo "EOF"
             echo "worker<<EOF"
-            echo "ghcr.io/max5800/k-fin-worker:v${{ needs.release.outputs.version }}"
-            if [ "${{ github.ref }}" = "refs/heads/main" ]; then
+            echo "ghcr.io/max5800/k-fin-worker:v${RELEASE_VERSION}"
+            if [ "${RELEASE_REF}" = "refs/heads/main" ]; then
               echo "ghcr.io/max5800/k-fin-worker:latest"
             fi
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
 
       - name: Build and push API image
+        id: build-api
         uses: docker/build-push-action@v5
         with:
           context: .
@@ -98,6 +117,7 @@ jobs:
           tags: ${{ steps.image-tags.outputs.api }}
 
       - name: Build and push Worker image
+        id: build-worker
         uses: docker/build-push-action@v5
         with:
           context: .
@@ -106,38 +126,509 @@ jobs:
           tags: ${{ steps.image-tags.outputs.worker }}
 
       - name: Helm registry login
-        run: helm registry login ghcr.io -u ${{ github.actor }} -p ${{ secrets.GITHUB_TOKEN }}
+        env:
+          GHCR_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
+          GHCR_USERNAME: ${{ github.actor }}
+        run: printf '%s' "${GHCR_PASSWORD}" | helm registry login ghcr.io --username "${GHCR_USERNAME}" --password-stdin
 
       - name: Package Helm chart
-        run: helm package chart/ --version ${{ needs.release.outputs.version }} --app-version ${{ needs.release.outputs.version }}
+        env:
+          HELM_VERSION: ${{ needs.release.outputs.version }}
+        run: |
+          set -euo pipefail
+          helm package chart/ --version "${HELM_VERSION}" --app-version "${HELM_VERSION}"
 
       - name: Push Helm chart
-        run: helm push k-fin-${{ needs.release.outputs.version }}.tgz oci://ghcr.io/max5800/helm-charts
+        id: push-helm
+        env:
+          HELM_VERSION: ${{ needs.release.outputs.version }}
+        run: |
+          set -euo pipefail
+          chart_file="k-fin-${HELM_VERSION}.tgz"
+          helm_push_log="$(mktemp)"
+          helm push "${chart_file}" oci://ghcr.io/max5800/helm-charts 2>&1 | tee "${helm_push_log}"
+          mapfile -t chart_digests < <(grep -Eo 'sha256:[0-9a-f]{64}' "${helm_push_log}" | sort -u)
+          if [ "${#chart_digests[@]}" -ne 1 ]; then
+            echo "Expected exactly one immutable digest in Helm push output."
+            exit 1
+          fi
+          chart_digest="${chart_digests[0]}"
+          echo "chart_digest=${chart_digest}" >> "$GITHUB_OUTPUT"
+          rm -f "${helm_push_log}" "${chart_file}"
+
+      - name: Record immutable artifact evidence
+        id: artifact-evidence
+        env:
+          RELEASE_VERSION: ${{ needs.release.outputs.version }}
+          RELEASE_SOURCE_SHA: ${{ needs.release.outputs.source_sha }}
+          API_IMAGE_DIGEST: ${{ steps.build-api.outputs.digest }}
+          WORKER_IMAGE_DIGEST: ${{ steps.build-worker.outputs.digest }}
+          HELM_CHART_DIGEST: ${{ steps.push-helm.outputs.chart_digest }}
+        run: |
+          set -euo pipefail
+
+          release_version="${RELEASE_VERSION}"
+          source_sha="${RELEASE_SOURCE_SHA}"
+          api_ref="ghcr.io/max5800/k-fin-api:v${release_version}"
+          worker_ref="ghcr.io/max5800/k-fin-worker:v${release_version}"
+          helm_ref="oci://ghcr.io/max5800/helm-charts/k-fin:${release_version}"
+          api_digest="${API_IMAGE_DIGEST}"
+          worker_digest="${WORKER_IMAGE_DIGEST}"
+          helm_digest="${HELM_CHART_DIGEST}"
+
+          validate_digest() {
+            local digest="$1"
+            if ! printf '%s' "${digest}" | grep -Eq '^sha256:[0-9a-f]{64}$'; then
+              echo "Invalid sha256 digest format: ${digest}"
+              exit 1
+            fi
+          }
+
+          require_non_empty() {
+            local label="$1"
+            local value="$2"
+            if [ -z "${value}" ]; then
+              echo "Missing required value: ${label}"
+              exit 1
+            fi
+          }
+
+          require_non_empty "release version" "${release_version}"
+          require_non_empty "release source sha" "${source_sha}"
+          require_non_empty "API digest" "${api_digest}"
+          require_non_empty "worker digest" "${worker_digest}"
+          require_non_empty "helm digest" "${helm_digest}"
+          if ! printf '%s' "${release_version}" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+([+-][0-9A-Za-z.-]+)?$'; then
+            echo "Invalid release version format."
+            exit 1
+          fi
+          if ! printf '%s' "${source_sha}" | grep -Eq '^[0-9a-f]{40}$'; then
+            echo "Invalid release source SHA format."
+            exit 1
+          fi
+          validate_digest "${api_digest}"
+          validate_digest "${worker_digest}"
+          validate_digest "${helm_digest}"
+
+          echo "api_image_ref=${api_ref}" >> "$GITHUB_OUTPUT"
+          echo "api_image_digest=${api_digest}" >> "$GITHUB_OUTPUT"
+          echo "worker_image_ref=${worker_ref}" >> "$GITHUB_OUTPUT"
+          echo "worker_image_digest=${worker_digest}" >> "$GITHUB_OUTPUT"
+          echo "helm_chart_ref=${helm_ref}" >> "$GITHUB_OUTPUT"
+          echo "helm_chart_digest=${helm_digest}" >> "$GITHUB_OUTPUT"
+
+          {
+            echo "## Release artifact evidence (immutable)"
+            echo "- Source SHA: \`${source_sha}\`"
+            echo "- API image: \`${api_ref}\` @ \`${api_digest}\`"
+            echo "- Worker image: \`${worker_ref}\` @ \`${worker_digest}\`"
+            echo "- Helm chart: \`${helm_ref}\` @ \`${helm_digest}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
 
   update-fleet:
     name: Pin Fleet version
     needs: [release, publish]
-    # Homelab-only step. Skipped on forks because the target repo and the
-    # HOME_LAB_PAT secret only exist for max5800.
     if: needs.release.outputs.published == 'true' && github.ref == 'refs/heads/main' && github.repository_owner == 'max5800'
     runs-on: ubuntu-latest
+    outputs:
+      release_branch: ${{ steps.fleet-update.outputs.release_branch }}
+      pull_request_number: ${{ steps.fleet-update.outputs.pull_request_number }}
+      pull_request_url: ${{ steps.fleet-update.outputs.pull_request_url }}
+      base_sha: ${{ steps.fleet-update.outputs.base_sha }}
+      head_sha: ${{ steps.fleet-update.outputs.head_sha }}
+      pr_reused: ${{ steps.fleet-update.outputs.pr_reused }}
 
     steps:
       - name: Checkout home-lab
         uses: actions/checkout@v7
         with:
           repository: max5800/home-lab
+          ref: main
+          path: home-lab
           token: ${{ secrets.HOME_LAB_PAT }}
+          fetch-depth: 0
+          persist-credentials: true
 
-      - name: Bump k-fin chart version in Fleet bundle
+      - name: Prepare deterministic Fleet branch and gated PR
+        id: fleet-update
+        shell: bash
+        env:
+          HOME_LAB_PAT: ${{ secrets.HOME_LAB_PAT }}
+          KFIN_SOURCE_SHA: ${{ needs.release.outputs.source_sha }}
+          API_IMAGE_REF: ${{ needs.publish.outputs.api_image_ref }}
+          API_IMAGE_DIGEST: ${{ needs.publish.outputs.api_image_digest }}
+          WORKER_IMAGE_REF: ${{ needs.publish.outputs.worker_image_ref }}
+          WORKER_IMAGE_DIGEST: ${{ needs.publish.outputs.worker_image_digest }}
+          HELM_CHART_REF: ${{ needs.publish.outputs.helm_chart_ref }}
+          HELM_CHART_DIGEST: ${{ needs.publish.outputs.helm_chart_digest }}
+          KFIN_VERSION: ${{ needs.release.outputs.version }}
         run: |
-          yq e '.helm.version = "${{ needs.release.outputs.version }}"' -i \
-            kubernetes/apps/k-fin/app/fleet.yaml
+          set -euo pipefail
+          umask 077
 
-      - name: Commit and push
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add kubernetes/apps/k-fin/app/fleet.yaml
-          git commit -m "chore(release): bump k-fin to v${{ needs.release.outputs.version }}"
-          git push
+          validate_digest() {
+            local digest="$1"
+            if ! printf '%s' "${digest}" | grep -Eq '^sha256:[0-9a-f]{64}$'; then
+              echo "Invalid sha256 digest format."
+              exit 1
+            fi
+          }
+
+          require_non_empty() {
+            local label="$1"
+            local value="$2"
+            if [ -z "${value}" ]; then
+              echo "Missing required value: ${label}"
+              exit 1
+            fi
+          }
+
+          assert_main_unchanged() {
+            local remote_main
+            remote_main="$(git -C "${home_lab_dir}" ls-remote origin refs/heads/main | awk 'NR == 1 {print $1}')"
+            if [ -z "${remote_main}" ] || [ "${remote_main}" != "${base_sha}" ]; then
+              echo "Home-lab main advanced after base capture."
+              exit 1
+            fi
+          }
+
+          assert_exact_fleet_value_change() {
+            local expected_file
+            expected_file="$(mktemp)"
+            git -C "${home_lab_dir}" show "${base_sha}:${target_file}" > "${expected_file}"
+            VERSION="${KFIN_VERSION}" yq e -i '.helm.version = strenv(VERSION)' "${expected_file}"
+            if ! cmp -s "${expected_file}" "${home_lab_dir}/${target_file}"; then
+              rm -f "${expected_file}"
+              echo "Fleet update must change only the helm.version value."
+              exit 1
+            fi
+            rm -f "${expected_file}"
+          }
+
+          pr_title="chore(release): k-fin v${KFIN_VERSION} Fleet pin for home-lab"
+          release_branch="release/k-fin-v${KFIN_VERSION}"
+          target_file="kubernetes/apps/k-fin/app/fleet.yaml"
+          home_lab_dir="${GITHUB_WORKSPACE}/home-lab"
+          api_url="${GITHUB_API_URL:-https://api.github.com}"
+          canonical_body_file=""
+          verified_body_file=""
+          prs_json_file=""
+          pr_verify_file=""
+
+          cleanup() {
+            rm -f -- "${canonical_body_file}" "${verified_body_file}" \
+              "${prs_json_file}" "${pr_verify_file}"
+          }
+          trap cleanup EXIT
+
+          require_non_empty "KFIN version" "${KFIN_VERSION}"
+          require_non_empty "k-fin source SHA" "${KFIN_SOURCE_SHA}"
+          require_non_empty "API image ref" "${API_IMAGE_REF}"
+          require_non_empty "API image digest" "${API_IMAGE_DIGEST}"
+          require_non_empty "Worker image ref" "${WORKER_IMAGE_REF}"
+          require_non_empty "Worker image digest" "${WORKER_IMAGE_DIGEST}"
+          require_non_empty "Helm chart ref" "${HELM_CHART_REF}"
+          require_non_empty "Helm chart digest" "${HELM_CHART_DIGEST}"
+          validate_digest "${API_IMAGE_DIGEST}"
+          validate_digest "${WORKER_IMAGE_DIGEST}"
+          validate_digest "${HELM_CHART_DIGEST}"
+          if ! printf '%s' "${KFIN_VERSION}" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+([+-][0-9A-Za-z.-]+)?$'; then
+            echo "Invalid KFIN version format."
+            exit 1
+          fi
+          if ! printf '%s' "${KFIN_SOURCE_SHA}" | grep -Eq '^[0-9a-f]{40}$'; then
+            echo "Invalid k-fin source SHA format."
+            exit 1
+          fi
+          if [ "${API_IMAGE_REF}" != "ghcr.io/max5800/k-fin-api:v${KFIN_VERSION}" ]; then
+            echo "Unexpected API image reference."
+            exit 1
+          fi
+          if [ "${WORKER_IMAGE_REF}" != "ghcr.io/max5800/k-fin-worker:v${KFIN_VERSION}" ]; then
+            echo "Unexpected Worker image reference."
+            exit 1
+          fi
+          if [ "${HELM_CHART_REF}" != "oci://ghcr.io/max5800/helm-charts/k-fin:${KFIN_VERSION}" ]; then
+            echo "Unexpected Helm chart reference."
+            exit 1
+          fi
+
+          if [ -z "${HOME_LAB_PAT}" ]; then
+            echo "HOME_LAB_PAT is required."
+            exit 1
+          fi
+          if ! command -v jq >/dev/null 2>&1; then
+            echo "jq is required for PR metadata checks."
+            exit 1
+          fi
+          if ! command -v gh >/dev/null 2>&1; then
+            echo "GitHub CLI is required for PR creation."
+            exit 1
+          fi
+          if ! command -v yq >/dev/null 2>&1; then
+            echo "yq is required for the Fleet update."
+            exit 1
+          fi
+
+          git -C "${home_lab_dir}" config user.name "github-actions[bot]"
+          git -C "${home_lab_dir}" config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git -C "${home_lab_dir}" fetch origin main --prune
+          base_sha="$(git -C "${home_lab_dir}" rev-parse origin/main)"
+          main_head="$(git -C "${home_lab_dir}" rev-parse HEAD)"
+          if [ "${main_head}" != "${base_sha}" ]; then
+            echo "Home-lab main base drifted before Fleet preparation."
+            exit 1
+          fi
+          if ! git -C "${home_lab_dir}" cat-file -e "${base_sha}:AGENTS.md"; then
+            echo "Home-lab policy source AGENTS.md is missing from the captured main base."
+            exit 1
+          fi
+
+          branch_exists="false"
+          if git -C "${home_lab_dir}" ls-remote --exit-code --heads origin "${release_branch}" >/dev/null 2>&1; then
+            branch_exists="true"
+          fi
+
+          prs_json_file="$(mktemp)"
+          curl -fsSL \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer ${HOME_LAB_PAT}" \
+            "${api_url}/repos/max5800/home-lab/pulls?state=open&head=max5800:${release_branch}&base=main" \
+            > "${prs_json_file}"
+          pr_count="$(jq 'length' "${prs_json_file}")"
+
+          if [ "${pr_count}" -gt 1 ]; then
+            echo "Expected at most one open PR for ${release_branch}."
+            exit 1
+          fi
+
+          pr_existing="false"
+          pr_number=""
+          pr_url=""
+          pr_head_ref=""
+          pr_head_sha=""
+          pr_base_ref=""
+          pr_base_sha=""
+          if [ "${pr_count}" -eq 1 ]; then
+            pr_existing="true"
+            pr_number="$(jq -r '.[0].number' "${prs_json_file}")"
+            pr_url="$(jq -r '.[0].html_url' "${prs_json_file}")"
+            pr_head_ref="$(jq -r '.[0].head.ref' "${prs_json_file}")"
+            pr_head_sha="$(jq -r '.[0].head.sha' "${prs_json_file}")"
+            pr_base_ref="$(jq -r '.[0].base.ref' "${prs_json_file}")"
+            pr_base_sha="$(jq -r '.[0].base.sha' "${prs_json_file}")"
+            pr_is_draft="$(jq -r '.[0].draft' "${prs_json_file}")"
+            pr_title_actual="$(jq -r '.[0].title' "${prs_json_file}")"
+
+            if [ "${pr_is_draft}" != "false" ]; then
+              echo "Existing PR for ${release_branch} must not be a draft."
+              exit 1
+            fi
+            if [ "${pr_base_ref}" != "main" ]; then
+              echo "Unexpected PR base branch for ${release_branch}: ${pr_base_ref}"
+              exit 1
+            fi
+            if [ "${pr_title_actual}" != "${pr_title}" ]; then
+              echo "Unexpected PR title for existing ${release_branch}."
+              exit 1
+            fi
+          fi
+
+          if [ "${branch_exists}" = "true" ]; then
+            git -C "${home_lab_dir}" fetch origin "${release_branch}"
+            git -C "${home_lab_dir}" checkout "${release_branch}"
+            branch_head_sha="$(git -C "${home_lab_dir}" rev-parse HEAD)"
+            changed_files="$(git -C "${home_lab_dir}" diff --name-only "origin/main...HEAD")"
+
+            if [ -z "${changed_files}" ]; then
+              echo "Existing branch ${release_branch} has no changes."
+              exit 1
+            fi
+            if [ "$(printf '%s\n' "${changed_files}")" != "${target_file}" ]; then
+              echo "Existing branch ${release_branch} is not scoped to ${target_file}."
+              exit 1
+            fi
+            if [ "$(git -C "${home_lab_dir}" rev-list --count HEAD)" -lt 2 ] || \
+              [ "$(git -C "${home_lab_dir}" rev-parse HEAD^)" != "${base_sha}" ]; then
+              echo "Existing branch ${release_branch} must be exactly one commit on the captured main base."
+              exit 1
+            fi
+            if [ "$(git -C "${home_lab_dir}" diff --name-only "origin/main...HEAD" -- "${target_file}")" != "${target_file}" ]; then
+              echo "Existing branch ${release_branch} diff is not scoped correctly."
+              exit 1
+            fi
+            if [ "$(yq e '.helm.version' "${home_lab_dir}/${target_file}")" != "${KFIN_VERSION}" ]; then
+              echo "Existing branch ${release_branch} does not pin to version ${KFIN_VERSION}."
+              exit 1
+            fi
+            assert_exact_fleet_value_change
+            assert_main_unchanged
+            if [ "${pr_existing}" != "true" ]; then
+              echo "Pre-existing release branch ${release_branch} has no open PR."
+              exit 1
+            fi
+            if [ "${pr_head_ref}" != "${release_branch}" ] || [ "${pr_head_sha}" != "${branch_head_sha}" ]; then
+              echo "Existing PR head mismatch for ${release_branch}."
+              exit 1
+            fi
+            if [ "${pr_base_sha}" != "${base_sha}" ]; then
+              echo "Existing PR base SHA mismatch for ${release_branch}."
+              exit 1
+            fi
+          else
+            if [ "${pr_existing}" = "true" ]; then
+              echo "Pre-existing PR for ${release_branch} exists but branch does not."
+              exit 1
+            fi
+
+            git -C "${home_lab_dir}" checkout -B "${release_branch}" "${base_sha}"
+            VERSION="${KFIN_VERSION}" yq e -i '.helm.version = strenv(VERSION)' "${home_lab_dir}/${target_file}"
+            if [ "$(yq e '.helm.version' "${home_lab_dir}/${target_file}")" != "${KFIN_VERSION}" ]; then
+              echo "fleet.yaml version was not updated to ${KFIN_VERSION}."
+              exit 1
+            fi
+            git -C "${home_lab_dir}" add "${target_file}"
+            if [ "$(git -C "${home_lab_dir}" diff --name-only --cached)" != "${target_file}" ]; then
+              echo "Fleet update must stage exactly ${target_file}."
+              exit 1
+            fi
+            if [ -n "$(git -C "${home_lab_dir}" diff --name-only)" ]; then
+              echo "Unexpected unstaged changes in home-lab working tree."
+              exit 1
+            fi
+            assert_exact_fleet_value_change
+            git -C "${home_lab_dir}" diff --cached --check
+            assert_main_unchanged
+
+            git -C "${home_lab_dir}" -c core.hooksPath=/dev/null -c commit.gpgSign=false \
+              commit -m "chore(release): pin k-fin v${KFIN_VERSION}"
+            git -C "${home_lab_dir}" push origin \
+              "refs/heads/${release_branch}:refs/heads/${release_branch}"
+            branch_head_sha="$(git -C "${home_lab_dir}" rev-parse HEAD)"
+          fi
+
+          assert_main_unchanged
+          canonical_body_file="$(mktemp)"
+          {
+            printf '%s\n' "KFIN release version: ${KFIN_VERSION}"
+            printf '\n'
+            printf '%s\n' "k-fin source SHA: ${KFIN_SOURCE_SHA}"
+            printf '%s\n' "API image: ${API_IMAGE_REF}@${API_IMAGE_DIGEST}"
+            printf '%s\n' "Worker image: ${WORKER_IMAGE_REF}@${WORKER_IMAGE_DIGEST}"
+            printf '%s\n' "Helm chart: ${HELM_CHART_REF}@${HELM_CHART_DIGEST}"
+            printf '%s\n' "home-lab base SHA: ${base_sha}"
+            printf '%s\n' "home-lab head SHA: ${branch_head_sha}"
+            printf '\n'
+            printf '%s\n' "Affected scope: kubernetes/apps/k-fin/app/fleet.yaml; Fleet k-fin bundle; k-fin API/worker/migration deployment only"
+            printf '\n'
+            printf '%s\n' "repoPolicySource: ${base_sha}:AGENTS.md (current observed 021ac7bc6a97853e423e5730adc52aace678ef82:AGENTS.md; re-resolved fresh at runtime)"
+            printf '%s\n' "repoPolicyContract: homelab-delivery/v2"
+            printf '%s\n' "authorizationStage: autonomous-pr-merge-deploy"
+            printf '%s\n' "deliveryMode: autonomous-pr-merge-deploy"
+            printf '%s\n' "authorizationIncludesDeployment: true"
+            printf '%s\n' "affectedDeploymentScopes: kubernetes/apps/k-fin/app/fleet.yaml; Fleet k-fin bundle; k-fin API/worker/migration only"
+            printf '%s\n' "targetedConvergenceFallback: none"
+            printf '%s\n' "mergeMethod: merge"
+            printf '%s\n' "baseAdvanceGuard: git-ref-cas"
+            printf '%s\n' "rollbackAuthority: diagnose-and-propose-only"
+            printf '\n'
+            printf '%s\n' "independent homelab-delivery/v2 review/guarded merge/live verification remain pending."
+            printf '\n'
+            printf '%s\n' "- [ ] Do not merge until homelab-delivery/v2 review/guarded merge passes."
+            printf '%s\n' "- [ ] Confirm live verification remains pending until post-merge approval."
+          } > "${canonical_body_file}"
+
+          if [ "${pr_existing}" = "false" ]; then
+            pr_url="$(GH_TOKEN="${HOME_LAB_PAT}" gh pr create \
+              --repo max5800/home-lab \
+              --base main \
+              --head "${release_branch}" \
+              --title "${pr_title}" \
+              --body-file "${canonical_body_file}" \
+              --no-maintainer-edit)"
+            if ! printf '%s\n' "${pr_url}" | grep -Eq '^https://github.com/max5800/home-lab/pull/[0-9]+$'; then
+              echo "GitHub CLI did not return the expected PR URL."
+              exit 1
+            fi
+            pr_number="${pr_url##*/}"
+          fi
+
+          pr_verify_file="$(mktemp)"
+          curl -fsSL \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer ${HOME_LAB_PAT}" \
+            "${api_url}/repos/max5800/home-lab/pulls/${pr_number}" \
+            > "${pr_verify_file}"
+          verified_state="$(jq -r '.state' "${pr_verify_file}")"
+          verified_draft="$(jq -r '.draft' "${pr_verify_file}")"
+          verified_auto_merge="$(jq -r '.auto_merge == null' "${pr_verify_file}")"
+          verified_title="$(jq -r '.title' "${pr_verify_file}")"
+          verified_head_ref="$(jq -r '.head.ref' "${pr_verify_file}")"
+          verified_head_sha="$(jq -r '.head.sha' "${pr_verify_file}")"
+          verified_base_ref="$(jq -r '.base.ref' "${pr_verify_file}")"
+          verified_base_sha="$(jq -r '.base.sha' "${pr_verify_file}")"
+          verified_body_file="$(mktemp)"
+          jq -j 'if (.body | type) == "string" then .body else "" end' \
+            "${pr_verify_file}" > "${verified_body_file}"
+          rm -f "${pr_verify_file}"
+          pr_verify_file=""
+
+          if [ "${verified_state}" != "open" ] || [ "${verified_draft}" != "false" ] || \
+            [ "${verified_auto_merge}" != "true" ]; then
+            echo "Fleet PR must be open, non-draft, and have auto-merge disabled."
+            exit 1
+          fi
+          if [ "${verified_title}" != "${pr_title}" ] || \
+            [ "${verified_head_ref}" != "${release_branch}" ] || \
+            [ "${verified_head_sha}" != "${branch_head_sha}" ] || \
+            [ "${verified_base_ref}" != "main" ] || [ "${verified_base_sha}" != "${base_sha}" ]; then
+            echo "Fleet PR title, head, or captured base did not match."
+            exit 1
+          fi
+          if ! cmp -s "${canonical_body_file}" "${verified_body_file}"; then
+            echo "Fleet PR body does not exactly match the canonical release evidence."
+            exit 1
+          fi
+
+          curl -fsSL \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer ${HOME_LAB_PAT}" \
+            "${api_url}/repos/max5800/home-lab/pulls?state=open&head=max5800:${release_branch}&base=main" \
+            > "${prs_json_file}"
+          if [ "$(jq 'length' "${prs_json_file}")" -ne 1 ] || \
+            [ "$(jq -r '.[0].number' "${prs_json_file}")" != "${pr_number}" ]; then
+            echo "Expected exactly one open Fleet PR for ${release_branch}."
+            exit 1
+          fi
+
+          rm -f "${prs_json_file}"
+          if [ -z "${pr_number}" ] || [ -z "${pr_url}" ]; then
+            echo "No PR number available."
+            exit 1
+          fi
+          if ! printf '%s\n' "${pr_url}" | grep -Eq '^https://github.com/max5800/home-lab/pull/[0-9]+$'; then
+            echo "Invalid PR URL: ${pr_url}"
+            exit 1
+          fi
+
+          {
+            echo "## Fleet promotion evidence"
+            echo "- home-lab branch: \`${release_branch}\`"
+            echo "- home-lab base SHA: \`${base_sha}\`"
+            echo "- home-lab head SHA: \`${branch_head_sha}\`"
+            echo "- home-lab PR: ${pr_url} (#${pr_number})"
+            echo "- k-fin source SHA: \`${KFIN_SOURCE_SHA}\`"
+            echo "- API image immutable: \`${API_IMAGE_REF}@${API_IMAGE_DIGEST}\`"
+            echo "- Worker image immutable: \`${WORKER_IMAGE_REF}@${WORKER_IMAGE_DIGEST}\`"
+            echo "- Helm chart immutable: \`${HELM_CHART_REF}@${HELM_CHART_DIGEST}\`"
+            echo "- PR is non-draft and target is main."
+            echo "- Delivery contract pending state remains: homelab-delivery/v2 review/guarded merge/live verification."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          echo "release_branch=${release_branch}" >> "$GITHUB_OUTPUT"
+          echo "pull_request_number=${pr_number}" >> "$GITHUB_OUTPUT"
+          echo "pull_request_url=${pr_url}" >> "$GITHUB_OUTPUT"
+          echo "base_sha=${base_sha}" >> "$GITHUB_OUTPUT"
+          echo "head_sha=${branch_head_sha}" >> "$GITHUB_OUTPUT"
+          echo "pr_reused=${pr_existing}" >> "$GITHUB_OUTPUT"
