@@ -23,6 +23,7 @@ from src.api.routers import (
     meta,
     portfolio,
     reports,
+    reporting,
     rules,
     runs,
     settings as settings_router,
@@ -123,6 +124,7 @@ def create_app() -> FastAPI:
     app.include_router(runs.router, prefix="/api/v1")
     app.include_router(aggregates.router, prefix="/api/v1")
     app.include_router(reports.router, prefix="/api/v1")
+    app.include_router(reporting.router, prefix="/api/v1")
     app.include_router(tags.router, prefix="/api/v1")
     app.include_router(sync.router, prefix="/api/v1")
     app.include_router(import_csv.router, prefix="/api/v1")

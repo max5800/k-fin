@@ -1,5 +1,25 @@
 # API Response Examples
 
+## GET /api/v1/reporting/accounting
+
+Requires a user JWT. Example query:
+
+```text
+/api/v1/reporting/accounting?date_from=2026-08-01&date_to=2026-08-31&as_of=2026-08-26&sources=comdirect&sources=paypal
+```
+
+The response partitions every owner-attributed active transaction into exactly
+one class. Each class contains `transaction_count`, `outflow`, `inflow`, and
+`net`; `partition_difference` must be zero. `settlement_ambiguities` contains
+transaction IDs and machine-readable reasons for any link chain the API could
+not uniquely prove.
+
+`source_coverage.sources` reports `fresh`, `stale`, or `missing` per declared
+source. A stale or missing manual source makes
+`analysis_state=incomplete_sources`. The existing schema has no statement-period
+verification record, so `source_coverage.complete` and `can_claim_complete`
+remain false even when row freshness is good.
+
 ## GET /exports/latest
 
 ```json
