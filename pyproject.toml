@@ -11,18 +11,19 @@ dependencies = [
     "httpx>=0.28.0",
     "apscheduler>=3.10.0",
     "pydantic>=2.10.0",
-    "pydantic-settings>=2.7.0",
+    "pydantic-settings>=2.14.2",
     "python-dotenv>=1.0.0",
     "sqlalchemy>=2.0.0",
     "alembic>=1.13.0",
     "psycopg[binary]>=3.2.0",
     "pandas>=2.2.0",
-    "pydantic-ai-slim[anthropic]>=0.1.80",
-    "mcp>=1.2.0",
+    "pydantic-ai-slim[anthropic]>=1.106.0,<2",
+    "anthropic<1",
+    "mcp>=1.28.1,<2",
     "argon2-cffi>=23.1.0",
-    "pyjwt>=2.9.0",
+    "pyjwt>=2.13.0",
     "yfinance>=0.2.50",
-    "python-multipart>=0.0.26",
+    "python-multipart>=0.0.31",
     "pdfplumber>=0.11.9",
 ]
 
@@ -31,7 +32,7 @@ k-fin-mcp = "src.mcp_server.__main__:cli"
 
 [dependency-groups]
 dev = [
-    "pytest>=8.0.0",
+    "pytest>=9.0.3",
     "pytest-asyncio>=0.24.0",
     "ruff>=0.9.0",
     "testcontainers[postgres]>=4.0.0",

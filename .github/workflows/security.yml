@@ -14,7 +14,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           # gitleaks-action needs full history to scan PR commit ranges
           fetch-depth: 0
@@ -31,7 +31,7 @@ jobs:
     name: Dependency CVE audit (pip-audit)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install uv
         uses: astral-sh/setup-uv@v4
@@ -42,14 +42,13 @@ jobs:
         run: uv python install 3.13
 
       - name: Install dependencies
-        run: uv sync --dev
+        run: uv sync --locked --dev
 
       - name: Export locked requirements and run pip-audit
-        # Non-blocking (continue-on-error) until false-positive rate is
-        # understood for the native-code deps added in M16 (pdfplumber,
-        # pdfminer.six, pillow, pypdfium2, python-multipart). Promote to
-        # blocking once the baseline is clean. `uv export` produces a
-        # requirements.txt from the lockfile; `uvx pip-audit` runs in an
-        # isolated env so it doesn't require pip-audit to be in uv.lock.
-        run: uv export --format requirements-txt --no-emit-project | uvx pip-audit -r /dev/stdin
-        continue-on-error: true
+        # The export contains every resolved direct and transitive dependency.
+        # Auditing that file directly avoids pip bootstrapping while retaining
+        # a blocking exit status for setup, export, tool, and vulnerability failures.
+        run: |
+          set -euo pipefail
+          uv export --locked --format requirements-txt --no-emit-project --output-file ${RUNNER_TEMP}/requirements.txt
+          uvx --from pip-audit==2.10.1 pip-audit --no-deps --disable-pip -r ${RUNNER_TEMP}/requirements.txt
