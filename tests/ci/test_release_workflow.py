@@ -40,14 +40,20 @@ def test_release_job_cannot_commit_or_push_to_k_fin() -> None:
     assert "git push" not in release_job
 
 
-def test_fleet_update_remains_the_only_explicit_git_commit_and_push() -> None:
+def test_fleet_handoff_has_no_direct_git_push_and_preserves_failure_artifact() -> None:
     workflow = WORKFLOW.read_text(encoding="utf-8")
     fleet_job = _workflow_job(workflow, "update-fleet")
 
-    assert workflow.count("git commit ") == 1
-    assert workflow.count("git push") == 1
-    assert 'git commit -m "chore(release): bump k-fin to v${{ needs.release.outputs.version }}"' in fleet_job
-    assert "          git push" in fleet_job
+    assert "git commit " not in workflow
+    assert "git push" not in workflow
+    assert "repository: max5800/home-lab" not in fleet_job
+    assert "persist-credentials: false" in fleet_job
+    assert "contents: read" in fleet_job
+    assert "python3 scripts/fleet_handoff.py" in fleet_job
+    assert "if: always()" in fleet_job
+    assert "path: fleet-handoff.json" in fleet_job
+    assert "if-no-files-found: error" in fleet_job
+    assert "continue-on-error" not in fleet_job
 
 
 def test_removed_plugins_are_absent_from_manifest_and_lock() -> None:
