@@ -1,43 +1,11 @@
-# API Response Examples
+# Current k-fin access
 
-## GET /exports/latest
+Prefer the registered k-fin MCP integration. The server loads `/openapi.json` and derives available tool schemas from the deployed API. Schema and deployment configuration take precedence over examples from old export services.
 
-```json
-{
-  "latest": {
-    "umsaetze": {
-      "label": "Konto-Umsaetze",
-      "filename": "umsaetze_2026-03-16.csv",
-      "size_bytes": 12400,
-      "modified": 1773600000.0
-    },
-    "depot_positionen": {
-      "label": "Depot-Positionen",
-      "filename": "depot_positionen_2026-03-16.csv",
-      "size_bytes": 3200,
-      "modified": 1773600000.0
-    },
-    "finanzuebersicht": {
-      "label": "Finanzuebersicht",
-      "filename": "finanzuebersicht_2026-03-16.csv",
-      "size_bytes": 800,
-      "modified": 1773600000.0
-    }
-  }
-}
-```
+For an already configured direct integration, the MCP settings are `FINANCE_API_URL` and `FINANCE_API_TOKEN`; authenticated requests use `Authorization: Bearer …`, never a query token. The source default URL is for local development, not proof of the operator's actual target. Use the configured endpoint and approved credential mechanism without exposing values.
 
-## CSV Format
+`MCP_ENABLE_WRITE_TOOLS` defaults to false. Enabling it changes the available tool surface and requires a separately authorized integration change; it is not a prerequisite for ordinary analysis. The server caps responses, so follow pagination and distinguish truncation from a complete dataset. An access failure warrants a bounded check of the selected integration and relevant configuration, not a fallback to the retired `/exports` service or an automatic credential repair.
 
-Semicolon-delimited, UTF-8-sig encoding, German locale:
+## User-supplied historical CSVs
 
-```
-Buchungstag;Valutadatum;Vorgang;Buchungstext;Umsatz in EUR
-16.03.2026;16.03.2026;Lastschrift;REWE Stegaurach;-45,30
-15.03.2026;15.03.2026;Gutschrift;Arbeitgeber GmbH;3.200,00
-```
-
-**Parsing numbers:** Remove `.` thousand separator, replace `,` decimal with `.`
-Example: `3.200,00` -> `3200.00`
-
-**Parsing dates:** Format `DD.MM.YYYY`
+Archived Comdirect CSVs may use semicolon delimiters, UTF-8-sig, `DD.MM.YYYY` dates and German decimal notation (`1.234,56` means `1234.56`). Confirm the actual file's headers and period before parsing. This format guidance does not imply that a CSV-export HTTP service exists or authorize a new bank export.

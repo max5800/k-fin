@@ -40,30 +40,17 @@ k-fin — Personal Finance Intelligence Platform. Read-only financial data expor
 
 ---
 
-## AI Agent Skill — REQUIRED
+## AI Agent Skill
 
-This project exposes a **read-only Finance API** (`src/api/app.py`) used by AI agents (Klaus/OpenClaw) to query financial data.
+The maintained repository skill is `.openclaw/skills/k-fin-finance-api/`.
+It uses the configured k-fin MCP/Finance API and its current OpenAPI schema;
+the old localhost CSV-export service is not the integration contract.
 
-**The OpenClaw skill lives at:** `.openclaw/skills/comdirect-finance-api/` (in this repository)
-
-### Rules: always update the skill when changing the API
-
-1. **After ANY change to `src/api/routers/`** — update the skill:
-   - New endpoint → add to endpoints table in `SKILL.md`
-   - Auth change → update connection section in `SKILL.md`
-
-2. **After adding new routers or schemas** → update `references/api.md`
-
-3. **The skill must always reflect the actual API** — a stale skill causes the agent to call wrong endpoints or misparse data
-
-### Skill location in this repository
-
-```
-.openclaw/skills/comdirect-finance-api/
-├── SKILL.md               # Main skill: endpoints, auth, workflow
-└── references/
-    └── api.md             # Response format examples, CSV parsing
-```
+When an API change alters authentication, operation semantics, or the skill's
+access workflow, update `SKILL.md` and the relevant parts of `references/api.md`.
+Keep endpoint schemas in OpenAPI rather than duplicating an endpoint catalog in
+the skill. Preserve read-only banking and the distinction between reading
+financial data and authorizing mutations of derived records.
 
 ---
 

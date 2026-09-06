@@ -1,51 +1,16 @@
 ---
 name: k-fin-finance-api
-description: Access personal finance data via the k-fin read-only API. Use when asked about bank account balances, transactions, depot positions, or financial overview. Triggers on: account balance, transactions, depot, financial overview, or any question about personal financial data from Comdirect.
+description: Read balances, transactions, portfolio positions and financial summaries from the configured k-fin MCP or Finance API.
 ---
 
 # k-fin Finance API
 
-Read-only access to exported financial data (Comdirect bank + depot).
+Use the available k-fin MCP integration for the requested financial data. Its tool catalog and input schemas are generated from the backend's OpenAPI document; discover the relevant read operation instead of guessing an old endpoint or fixed tool name. Select the requested account/source and period, and paginate when needed.
 
-## Connection
+If MCP is unavailable and direct API access is already configured and authorized, use that deployment's `FINANCE_API_URL`, its current OpenAPI schema and the approved Bearer-auth integration. Do not read arbitrary credential files or put tokens in URLs, prompts or output. Connection details are in [references/api.md](references/api.md); load them only for access diagnosis or direct API use.
 
-- **Base URL:** `http://localhost:8001` (or `COMDIRECT_API_URL` env var if set)
-- **Auth:** Query param `?token=<COMDIRECT_API_TOKEN>` (stored in OpenClaw config)
-- **All endpoints are GET, read-only**
+Keep read-only analysis read-only. The backend may expose supported mutations, but tool availability does not authorize imports, budget changes, categorization, reconciliation, exports, bank operations or credential changes. Do not enable write tools merely to answer a data question. Bank access remains read-only.
 
-## Endpoints
+Bind conclusions to the source period and coverage. Do not count card/PayPal settlement transfers again as merchant consumption; distinguish refunds, investments and internal transfers. State gaps or stale evidence without starting maintenance. Mask private identifiers and return only the financial detail needed for the requested answer.
 
-| Endpoint | Returns |
-|---|---|
-| `GET /exports?token=...` | All available CSV export files (filename, size, modified) |
-| `GET /exports/latest?token=...` | Most recent file per category |
-| `GET /exports/{filename}?token=...` | Download a specific CSV file |
-
-## Workflow
-
-1. Call `/exports/latest` to see what is available and get filenames
-2. Download the relevant CSV with `/exports/{filename}`
-3. Parse CSV: **semicolon-delimited**, UTF-8-sig, German number/date formats (e.g. `1.234,56` = 1234.56)
-
-## Export Categories
-
-| Prefix | Content |
-|---|---|
-| `umsaetze_` | Account transactions (Girokonto) |
-| `depot_positionen_` | Current depot positions (securities) |
-| `depot_umsaetze_` | Depot transactions (buys/sells) |
-| `finanzuebersicht_` | Financial overview (accounts + depot combined) |
-
-## Important Notes
-
-- The API only serves **already exported** CSVs — it does NOT trigger new exports from Comdirect
-- If data is stale, the export job must be run manually: `uv run python scripts/export_csv.py`
-- Never display raw IBANs, full account numbers, or credentials — mask sensitive fields
-- See `references/api.md` for full response format and CSV parsing examples
-
-## Error Handling
-
-- `401` — Token wrong or missing
-- `404` — File not found (export may not have run yet)
-- `400` — Invalid filename
-- Unreachable — tell the user the export service may not be running
+Return results to the requester. Saving a report or sending a separate notification follows the actual request or existing scheduled-job authority; this skill adds neither effect automatically. Historical CSVs supplied by the user can still be analyzed using the format notes in the reference.
